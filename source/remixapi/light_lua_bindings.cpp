@@ -5,6 +5,7 @@
 using namespace GarrysMod::Lua;
 
 namespace RemixAPI {
+// No per-frame submission required with internal auto-instancing
 
 // Helper function to extract LightInfo from Lua table
 static remix::LightInfo LuaToLightInfo(ILuaBase* LUA, int index) {
@@ -475,6 +476,28 @@ LUA_FUNCTION(RemixLight_CreateSphere) {
     return 1;
 }
 
+// Lua function: RemixLight.UpdateSphere(baseInfo, sphereInfo, lightId)
+LUA_FUNCTION(RemixLight_UpdateSphere) {
+    if (!LUA->IsType(1, Type::Table)) {
+        LUA->ThrowError("Expected table for base light info");
+        return 0;
+    }
+    if (!LUA->IsType(2, Type::Table)) {
+        LUA->ThrowError("Expected table for sphere info");
+        return 0;
+    }
+    if (!LUA->IsType(3, Type::Number)) {
+        LUA->ThrowError("Expected number for light ID");
+        return 0;
+    }
+    remix::LightInfo baseInfo = LuaToLightInfo(LUA, 1);
+    remix::LightInfoSphereEXT sphereInfo = LuaToSphereInfo(LUA, 2);
+    uint64_t lightId = static_cast<uint64_t>(LUA->GetNumber(3));
+    bool ok = RemixAPI::Instance().GetLightManager().UpdateSphereLight(lightId, baseInfo, sphereInfo);
+    LUA->PushBool(ok);
+    return 1;
+}
+
 // Lua function: RemixLight.CreateRect(baseInfo, rectInfo, entityID)
 LUA_FUNCTION(RemixLight_CreateRect) {
     if (!LUA->IsType(1, Type::Table)) {
@@ -499,6 +522,28 @@ LUA_FUNCTION(RemixLight_CreateRect) {
     uint64_t lightId = lightManager.CreateRectLight(baseInfo, rectInfo, entityID);
     
     LUA->PushNumber(static_cast<double>(lightId));
+    return 1;
+}
+
+// Lua function: RemixLight.UpdateRect(baseInfo, rectInfo, lightId)
+LUA_FUNCTION(RemixLight_UpdateRect) {
+    if (!LUA->IsType(1, Type::Table)) {
+        LUA->ThrowError("Expected table for base light info");
+        return 0;
+    }
+    if (!LUA->IsType(2, Type::Table)) {
+        LUA->ThrowError("Expected table for rect info");
+        return 0;
+    }
+    if (!LUA->IsType(3, Type::Number)) {
+        LUA->ThrowError("Expected number for light ID");
+        return 0;
+    }
+    remix::LightInfo baseInfo = LuaToLightInfo(LUA, 1);
+    remix::LightInfoRectEXT rectInfo = LuaToRectInfo(LUA, 2);
+    uint64_t lightId = static_cast<uint64_t>(LUA->GetNumber(3));
+    bool ok = RemixAPI::Instance().GetLightManager().UpdateRectLight(lightId, baseInfo, rectInfo);
+    LUA->PushBool(ok);
     return 1;
 }
 
@@ -529,6 +574,28 @@ LUA_FUNCTION(RemixLight_CreateDisk) {
     return 1;
 }
 
+// Lua function: RemixLight.UpdateDisk(baseInfo, diskInfo, lightId)
+LUA_FUNCTION(RemixLight_UpdateDisk) {
+    if (!LUA->IsType(1, Type::Table)) {
+        LUA->ThrowError("Expected table for base light info");
+        return 0;
+    }
+    if (!LUA->IsType(2, Type::Table)) {
+        LUA->ThrowError("Expected table for disk info");
+        return 0;
+    }
+    if (!LUA->IsType(3, Type::Number)) {
+        LUA->ThrowError("Expected number for light ID");
+        return 0;
+    }
+    remix::LightInfo baseInfo = LuaToLightInfo(LUA, 1);
+    remix::LightInfoDiskEXT diskInfo = LuaToDiskInfo(LUA, 2);
+    uint64_t lightId = static_cast<uint64_t>(LUA->GetNumber(3));
+    bool ok = RemixAPI::Instance().GetLightManager().UpdateDiskLight(lightId, baseInfo, diskInfo);
+    LUA->PushBool(ok);
+    return 1;
+}
+
 // Lua function: RemixLight.CreateDistant(baseInfo, distantInfo, entityID)
 LUA_FUNCTION(RemixLight_CreateDistant) {
     if (!LUA->IsType(1, Type::Table)) {
@@ -553,6 +620,28 @@ LUA_FUNCTION(RemixLight_CreateDistant) {
     uint64_t lightId = lightManager.CreateDistantLight(baseInfo, distantInfo, entityID);
     
     LUA->PushNumber(static_cast<double>(lightId));
+    return 1;
+}
+
+// Lua function: RemixLight.UpdateDistant(baseInfo, distantInfo, lightId)
+LUA_FUNCTION(RemixLight_UpdateDistant) {
+    if (!LUA->IsType(1, Type::Table)) {
+        LUA->ThrowError("Expected table for base light info");
+        return 0;
+    }
+    if (!LUA->IsType(2, Type::Table)) {
+        LUA->ThrowError("Expected table for distant info");
+        return 0;
+    }
+    if (!LUA->IsType(3, Type::Number)) {
+        LUA->ThrowError("Expected number for light ID");
+        return 0;
+    }
+    remix::LightInfo baseInfo = LuaToLightInfo(LUA, 1);
+    remix::LightInfoDistantEXT distantInfo = LuaToDistantInfo(LUA, 2);
+    uint64_t lightId = static_cast<uint64_t>(LUA->GetNumber(3));
+    bool ok = RemixAPI::Instance().GetLightManager().UpdateDistantLight(lightId, baseInfo, distantInfo);
+    LUA->PushBool(ok);
     return 1;
 }
 
@@ -651,15 +740,23 @@ void LightManager::InitializeLuaBindings() {
     // Light creation functions
     m_lua->PushCFunction(RemixLight_CreateSphere);
     m_lua->SetField(-2, "CreateSphere");
+    m_lua->PushCFunction(RemixLight_UpdateSphere);
+    m_lua->SetField(-2, "UpdateSphere");
     
     m_lua->PushCFunction(RemixLight_CreateRect);
     m_lua->SetField(-2, "CreateRect");
+    m_lua->PushCFunction(RemixLight_UpdateRect);
+    m_lua->SetField(-2, "UpdateRect");
     
     m_lua->PushCFunction(RemixLight_CreateDisk);
     m_lua->SetField(-2, "CreateDisk");
+    m_lua->PushCFunction(RemixLight_UpdateDisk);
+    m_lua->SetField(-2, "UpdateDisk");
     
     m_lua->PushCFunction(RemixLight_CreateDistant);
     m_lua->SetField(-2, "CreateDistant");
+    m_lua->PushCFunction(RemixLight_UpdateDistant);
+    m_lua->SetField(-2, "UpdateDistant");
     
     // Light management functions
     m_lua->PushCFunction(RemixLight_DestroyLight);
@@ -681,6 +778,8 @@ void LightManager::InitializeLuaBindings() {
     
     m_lua->PushCFunction(RemixLight_ClearAllLights);
     m_lua->SetField(-2, "ClearAllLights");
+
+    // No per-frame submission needed with internal auto-instancing
     
     // Set the table as a global field
     m_lua->SetField(-2, "RemixLight");

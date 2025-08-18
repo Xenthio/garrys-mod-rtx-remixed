@@ -178,6 +178,8 @@ namespace remix {
     Result< remixapi_LightHandle >    CreateLight(const remixapi_LightInfo& info);
     Result< void >                    DestroyLight(remixapi_LightHandle handle);
     Result< void >                    DrawLightInstance(remixapi_LightHandle handle);
+    // Deferred update of an analytical light definition. Applied on render thread.
+    Result< void >                    UpdateLightDefinition(remixapi_LightHandle handle, const remixapi_LightInfo& info);
     Result< void >                    SetConfigVariable(const char* key, const char* value);
 
     // DXVK interoperability
@@ -753,6 +755,39 @@ namespace remix {
     }
   };
 
+  struct InstanceInfoParticleSystemEXT : remixapi_InstanceInfoParticleSystemEXT {
+    InstanceInfoParticleSystemEXT() {
+      sType = REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_PARTICLE_SYSTEM_EXT;
+      pNext = nullptr;
+      maxNumParticles = 10000;
+      spawnRatePerSecond = 0.f;
+      minTimeToLive = 3.0f;
+      maxTimeToLive = 6.0f;
+      minParticleSize = 1.0f;
+      maxParticleSize = 3.0f;
+      minRotationSpeed = 0.1f;
+      maxRotationSpeed = 1.0f;
+      minSpawnColor = {1, 1, 1, 1};
+      maxSpawnColor = {1, 1, 1, 1};
+      useSpawnTexcoords = false;
+      initialVelocityFromNormal = 10.0f;
+      initialVelocityConeAngleDegrees = 0.0f;
+      maxSpeed = 3.0f;
+      gravityForce = -0.5f;
+      useTurbulence = true;
+      turbulenceAmplitude = 5.0f;
+      turbulenceFrequency = 0.05f;
+      enableCollisionDetection = false;
+      collisionRestitution = 0.5f;
+      collisionThickness = 5.0f;
+      alignParticlesToVelocity = false;
+      enableMotionTrail = false;
+      motionTrailMultiplier = 1.0f;
+      hideEmitter = false;
+      static_assert(sizeof InstanceInfoParticleSystemEXT == 144);
+    }
+  };
+
   using InstanceCategoryBit = remixapi_InstanceCategoryBit;
   using InstanceCategoryFlags = remixapi_InstanceCategoryFlags;
 
@@ -949,6 +984,20 @@ namespace remix {
 
   inline Result< void > Interface::DrawLightInstance(remixapi_LightHandle handle) {
     return m_CInterface.DrawLightInstance(handle);
+  }
+
+  // Helper to call exported function not in the C interface table
+  using PFN_remixapi_UpdateLightDefinition = remixapi_ErrorCode (REMIXAPI_CALL*)(remixapi_LightHandle, const remixapi_LightInfo*);
+
+  inline Result< void > Interface::UpdateLightDefinition(remixapi_LightHandle handle, const remixapi_LightInfo& info) {
+    if (!m_RemixDLL) {
+      return REMIXAPI_ERROR_CODE_NOT_INITIALIZED;
+    }
+    auto f = reinterpret_cast<PFN_remixapi_UpdateLightDefinition>(GetProcAddress(m_RemixDLL, "remixapi_UpdateLightDefinition"));
+    if (!f) {
+      return REMIXAPI_ERROR_CODE_GET_PROC_ADDRESS_FAILURE;
+    }
+    return f(handle, &info);
   }
 
   namespace detail {

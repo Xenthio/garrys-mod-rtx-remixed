@@ -92,7 +92,10 @@ extern "C" {
     REMIXAPI_STRUCT_TYPE_LIGHT_INFO_USD_EXT                   = 21,
     REMIXAPI_STRUCT_TYPE_STARTUP_INFO                         = 22,
     REMIXAPI_STRUCT_TYPE_PRESENT_INFO                         = 23,
+    REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_PARTICLE_SYSTEM_EXT    = 24,
     // NOTE: if adding a new struct, register it in 'rtx_remix_specialization.inl'
+    //       and only extend this enum by appending, never adjust the order of these 
+    //       as that will break backwards compatibility.
   } remixapi_StructType;
 
   typedef enum remixapi_ErrorCode {
@@ -337,7 +340,6 @@ extern "C" {
 
   REMIXAPI remixapi_UIState REMIXAPI_CALL remixapi_GetUIState(void);
   REMIXAPI remixapi_ErrorCode REMIXAPI_CALL remixapi_SetUIState(remixapi_UIState state);  
-
   typedef struct remixapi_CameraInfoParameterizedEXT {
     remixapi_StructType sType;
     void*               pNext;
@@ -403,6 +405,7 @@ extern "C" {
   typedef enum remixapi_InstanceCategoryBit {
     REMIXAPI_INSTANCE_CATEGORY_BIT_WORLD_UI                  = 1 << 0,
     REMIXAPI_INSTANCE_CATEGORY_BIT_WORLD_MATTE               = 1 << 1,
+    REMIXAPI_INSTANCE_CATEGORY_BIT_LEGACY_EMISSIVE           = 1 << 23,
     REMIXAPI_INSTANCE_CATEGORY_BIT_SKY                       = 1 << 2,
     REMIXAPI_INSTANCE_CATEGORY_BIT_IGNORE                    = 1 << 3,
     REMIXAPI_INSTANCE_CATEGORY_BIT_IGNORE_LIGHTS             = 1 << 4,
@@ -427,6 +430,36 @@ extern "C" {
   } remixapi_InstanceCategoryBit;
 
   typedef uint32_t remixapi_InstanceCategoryFlags;
+
+  typedef struct remixapi_InstanceInfoParticleSystemEXT {
+    remixapi_StructType      sType;
+    void*                    pNext;
+    uint32_t         maxNumParticles;
+    remixapi_Bool    useTurbulence;
+    remixapi_Bool    alignParticlesToVelocity;
+    remixapi_Bool    useSpawnTexcoords;
+    remixapi_Bool    enableCollisionDetection;
+    remixapi_Bool    enableMotionTrail;
+    remixapi_Bool    hideEmitter;
+    remixapi_Float4D minSpawnColor;
+    remixapi_Float4D maxSpawnColor;
+    float            minTimeToLive;
+    float            maxTimeToLive;
+    float            initialVelocityFromNormal;
+    float            initialVelocityConeAngleDegrees;
+    float            minParticleSize;
+    float            maxParticleSize;
+    float            gravityForce;
+    float            maxSpeed;
+    float            turbulenceFrequency;
+    float            turbulenceAmplitude;
+    float            minRotationSpeed;
+    float            maxRotationSpeed;
+    float            spawnRatePerSecond;
+    float            collisionThickness;
+    float            collisionRestitution;
+    float            motionTrailMultiplier;
+  } remixapi_InstanceInfoParticleSystemEXT;
 
   typedef struct remixapi_InstanceInfo {
     remixapi_StructType            sType;
@@ -578,6 +611,21 @@ extern "C" {
   } remixapi_PresentInfo;
 
   typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_Present)(const remixapi_PresentInfo* info);
+
+  // Optional frame-boundary callbacks (mirrors bridge API semantics)
+  typedef void (REMIXAPI_PTR* PFN_remixapi_BridgeCallback)(void);
+  REMIXAPI remixapi_ErrorCode REMIXAPI_CALL remixapi_RegisterCallbacks(
+    PFN_remixapi_BridgeCallback beginSceneCallback,
+    PFN_remixapi_BridgeCallback endSceneCallback,
+    PFN_remixapi_BridgeCallback presentCallback);
+
+  // Internal helper to auto-instance persistent external API lights once per frame
+  REMIXAPI remixapi_ErrorCode REMIXAPI_CALL remixapi_AutoInstancePersistentLights(void);
+
+  // Queue a definition update for an existing analytical light. Applied safely each frame.
+  REMIXAPI remixapi_ErrorCode REMIXAPI_CALL remixapi_UpdateLightDefinition(
+    remixapi_LightHandle handle,
+    const remixapi_LightInfo* info);
 
   typedef void (REMIXAPI_PTR* PFN_remixapi_pick_RequestObjectPickingUserCallback)(
     const uint32_t*           objectPickingValues_values,

@@ -13,6 +13,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <mutex>
 
 namespace RemixAPI {
     // Forward declarations
@@ -22,6 +23,7 @@ namespace RemixAPI {
     class InstanceManager;
     class ConfigManager;
     class ResourceManager;
+    class LightManager;
 
     // Main RemixAPI class
     class RemixAPI {
@@ -39,6 +41,7 @@ namespace RemixAPI {
         InstanceManager& GetInstanceManager() { return *m_instanceManager; }
         ConfigManager& GetConfigManager() { return *m_configManager; }
         ResourceManager& GetResourceManager() { return *m_resourceManager; }
+        LightManager& GetLightManager() { return *m_lightManager; }
         
         // Direct interface access
         remix::Interface* GetRemixInterface() { return m_remixInterface; }
@@ -61,8 +64,56 @@ namespace RemixAPI {
         std::unique_ptr<InstanceManager> m_instanceManager;
         std::unique_ptr<ConfigManager> m_configManager;
         std::unique_ptr<ResourceManager> m_resourceManager;
+        std::unique_ptr<LightManager> m_lightManager;
         
         bool m_initialized;
+    };
+
+    // Light Management
+    class LightManager {
+    public:
+        LightManager(remix::Interface* remixInterface, GarrysMod::Lua::ILuaBase* LUA);
+        ~LightManager();
+
+        // Light creation
+        uint64_t CreateSphereLight(const remix::LightInfo& base, const remix::LightInfoSphereEXT& ext, uint64_t entityId);
+        uint64_t CreateRectLight(const remix::LightInfo& base, const remix::LightInfoRectEXT& ext, uint64_t entityId);
+        uint64_t CreateDiskLight(const remix::LightInfo& base, const remix::LightInfoDiskEXT& ext, uint64_t entityId);
+        uint64_t CreateDistantLight(const remix::LightInfo& base, const remix::LightInfoDistantEXT& ext, uint64_t entityId);
+
+        // Update existing light definition (hash preserved)
+        bool UpdateSphereLight(uint64_t lightId, const remix::LightInfo& base, const remix::LightInfoSphereEXT& ext);
+        bool UpdateRectLight(uint64_t lightId, const remix::LightInfo& base, const remix::LightInfoRectEXT& ext);
+        bool UpdateDiskLight(uint64_t lightId, const remix::LightInfo& base, const remix::LightInfoDiskEXT& ext);
+        bool UpdateDistantLight(uint64_t lightId, const remix::LightInfo& base, const remix::LightInfoDistantEXT& ext);
+
+        // Lifecycle
+        bool DestroyLight(uint64_t lightId);
+        bool HasLight(uint64_t lightId) const;
+        bool HasLightForEntity(uint64_t entityId) const;
+        void DestroyLightsForEntity(uint64_t entityId);
+        void ClearAllLights();
+        size_t GetLightCount() const;
+
+        // Per-frame submission
+        void SubmitLightsForCurrentFrame();
+
+        // Lua bindings
+        void InitializeLuaBindings();
+
+    private:
+        struct ManagedLight {
+            remixapi_LightHandle handle { nullptr };
+            uint64_t entityId { 0 };
+        };
+
+        remix::Interface* m_remixInterface;
+        GarrysMod::Lua::ILuaBase* m_lua;
+        std::mutex m_mutex;
+        std::unordered_map<uint64_t, ManagedLight> m_lights; // lightId -> data
+        std::unordered_multimap<uint64_t, uint64_t> m_entityToLight; // entityId -> lightId
+        uint64_t m_nextLightId { 1 };
+        // No per-frame queue needed with internal auto-instancing
     };
 
     // Material Management

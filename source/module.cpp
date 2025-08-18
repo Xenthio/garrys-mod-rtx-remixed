@@ -159,6 +159,34 @@ GMOD_MODULE_OPEN() {
             return 0;
         }
 
+        // Register native Remix API frame callbacks to submit lights (resolve dynamically)
+        {
+            typedef remixapi_ErrorCode (REMIXAPI_CALL* PFN_remixapi_RegisterCallbacks)(
+                PFN_remixapi_BridgeCallback,
+                PFN_remixapi_BridgeCallback,
+                PFN_remixapi_BridgeCallback);
+            HMODULE hRemix = nullptr;
+            if (g_remix && g_remix->m_RemixDLL) {
+                hRemix = g_remix->m_RemixDLL;
+            }
+            if (!hRemix) {
+                hRemix = GetModuleHandleA("d3d9.dll");
+            }
+            if (hRemix) {
+                auto pfnRegister = reinterpret_cast<PFN_remixapi_RegisterCallbacks>(
+                    GetProcAddress(hRemix, "remixapi_RegisterCallbacks"));
+                if (pfnRegister) {
+                    // Submit lights only after successful present to avoid mid-frame reentrancy
+                    // With internal auto-instancing, no per-frame submission is required here.
+                    pfnRegister(nullptr, nullptr, nullptr);
+                } else {
+                    Msg("[gmRTX - Binary Module] remixapi_RegisterCallbacks not found in d3d9.dll, skipping callback registration.\n");
+                }
+            } else {
+                Msg("[gmRTX - Binary Module] d3d9.dll not loaded yet, skipping callback registration.\n");
+            }
+        }
+
         // Configure RTX settings through the new API
         auto& configManager = RemixAPI::RemixAPI::Instance().GetConfigManager();
         configManager.SetConfigVariable("rtx.enableAdvancedMode", "1");

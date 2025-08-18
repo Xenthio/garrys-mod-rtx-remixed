@@ -57,6 +57,7 @@ bool RemixAPI::Initialize(remix::Interface* remixInterface, GarrysMod::Lua::ILua
         m_instanceManager = std::make_unique<InstanceManager>(remixInterface, LUA);
         m_configManager = std::make_unique<ConfigManager>(remixInterface, LUA);
         m_resourceManager = std::make_unique<ResourceManager>(remixInterface, LUA);
+        m_lightManager = std::make_unique<LightManager>(remixInterface, LUA);
 
             // Initialize Lua bindings for all managers
         m_materialManager->InitializeLuaBindings();
@@ -65,6 +66,7 @@ bool RemixAPI::Initialize(remix::Interface* remixInterface, GarrysMod::Lua::ILua
         m_instanceManager->InitializeLuaBindings();
         m_configManager->InitializeLuaBindings();
         m_resourceManager->InitializeLuaBindings();
+        m_lightManager->InitializeLuaBindings();
 
     m_initialized = true;
     Msg("[RemixAPI] Initialization complete\n");
@@ -75,6 +77,7 @@ void RemixAPI::Shutdown() {
     if (!m_initialized) return;
 
     m_resourceManager.reset();
+    m_lightManager.reset();
     m_configManager.reset();
     m_instanceManager.reset();
     m_cameraManager.reset();
@@ -97,6 +100,164 @@ void RemixAPI::Present() {
     presentInfo.hwndOverride = nullptr;
     
     m_remixInterface->Present(&presentInfo);
+}
+
+//=============================================================================
+// LightManager
+//=============================================================================
+LightManager::LightManager(remix::Interface* remixInterface, GarrysMod::Lua::ILuaBase* LUA)
+    : m_remixInterface(remixInterface)
+    , m_lua(LUA) {
+}
+
+LightManager::~LightManager() {
+    ClearAllLights();
+}
+
+uint64_t LightManager::CreateSphereLight(const remix::LightInfo& base, const remix::LightInfoSphereEXT& ext, uint64_t entityId) {
+    if (!m_remixInterface) return 0;
+    std::lock_guard<std::mutex> guard(m_mutex);
+    remix::LightInfo info = base;
+    info.pNext = const_cast<remix::LightInfoSphereEXT*>(&ext);
+    auto created = m_remixInterface->CreateLight(info);
+    if (!created) {
+        Error("[LightManager] Failed to create sphere light: %d\n", created.status());
+        return 0;
+    }
+    uint64_t id = m_nextLightId++;
+    m_lights.emplace(id, ManagedLight{ created.value(), entityId });
+    if (entityId) m_entityToLight.emplace(entityId, id);
+    return id;
+}
+
+uint64_t LightManager::CreateRectLight(const remix::LightInfo& base, const remix::LightInfoRectEXT& ext, uint64_t entityId) {
+    if (!m_remixInterface) return 0;
+    std::lock_guard<std::mutex> guard(m_mutex);
+    remix::LightInfo info = base;
+    info.pNext = const_cast<remix::LightInfoRectEXT*>(&ext);
+    auto created = m_remixInterface->CreateLight(info);
+    if (!created) {
+        Error("[LightManager] Failed to create rect light: %d\n", created.status());
+        return 0;
+    }
+    uint64_t id = m_nextLightId++;
+    m_lights.emplace(id, ManagedLight{ created.value(), entityId });
+    if (entityId) m_entityToLight.emplace(entityId, id);
+    return id;
+}
+
+uint64_t LightManager::CreateDiskLight(const remix::LightInfo& base, const remix::LightInfoDiskEXT& ext, uint64_t entityId) {
+    if (!m_remixInterface) return 0;
+    std::lock_guard<std::mutex> guard(m_mutex);
+    remix::LightInfo info = base;
+    info.pNext = const_cast<remix::LightInfoDiskEXT*>(&ext);
+    auto created = m_remixInterface->CreateLight(info);
+    if (!created) {
+        Error("[LightManager] Failed to create disk light: %d\n", created.status());
+        return 0;
+    }
+    uint64_t id = m_nextLightId++;
+    m_lights.emplace(id, ManagedLight{ created.value(), entityId });
+    if (entityId) m_entityToLight.emplace(entityId, id);
+    return id;
+}
+
+uint64_t LightManager::CreateDistantLight(const remix::LightInfo& base, const remix::LightInfoDistantEXT& ext, uint64_t entityId) {
+    if (!m_remixInterface) return 0;
+    std::lock_guard<std::mutex> guard(m_mutex);
+    remix::LightInfo info = base;
+    info.pNext = const_cast<remix::LightInfoDistantEXT*>(&ext);
+    auto created = m_remixInterface->CreateLight(info);
+    if (!created) {
+        Error("[LightManager] Failed to create distant light: %d\n", created.status());
+        return 0;
+    }
+    uint64_t id = m_nextLightId++;
+    m_lights.emplace(id, ManagedLight{ created.value(), entityId });
+    if (entityId) m_entityToLight.emplace(entityId, id);
+    return id;
+}
+
+bool LightManager::DestroyLight(uint64_t lightId) {
+    std::lock_guard<std::mutex> guard(m_mutex);
+    auto it = m_lights.find(lightId);
+    if (it == m_lights.end()) return false;
+    if (it->second.handle) {
+        m_remixInterface->DestroyLight(it->second.handle);
+    }
+    // remove from entity map
+    if (it->second.entityId) {
+        auto range = m_entityToLight.equal_range(it->second.entityId);
+        for (auto r = range.first; r != range.second; ) {
+            if (r->second == lightId) r = m_entityToLight.erase(r); else ++r;
+        }
+    }
+    m_lights.erase(it);
+    return true;
+}
+
+bool LightManager::UpdateSphereLight(uint64_t lightId, const remix::LightInfo& base, const remix::LightInfoSphereEXT& ext) {
+    std::lock_guard<std::mutex> guard(m_mutex);
+    auto it = m_lights.find(lightId);
+    if (it == m_lights.end() || !it->second.handle) return false;
+    remix::LightInfo info = base; info.pNext = const_cast<remix::LightInfoSphereEXT*>(&ext);
+    return m_remixInterface->UpdateLightDefinition(it->second.handle, info);
+}
+
+bool LightManager::UpdateRectLight(uint64_t lightId, const remix::LightInfo& base, const remix::LightInfoRectEXT& ext) {
+    std::lock_guard<std::mutex> guard(m_mutex);
+    auto it = m_lights.find(lightId);
+    if (it == m_lights.end() || !it->second.handle) return false;
+    remix::LightInfo info = base; info.pNext = const_cast<remix::LightInfoRectEXT*>(&ext);
+    return m_remixInterface->UpdateLightDefinition(it->second.handle, info);
+}
+
+bool LightManager::UpdateDiskLight(uint64_t lightId, const remix::LightInfo& base, const remix::LightInfoDiskEXT& ext) {
+    std::lock_guard<std::mutex> guard(m_mutex);
+    auto it = m_lights.find(lightId);
+    if (it == m_lights.end() || !it->second.handle) return false;
+    remix::LightInfo info = base; info.pNext = const_cast<remix::LightInfoDiskEXT*>(&ext);
+    return m_remixInterface->UpdateLightDefinition(it->second.handle, info);
+}
+
+bool LightManager::UpdateDistantLight(uint64_t lightId, const remix::LightInfo& base, const remix::LightInfoDistantEXT& ext) {
+    std::lock_guard<std::mutex> guard(m_mutex);
+    auto it = m_lights.find(lightId);
+    if (it == m_lights.end() || !it->second.handle) return false;
+    remix::LightInfo info = base; info.pNext = const_cast<remix::LightInfoDistantEXT*>(&ext);
+    return m_remixInterface->UpdateLightDefinition(it->second.handle, info);
+}
+bool LightManager::HasLight(uint64_t lightId) const {
+    return m_lights.find(lightId) != m_lights.end();
+}
+
+bool LightManager::HasLightForEntity(uint64_t entityId) const {
+    return m_entityToLight.find(entityId) != m_entityToLight.end();
+}
+
+void LightManager::DestroyLightsForEntity(uint64_t entityId) {
+    std::lock_guard<std::mutex> guard(m_mutex);
+    auto range = m_entityToLight.equal_range(entityId);
+    for (auto it = range.first; it != range.second; ++it) {
+        DestroyLight(it->second);
+    }
+}
+
+void LightManager::ClearAllLights() {
+    std::lock_guard<std::mutex> guard(m_mutex);
+    for (auto& [id, light] : m_lights) {
+        if (light.handle) m_remixInterface->DestroyLight(light.handle);
+    }
+    m_lights.clear();
+    m_entityToLight.clear();
+}
+
+size_t LightManager::GetLightCount() const {
+    return m_lights.size();
+}
+
+void LightManager::SubmitLightsForCurrentFrame() {
+    // No-op: native Remix auto-instancing handles per-frame submission
 }
 
 //=============================================================================
