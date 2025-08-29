@@ -28,31 +28,9 @@ Multiplayer works best when the server/host has this addon and the cvar `sv_allo
 
 You can join servers without the addon but you ***will*** experience visual issues.
 
-## Incompatible Addons
-| Type | Name | Reason |
-| -------- | ------- | ------- |
-| Map | [Bro Said He Knew A Spot 💀](https://steamcommunity.com/sharedfiles/filedetails/?id=3252367349) | Breaks other shader-skybox maps |
-| Map | [gm_northbury](https://steamcommunity.com/sharedfiles/filedetails/?id=3251774364) | Rasterized |
-| Map | [gm_bigcity_improved](https://steamcommunity.com/workshop/filedetails/?id=815782148) | Rasterized |
-| Addon | [MW/WZ Skydive/Parachute + Infil](https://steamcommunity.com/sharedfiles/filedetails/?id=2635378860) | Consumes a lot of vram, most likely precaching |
-| Addon | [CS:GO Weapons](https://steamcommunity.com/sharedfiles/filedetails/?id=2193997180) | Game freezes up on `Starting lua...` when loading into a map. <br>(can be worked around by typing `mat_dxlevel 95` in the console ingame, may cause other issues though) |
-| Addon | [[ARC9] Gunsmith Reloaded](https://steamcommunity.com/sharedfiles/filedetails/?id=2910537020) | Game freezes up on `Starting lua...` when loading into a map. <br>(can be worked around by typing `mat_dxlevel 95` in the console ingame, may cause other issues though) |
-| Addon | [[TFA] Left 4 Dead 2 - HQ Weapons Pack](https://steamcommunity.com/sharedfiles/filedetails/?id=3349875996) | Game freezes up on `Starting lua...` when loading into a map. <br>(can be worked around by typing `mat_dxlevel 95` in the console ingame, may cause other issues though) | 
-
-
-## Known issues
-### Vanilla
-- Shader skyboxes (gm_flatgrass, gm_construct, etc) cannot be interacted with and may have rendering issues
-- Some render targets (screenshots, whatever addons that rely on them) do not appear or behave strangely (investigating)
-- NPC Eyes do not render as the fixed function rendering fallback no longer exists (investigating)
-- Some maps are rasterized and also have vertex explosions.
-- Some map lights will cull
-- Enabling `r_3dsky` causes flickering in some maps
-- Skinned meshes have unstable hashes
-
-### Addons
-- High vram usage from addons like ARC9 or TFA as they precache textures on map load
-- Tactical RP scopes become invisible when using ADS
+## Support
+### [Incompatible Addons](https://github.com/Xenthio/garrys-mod-rtx-remixed/wiki/Incompatible-Addons)
+### [Known issues](https://github.com/Xenthio/garrys-mod-rtx-remixed/wiki/Known-Issues)
 
 ## Recommended Resources
 [HDRI Editor](https://github.com/sambow23/hdri_cube/blob/main/README.md)
