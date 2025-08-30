@@ -174,9 +174,10 @@ namespace remix {
     Result< remixapi_MeshHandle >     CreateMesh(const remixapi_MeshInfo& info);
     Result< void >                    DestroyMesh(remixapi_MeshHandle handle);
     Result< void >                    SetupCamera(const remixapi_CameraInfo& info);
-    Result< void >                    DrawInstance(const remixapi_InstanceInfo& info);
-    Result< remixapi_LightHandle >    CreateLight(const remixapi_LightInfo& info);
-    Result< void >                    DestroyLight(remixapi_LightHandle handle);
+         Result< void >                    DrawInstance(const remixapi_InstanceInfo& info);
+     Result< remixapi_LightHandle >    CreateLight(const remixapi_LightInfo& info);
+     Result< remixapi_LightHandle >    CreateLightBatched(const remixapi_LightInfo& info);
+     Result< void >                    DestroyLight(remixapi_LightHandle handle);
     Result< void >                    DrawLightInstance(remixapi_LightHandle handle);
     // Deferred update of an analytical light definition. Applied on render thread.
     Result< void >                    UpdateLightDefinition(remixapi_LightHandle handle, const remixapi_LightInfo& info);
@@ -218,7 +219,7 @@ namespace remix {
         return status;
       }
 
-      static_assert(sizeof(remixapi_Interface) == 184,
+      static_assert(sizeof(remixapi_Interface) == 216,
                     "Change version, update C++ wrapper when adding new functions");
 
       remix::Interface interfaceInCpp = {};
@@ -735,6 +736,10 @@ namespace remix {
       srcColorBlendFactor = 1 /* VK_BLEND_FACTOR_ONE */;
       dstColorBlendFactor = 0 /* VK_BLEND_FACTOR_ZERO */;
       colorBlendOp = 0 /* VK_BLEND_OP_ADD */;
+      srcAlphaBlendFactor = 1 /* VK_BLEND_FACTOR_ONE */;
+      dstAlphaBlendFactor = 0 /* VK_BLEND_FACTOR_ZERO */;
+      alphaBlendOp = 0 /* VK_BLEND_OP_ADD */;
+      writeMask = 0xFFFFFFFF;
       textureColorArg1Source = 1 /* RtTextureArgSource::Texture */;
       textureColorArg2Source = 0 /* RtTextureArgSource::None */;
       textureColorOperation = 3 /* DxvkRtTextureOperation::Modulate */;
@@ -743,7 +748,8 @@ namespace remix {
       textureAlphaOperation = 1 /* DxvkRtTextureOperation::SelectArg1 */;
       tFactor = 0XFFFFFFFF;
       isTextureFactorBlend = false;
-      static_assert(sizeof remixapi_InstanceInfoBlendEXT == 80);
+      isVertexColorBakedLighting = true;
+      static_assert(sizeof remixapi_InstanceInfoBlendEXT == 96);
     }
   };
 
@@ -761,21 +767,28 @@ namespace remix {
       pNext = nullptr;
       maxNumParticles = 10000;
       spawnRatePerSecond = 0.f;
-      minTimeToLive = 3.0f;
-      maxTimeToLive = 6.0f;
-      minParticleSize = 1.0f;
-      maxParticleSize = 3.0f;
-      minRotationSpeed = 0.1f;
-      maxRotationSpeed = 1.0f;
+      minTimeToLive = 1.0f;
+      maxTimeToLive = 1.0f;
+      minSpawnSize = 10.0f;
+      maxSpawnSize = 10.0f;
+      minSpawnRotationSpeed = 0.0f;
+      maxSpawnRotationSpeed = 0.0f;
       minSpawnColor = {1, 1, 1, 1};
       maxSpawnColor = {1, 1, 1, 1};
+      minTargetSize = 0.0f;
+      maxTargetSize = 0.0f;
+      minTargetRotationSpeed = 0.0f;
+      maxTargetRotationSpeed = 0.0f;
+      minTargetColor = { 1, 1, 1, 0 };
+      maxTargetColor = { 1, 1, 1, 0 };
       useSpawnTexcoords = false;
-      initialVelocityFromNormal = 10.0f;
+      initialVelocityFromMotion = 0.0f;
+      initialVelocityFromNormal = 0.0f;
       initialVelocityConeAngleDegrees = 0.0f;
-      maxSpeed = 3.0f;
-      gravityForce = -0.5f;
-      useTurbulence = true;
-      turbulenceAmplitude = 5.0f;
+      maxSpeed = -1.0f;
+      gravityForce = -0.98f;
+      useTurbulence = false;
+      turbulenceForce = 5.0f;
       turbulenceFrequency = 0.05f;
       enableCollisionDetection = false;
       collisionRestitution = 0.5f;
@@ -784,7 +797,8 @@ namespace remix {
       enableMotionTrail = false;
       motionTrailMultiplier = 1.0f;
       hideEmitter = false;
-      static_assert(sizeof InstanceInfoParticleSystemEXT == 144);
+      billboardType = 0;
+      static_assert(sizeof InstanceInfoParticleSystemEXT == 200);
     }
   };
 
@@ -969,14 +983,23 @@ namespace remix {
     }
   };
 
-  inline Result< remixapi_LightHandle > Interface::CreateLight(const remixapi_LightInfo& info) {
-    remixapi_LightHandle handle = nullptr;
-    remixapi_ErrorCode status = m_CInterface.CreateLight(&info, &handle);
-    if (status != REMIXAPI_ERROR_CODE_SUCCESS) {
-      return status;
-    }
-    return handle;
-  }
+     inline Result< remixapi_LightHandle > Interface::CreateLight(const remixapi_LightInfo& info) {
+     remixapi_LightHandle handle = nullptr;
+     remixapi_ErrorCode status = m_CInterface.CreateLight(&info, &handle);
+     if (status != REMIXAPI_ERROR_CODE_SUCCESS) {
+       return status;
+     }
+     return handle;
+   }
+
+   inline Result< remixapi_LightHandle > Interface::CreateLightBatched(const remixapi_LightInfo& info) {
+     remixapi_LightHandle handle = nullptr;
+     remixapi_ErrorCode status = m_CInterface.CreateLightBatched(&info, &handle);
+     if (status != REMIXAPI_ERROR_CODE_SUCCESS) {
+       return status;
+     }
+     return handle;
+   }
 
   inline Result< void > Interface::DestroyLight(remixapi_LightHandle handle) {
     return m_CInterface.DestroyLight(handle);
@@ -986,18 +1009,11 @@ namespace remix {
     return m_CInterface.DrawLightInstance(handle);
   }
 
-  // Helper to call exported function not in the C interface table
-  using PFN_remixapi_UpdateLightDefinition = remixapi_ErrorCode (REMIXAPI_CALL*)(remixapi_LightHandle, const remixapi_LightInfo*);
-
   inline Result< void > Interface::UpdateLightDefinition(remixapi_LightHandle handle, const remixapi_LightInfo& info) {
-    if (!m_RemixDLL) {
-      return REMIXAPI_ERROR_CODE_NOT_INITIALIZED;
+    if (m_CInterface.UpdateLightDefinition) {
+      return m_CInterface.UpdateLightDefinition(handle, &info);
     }
-    auto f = reinterpret_cast<PFN_remixapi_UpdateLightDefinition>(GetProcAddress(m_RemixDLL, "remixapi_UpdateLightDefinition"));
-    if (!f) {
-      return REMIXAPI_ERROR_CODE_GET_PROC_ADDRESS_FAILURE;
-    }
-    return f(handle, &info);
+    return REMIXAPI_ERROR_CODE_GET_PROC_ADDRESS_FAILURE;
   }
 
   namespace detail {

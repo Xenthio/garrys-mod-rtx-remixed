@@ -54,7 +54,7 @@
 
 #define REMIXAPI_VERSION_MAJOR 0
 #define REMIXAPI_VERSION_MINOR 5
-#define REMIXAPI_VERSION_PATCH 1
+#define REMIXAPI_VERSION_PATCH 2
 
 
 // External
@@ -393,6 +393,11 @@ extern "C" {
     uint32_t            textureAlphaOperation;
     uint32_t            tFactor;
     remixapi_Bool       isTextureFactorBlend;
+    uint32_t            srcAlphaBlendFactor;
+    uint32_t            dstAlphaBlendFactor;
+    uint32_t            alphaBlendOp;
+    uint32_t            writeMask;
+    remixapi_Bool       isVertexColorBakedLighting;
   } remixapi_InstanceInfoBlendEXT;
 
   typedef struct remixapi_InstanceInfoObjectPickingEXT {
@@ -405,7 +410,6 @@ extern "C" {
   typedef enum remixapi_InstanceCategoryBit {
     REMIXAPI_INSTANCE_CATEGORY_BIT_WORLD_UI                  = 1 << 0,
     REMIXAPI_INSTANCE_CATEGORY_BIT_WORLD_MATTE               = 1 << 1,
-    REMIXAPI_INSTANCE_CATEGORY_BIT_LEGACY_EMISSIVE           = 1 << 23,
     REMIXAPI_INSTANCE_CATEGORY_BIT_SKY                       = 1 << 2,
     REMIXAPI_INSTANCE_CATEGORY_BIT_IGNORE                    = 1 << 3,
     REMIXAPI_INSTANCE_CATEGORY_BIT_IGNORE_LIGHTS             = 1 << 4,
@@ -427,6 +431,8 @@ extern "C" {
     REMIXAPI_INSTANCE_CATEGORY_BIT_IGNORE_BAKED_LIGHTING     = 1 << 20,
     REMIXAPI_INSTANCE_CATEGORY_BIT_IGNORE_ALPHA_CHANNEL      = 1 << 21,
     REMIXAPI_INSTANCE_CATEGORY_BIT_IGNORE_TRANSPARENCY_LAYER = 1 << 22,
+    REMIXAPI_INSTANCE_CATEGORY_BIT_PARTICLE_EMITTER          = 1 << 23,
+    REMIXAPI_INSTANCE_CATEGORY_BIT_LEGACY_EMISSIVE           = 1 << 24,
   } remixapi_InstanceCategoryBit;
 
   typedef uint32_t remixapi_InstanceCategoryFlags;
@@ -447,18 +453,26 @@ extern "C" {
     float            maxTimeToLive;
     float            initialVelocityFromNormal;
     float            initialVelocityConeAngleDegrees;
-    float            minParticleSize;
-    float            maxParticleSize;
+    float            minSpawnSize;
+    float            maxSpawnSize;
     float            gravityForce;
     float            maxSpeed;
     float            turbulenceFrequency;
-    float            turbulenceAmplitude;
-    float            minRotationSpeed;
-    float            maxRotationSpeed;
+    float            turbulenceForce;
+    float            minSpawnRotationSpeed;
+    float            maxSpawnRotationSpeed;
     float            spawnRatePerSecond;
     float            collisionThickness;
     float            collisionRestitution;
     float            motionTrailMultiplier;
+    float            initialVelocityFromMotion;
+    float            minTargetSize;
+    float            maxTargetSize;
+    float            minTargetRotationSpeed;
+    float            maxTargetRotationSpeed;
+    remixapi_Float4D minTargetColor;
+    remixapi_Float4D maxTargetColor;
+    uint32_t         billboardType;
   } remixapi_InstanceInfoParticleSystemEXT;
 
   typedef struct remixapi_InstanceInfo {
@@ -591,6 +605,10 @@ extern "C" {
   typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_CreateLight)(
     const remixapi_LightInfo* info,
     remixapi_LightHandle*     out_handle);
+    
+  typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_CreateLightBatched)(
+    const remixapi_LightInfo* info,
+    remixapi_LightHandle*     out_handle);
 
   typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_DestroyLight)(
     remixapi_LightHandle      handle);
@@ -614,15 +632,23 @@ extern "C" {
 
   // Optional frame-boundary callbacks (mirrors bridge API semantics)
   typedef void (REMIXAPI_PTR* PFN_remixapi_BridgeCallback)(void);
+  typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_RegisterCallbacks)(
+    PFN_remixapi_BridgeCallback beginSceneCallback,
+    PFN_remixapi_BridgeCallback endSceneCallback,
+    PFN_remixapi_BridgeCallback presentCallback);
   REMIXAPI remixapi_ErrorCode REMIXAPI_CALL remixapi_RegisterCallbacks(
     PFN_remixapi_BridgeCallback beginSceneCallback,
     PFN_remixapi_BridgeCallback endSceneCallback,
     PFN_remixapi_BridgeCallback presentCallback);
 
   // Internal helper to auto-instance persistent external API lights once per frame
+  typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_AutoInstancePersistentLights)(void);
   REMIXAPI remixapi_ErrorCode REMIXAPI_CALL remixapi_AutoInstancePersistentLights(void);
 
   // Queue a definition update for an existing analytical light. Applied safely each frame.
+  typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_UpdateLightDefinition)(
+    remixapi_LightHandle handle,
+    const remixapi_LightInfo* info);
   REMIXAPI remixapi_ErrorCode REMIXAPI_CALL remixapi_UpdateLightDefinition(
     remixapi_LightHandle handle,
     const remixapi_LightInfo* info);
@@ -696,6 +722,7 @@ extern "C" {
     PFN_remixapi_SetupCamera        SetupCamera;
     PFN_remixapi_DrawInstance       DrawInstance;
     PFN_remixapi_CreateLight        CreateLight;
+    PFN_remixapi_CreateLightBatched CreateLightBatched;
     PFN_remixapi_DestroyLight       DestroyLight;
     PFN_remixapi_DrawLightInstance  DrawLightInstance;
     PFN_remixapi_SetConfigVariable  SetConfigVariable;
@@ -715,6 +742,11 @@ extern "C" {
     PFN_remixapi_Present            Present;
     remixapi_UIState                (*GetUIState)(void);
     remixapi_ErrorCode              (*SetUIState)(remixapi_UIState state);
+
+    // Optional extension functions (present starting in v0.5.1+)
+    PFN_remixapi_RegisterCallbacks          RegisterCallbacks;
+    PFN_remixapi_AutoInstancePersistentLights AutoInstancePersistentLights;
+    PFN_remixapi_UpdateLightDefinition      UpdateLightDefinition;
   } remixapi_Interface;
 
   REMIXAPI remixapi_ErrorCode REMIXAPI_CALL remixapi_InitializeLibrary(
@@ -856,7 +888,7 @@ extern "C" {
       return REMIXAPI_ERROR_CODE_GET_PROC_ADDRESS_FAILURE;
     }
 
-    remixapi_InitializeLibraryInfo info = { 0 };
+    remixapi_InitializeLibraryInfo info = { REMIXAPI_STRUCT_TYPE_NONE, NULL, 0 };
     {
       info.sType = REMIXAPI_STRUCT_TYPE_INITIALIZE_LIBRARY_INFO;
       info.version = REMIXAPI_VERSION_MAKE(REMIXAPI_VERSION_MAJOR,
