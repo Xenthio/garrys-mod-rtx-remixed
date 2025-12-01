@@ -863,6 +863,23 @@ LUA_FUNCTION(RemixMaterial_ClearTextureCache) {
     return 1;
 }
 
+// Lua function: RemixMaterial.RetryPendingCategories()
+// Retries categorization for textures that returned hash=0
+// Returns number of textures successfully categorized
+LUA_FUNCTION(RemixMaterial_RetryPendingCategories) {
+    int count = D3D9TextureTracker::Instance().RetryPendingCategories();
+    LUA->PushNumber(count);
+    return 1;
+}
+
+// Lua function: RemixMaterial.GetPendingCount()
+// Returns the number of textures waiting for categorization
+LUA_FUNCTION(RemixMaterial_GetPendingCount) {
+    size_t count = D3D9TextureTracker::Instance().GetPendingCount();
+    LUA->PushNumber(static_cast<double>(count));
+    return 1;
+}
+
 // Lua function: RemixMaterial.FindTexturesByName(searchName)
 LUA_FUNCTION(RemixMaterial_FindTexturesByName) {
     if (!LUA->IsType(1, Type::String)) {
@@ -953,6 +970,12 @@ void MaterialManager::InitializeLuaBindings() {
     
     m_lua->PushCFunction(RemixMaterial_ClearTextureCache);
     m_lua->SetField(-2, "ClearTextureCache");
+    
+    m_lua->PushCFunction(RemixMaterial_RetryPendingCategories);
+    m_lua->SetField(-2, "RetryPendingCategories");
+    
+    m_lua->PushCFunction(RemixMaterial_GetPendingCount);
+    m_lua->SetField(-2, "GetPendingCount");
     
     // Set the table as a global field
     m_lua->SetField(-2, "RemixMaterial");

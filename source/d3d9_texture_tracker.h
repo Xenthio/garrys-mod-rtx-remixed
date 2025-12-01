@@ -26,7 +26,10 @@ public:
     void Shutdown();
 
     // Track a material being rendered
-    void SetCurrentMaterial(const char* materialName);
+    void SetCurrentMaterial(IMaterial* pMaterial);
+    
+    // Check and apply automatic categories (particles, emissive)
+    void CheckAndApplyCategories(IDirect3DTexture9* pTexture);
     
     // Get the D3D9 texture for a material (returns null if not found)
     IDirect3DTexture9* GetTextureForMaterial(const char* materialName);
@@ -61,8 +64,22 @@ public:
     
     // Find textures by partial name match (returns name->hash pairs)
     std::vector<std::pair<std::string, uint64_t>> FindTexturesByName(const std::string& searchName) const;
+    
+    // Retry categorization for pending textures (those that returned hash=0)
+    // Returns number of textures successfully categorized
+    int RetryPendingCategories();
+    
+    // Get count of pending textures
+    size_t GetPendingCount() const { return m_pendingCategories.size(); }
 
 private:
+    // Pending categorization entry
+    struct PendingCategory {
+        IDirect3DTexture9* texture;
+        std::string materialName;
+        bool isParticle;
+        bool isEmissive;
+    };
     D3D9TextureTracker() = default;
     ~D3D9TextureTracker();
 
@@ -99,13 +116,17 @@ private:
     IMatRenderContext* m_pRenderContext = nullptr;
     
     // Current material being rendered (set by Bind hooks)
-    std::string m_currentMaterial;
+    std::string m_currentMaterialName;
+    IMaterial* m_currentMaterial = nullptr;
     
     // Cache: material name -> set of D3D9 textures (materials can have multiple texture variants)
     std::unordered_map<std::string, std::vector<IDirect3DTexture9*>> m_textureCache;
     
     // Hash to category flags mapping
     std::unordered_map<uint64_t, uint32_t> m_hashToCategoryFlags;
+    
+    // Pending categorizations (textures that returned hash=0)
+    std::vector<PendingCategory> m_pendingCategories;
     
     // Track whether we're initialized
     bool m_bInitialized = false;

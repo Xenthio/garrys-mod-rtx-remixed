@@ -159,6 +159,95 @@ function RemixCategoryManager.IsMaterialEmissive(materialName)
     return false
 end
 
+--[[
+    Check if a material is likely a particle/sprite
+    @param materialName string - The material name
+    @return boolean - True if material is likely a particle
+]]--
+function RemixCategoryManager.IsMaterialParticle(materialName)
+    local lowerName = materialName:lower()
+    
+    -- Check common particle paths
+    if lowerName:find("^particles/") or 
+       lowerName:find("^effects/") or 
+       lowerName:find("^sprites/") or
+       lowerName:find("/particles/") or
+       lowerName:find("/effects/") or
+       lowerName:find("/sprites/") then
+        return true
+    end
+    
+    local mat = Material(materialName)
+    if not mat or mat:IsError() then return false end
+    
+    -- Check shaders used by particles
+    local shader = mat:GetShader()
+    if shader then
+        local s = shader:lower()
+        if s == "sprite" or 
+           s == "spritecard" or 
+           s == "modulate" or
+           s == "refract" or -- Refractive particles
+           s == "cable" then -- Beams/Cables
+            return true
+        end
+    end
+    
+    return false
+end
+
+--[[
+    Categorize all currently tracked materials
+    This catches dynamic materials (weapons, effects) that aren't in the BSP
+    @return table - Statistics
+]]--
+function RemixCategoryManager.CategorizeAllTrackedMaterials()
+    if not RemixMaterial or not RemixMaterial.GetCachedMaterials then
+        return { error = "Remix API not available" }
+    end
+    
+    MsgC(Color(100, 200, 255), "[RemixCategoryManager] Scanning all tracked materials...\n")
+    
+    local materials = RemixMaterial.GetCachedMaterials()
+    if not materials then return { count = 0 } end
+    
+    local stats = {
+        total = #materials,
+        particles = 0,
+        emissive = 0,
+        newly_categorized = 0
+    }
+    
+    for _, matName in ipairs(materials) do
+        local lowerName = matName:lower()
+        
+        if not processedTextures[lowerName] then
+            processedTextures[lowerName] = true
+            local category = nil
+            
+            if RemixCategoryManager.IsMaterialParticle(matName) then
+                category = RemixCategoryManager.CATEGORY.PARTICLE
+                stats.particles = stats.particles + 1
+            elseif RemixCategoryManager.IsMaterialEmissive(matName) then
+                category = RemixCategoryManager.PRESET.EMISSIVE
+                stats.emissive = stats.emissive + 1
+            -- Add more checks if needed
+            end
+            
+            if category then
+                if RemixCategoryManager.SetMaterialCategory(matName, category) then
+                    stats.newly_categorized = stats.newly_categorized + 1
+                end
+            end
+        end
+    end
+    
+    MsgC(Color(100, 255, 100), string.format("[RemixCategoryManager] Tracked scan: %d total, %d particles, %d emissive found\n",
+        stats.total, stats.particles, stats.emissive))
+        
+    return stats
+end
+
 function RemixCategoryManager.ForceTrackTexture(textureName)
     -- Create a simple material that uses this texture
     local matName = "rtx_force_track_" .. textureName:gsub("[^%w]", "_")
@@ -1029,6 +1118,13 @@ concommand.Add("remix_check_emissive", function(ply, cmd, args)
     end
 end, nil, "Check if a material has $selfillum enabled")
 
+--[[
+    Console command to categorize all tracked materials
+]]--
+concommand.Add("remix_categorize_tracked", function(ply, cmd, args)
+    RemixCategoryManager.CategorizeAllTrackedMaterials()
+end, nil, "Categorize all materials currently tracked by the renderer")
+
 
 -- Auto-initialize on player spawn (client-side)
 hook.Add("HUDPaint", "RemixCategoryManager_AutoInit", function()
@@ -1054,13 +1150,37 @@ hook.Add("HUDPaint", "RemixCategoryManager_AutoInit", function()
         MsgC(Color(255, 200, 100), "[RemixCategoryManager] Tip: Use 'remix_smart_mark_world' to manually trigger categorization\n")
         -- Use smart marking by default
         RemixCategoryManager.SmartMarkWorldTextures()
+        -- Also scan tracked materials for dynamic things (particles, weapons)
+        RemixCategoryManager.CategorizeAllTrackedMaterials()
+        
+        -- Note: Pending categorization retry is now handled automatically by the C++ module
+        -- during rendering (no Lua timer needed)
     end)
 end)
+
+-- Console command: remix_retry_pending
+concommand.Add("remix_retry_pending", function()
+    if not RemixMaterial or not RemixMaterial.RetryPendingCategories then
+        MsgC(Color(255, 100, 100), "[RemixCategoryManager] RemixMaterial.RetryPendingCategories not available\n")
+        return
+    end
+    
+    local pending = RemixMaterial.GetPendingCount and RemixMaterial.GetPendingCount() or 0
+    MsgC(Color(200, 200, 200), string.format("[RemixCategoryManager] %d textures pending categorization\n", pending))
+    
+    if pending > 0 then
+        local success = RemixMaterial.RetryPendingCategories()
+        local remaining = RemixMaterial.GetPendingCount and RemixMaterial.GetPendingCount() or 0
+        MsgC(Color(100, 255, 100), string.format("[RemixCategoryManager] Categorized %d, %d still pending\n", success, remaining))
+    end
+end, nil, "Retry categorizing textures that returned hash=0")
 
 MsgC(Color(100, 255, 100), "[RemixCategoryManager] Loaded successfully!\n")
 MsgC(Color(200, 200, 200), "[RemixCategoryManager] Commands:\n")
 MsgC(Color(200, 200, 200), "  remix_mark_world_textures    - Mark all world textures with DECAL_STATIC\n")
-MsgC(Color(200, 200, 200), "  remix_smart_mark_world       - Intelligently categorize world textures\n")
+MsgC(Color(200, 200, 200), "  remix_smart_mark_world       - Intelligently categorize world textures (BSP + Props)\n")
+MsgC(Color(200, 200, 200), "  remix_categorize_tracked     - Categorize all currently rendered materials (Particles, Effects)\n")
+MsgC(Color(200, 200, 200), "  remix_retry_pending          - Retry categorizing pending textures (hash=0)\n")
 MsgC(Color(200, 200, 200), "  remix_clear_categories       - Clear all category mappings\n")
 MsgC(Color(200, 200, 200), "  remix_find_texture_hash      - Search for texture by name\n")
 MsgC(Color(200, 200, 200), "  remix_set_material_category  - Set category for a material\n")
