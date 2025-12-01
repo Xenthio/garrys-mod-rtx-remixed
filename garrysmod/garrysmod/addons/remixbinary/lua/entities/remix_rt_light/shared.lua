@@ -7,4 +7,7 @@ ENT.AdminSpawnable = true
 ENT.Category = "RTX Remix"
 ENT.RenderGroup = RENDERGROUP_TRANSLUCENT
 
+-- Light type: "sphere", "rect", "disk", "distant", "cylinder"
+ENT.LightType = ENT.LightType or "sphere"
+
 

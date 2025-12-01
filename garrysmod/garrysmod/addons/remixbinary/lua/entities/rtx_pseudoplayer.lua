@@ -18,6 +18,7 @@ ENT.AdminSpawnable	= false
 local pseudoweapon
 local pseudoplayer
 local materialsset
+local materialSuffix = ""  -- Unique suffix for material names
 
 function ENT:Initialize()
 	if pseudoplayer then
@@ -118,13 +119,13 @@ local function MaterialSet()
 		local tex = mat:GetTexture( "$basetexture" )   
 
 		-- create a copy so we can have the texture be drawn unlit.
-		local matblank = CreateMaterial( "pseudoplayermaterialtemp" .. k, "UnlitGeneric", {
+		local matblank = CreateMaterial( "pseudoplayermaterialtemp" .. k .. materialSuffix, "UnlitGeneric", {
 			["$basetexture"] = "color/white",
 			["$model"] = 1,
 			["$translucent"] = 0,
 		} )
 		-- we need to create a second material so we can write the alpha, since gmod doesnt do it properly for some reason.
-		local matblankalpha = CreateMaterial( "pseudoplayermaterialtempalpha" .. k, "UnlitGeneric", {
+		local matblankalpha = CreateMaterial( "pseudoplayermaterialtempalpha" .. k .. materialSuffix, "UnlitGeneric", {
 			["$basetexture"] = "color/white",
 			["$model"] = 1,
 			["$translucent"] = 1,
@@ -132,7 +133,7 @@ local function MaterialSet()
 		matblank:SetTexture( "$basetexture", tex )
 		matblankalpha:SetTexture( "$basetexture", tex )
 
-		local texname = "pseudoplayertexture" .. k .. tex:Width() .. "x" .. tex:Height() -- we need to create one unique for different widths and heights.
+		local texname = "pseudoplayertexture" .. k .. tex:Width() .. "x" .. tex:Height() .. materialSuffix -- we need to create one unique for different widths and heights.
 		local newtex = GetRenderTargetEx( texname, tex:Width(), tex:Height(), RT_SIZE_LITERAL, MATERIAL_RT_DEPTH_NONE, 0, 0, IMAGE_FORMAT_RGBA8888 ) 
 		
 		render.PushRenderTarget( newtex )
@@ -187,7 +188,7 @@ local function MaterialSet()
 
 		-- Create our final material, since we need custom keyvalues and we cant do that when we make a material from a png. so instead we copy the texture from above.
 		local kv = mat:GetKeyValues() 
-		local matlua = CreateMaterial( "pseudoplayermaterial" .. k, mat:GetShader(), kv )
+		local matlua = CreateMaterial( "pseudoplayermaterial" .. k .. materialSuffix, mat:GetShader(), kv )
 		matlua:SetTexture( "$basetexture", newertex)
 
 		-- this is the only keyvalue not copied for some reason??
@@ -247,6 +248,13 @@ function ENT:Think()
 		pseudoplayer:SetParent(self)
 		pseudoplayer:AddEffects( EF_BONEMERGE )
 		
+		-- Generate deterministic suffix based on player model so the same model produces the same hash
+		local playerModel = LocalPlayer():GetModel() or "unknown"
+		materialSuffix = "_" .. util.CRC(playerModel)
+		print("[gmRTX] - Player model changed, material suffix: " .. materialSuffix .. " (" .. playerModel .. ")")
+		
+		-- Clear material table and force recreation
+		materialtable = {}
 		materialsset = false 
 	end
 

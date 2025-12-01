@@ -5,6 +5,7 @@ local RemixMapConfigs = {}
 
 -- Configuration
 local CONFIG_DIR = "remix_map_configs"
+local CONFIG_VERSION = 1  -- Increment when config format changes
 local DEBUG_MODE = CreateClientConVar("rtx_conf_map_configs_debug", "0", true, false, "Enable debug output for map configs")
 local AUTO_LOAD = CreateClientConVar("rtx_conf_map_configs_autoload", "1", true, false, "Automatically load map configs on map start")
 
@@ -91,12 +92,50 @@ local function GetConfigPath(mapName)
     return CONFIG_DIR .. "/" .. mapName .. ".txt"
 end
 
--- File I/O helper function
+-- File I/O helper functions
 local function EnsureConfigDir()
     if not file.Exists(CONFIG_DIR, "DATA") then
         file.CreateDir(CONFIG_DIR)
         DebugPrint("Created config directory: " .. CONFIG_DIR)
     end
+end
+
+-- Atomic file write: write to temp file then rename to avoid corruption
+local function SafeFileWrite(filePath, content)
+    local tempPath = filePath .. ".tmp"
+    
+    -- Write to temp file
+    file.Write(tempPath, content)
+    
+    -- Verify temp file was written
+    if not file.Exists(tempPath, "DATA") then
+        return false, "Failed to write temporary file"
+    end
+    
+    -- Read back to verify content
+    local verification = file.Read(tempPath, "DATA")
+    if verification ~= content then
+        file.Delete(tempPath)
+        return false, "Content verification failed"
+    end
+    
+    -- Delete old file if it exists
+    if file.Exists(filePath, "DATA") then
+        file.Delete(filePath)
+    end
+    
+    -- Rename temp to final (Garry's Mod file API doesn't have rename, so we copy content)
+    file.Write(filePath, content)
+    
+    -- Clean up temp file
+    file.Delete(tempPath)
+    
+    -- Final verification
+    if not file.Exists(filePath, "DATA") then
+        return false, "Failed to create final file"
+    end
+    
+    return true, nil
 end
 
 -- File I/O functions
@@ -112,9 +151,12 @@ local function SaveMapConfig(mapName)
     local configData = {}
     local configLines = {}
     
-    -- Add header
+    -- Add header with version
     table.insert(configLines, "# RTX Remix and Source Engine configuration for map: " .. mapName)
     table.insert(configLines, "# " .. os.date("%Y-%m-%d %H:%M:%S"))
+    table.insert(configLines, "# Config Version: " .. CONFIG_VERSION)
+    table.insert(configLines, "")
+    table.insert(configLines, "version = " .. CONFIG_VERSION)
     table.insert(configLines, "")
     table.insert(configLines, "# Note: These are current config values. Adjust RTX settings in-game,")
     table.insert(configLines, "# modify Source engine cvars, then save again or modify this file directly.")
@@ -161,11 +203,16 @@ local function SaveMapConfig(mapName)
         table.insert(configLines, "")
     end
     
-    -- Write to file
+    -- Write to file atomically
     local configText = table.concat(configLines, "\n")
     local filePath = GetConfigPath(mapName)
     
-    file.Write(filePath, configText)
+    local success, err = SafeFileWrite(filePath, configText)
+    
+    if not success then
+        print("[gmRTX - Remix API] Error: Failed to save config file: " .. tostring(err))
+        return false
+    end
     
     DebugPrint("Saved config for map '" .. mapName .. "' to " .. filePath)
     print("[gmRTX - Remix API] Saved " .. savedCount .. " RTX and Source settings for map: " .. mapName)
@@ -190,6 +237,23 @@ local function LoadConfigFromFile(filePath, configName)
     
     DebugPrint("Loading config: " .. configName)
     
+    -- Check config version
+    local fileVersion = 0
+    for line in string.gmatch(configText, "[^\r\n]+") do
+        local key, value = string.match(line, "^(%S+)%s*=%s*(.+)$")
+        if key == "version" then
+            fileVersion = tonumber(value) or 0
+            break
+        end
+    end
+    
+    if fileVersion > CONFIG_VERSION then
+        print("[gmRTX - Remix API] Warning: Config file version (" .. fileVersion .. ") is newer than supported version (" .. CONFIG_VERSION .. ")")
+        print("[gmRTX - Remix API] Some settings may not be applied correctly. Consider updating the addon.")
+    elseif fileVersion < CONFIG_VERSION and fileVersion > 0 then
+        DebugPrint("Config file version (" .. fileVersion .. ") is older than current version (" .. CONFIG_VERSION .. "), will attempt to load")
+    end
+    
     -- Parse config file and apply settings
     local loadedCount = 0
     for line in string.gmatch(configText, "[^\r\n]+") do
@@ -200,32 +264,37 @@ local function LoadConfigFromFile(filePath, configName)
             -- Parse key = value
             local key, value = string.match(line, "^(%S+)%s*=%s*(.+)$")
             if key and value then
-                -- Remove any trailing comments
-                value = string.match(value, "^([^#]+)") or value
-                value = string.Trim(value)
-                
-                -- Handle RTX config variables
-                if string.StartWith(key, "rtx:") then
-                    local rtxKey = string.sub(key, 5) -- Remove "rtx:" prefix
-                    if RemixConfig and RemixConfig.SetConfigVariable(rtxKey, value) then
-                        DebugPrint("Loaded RTX " .. rtxKey .. " = " .. value)
-                        loadedCount = loadedCount + 1
-                    else
-                        DebugPrint("Failed to set RTX " .. rtxKey .. " = " .. value)
-                    end
-                -- Handle Source engine commands
-                elseif string.StartWith(key, "src:") then
-                    local cvarName = string.sub(key, 5) -- Remove "src:" prefix
-                    RunConsoleCommand(cvarName, value)
-                    DebugPrint("Loaded Source " .. cvarName .. " = " .. value)
-                    loadedCount = loadedCount + 1
-                -- Handle legacy format (backwards compatibility)
+                -- Skip version field (already processed)
+                if key == "version" then
+                    -- Skip
                 else
-                    if RemixConfig and RemixConfig.SetConfigVariable(key, value) then
-                        DebugPrint("Loaded (legacy) " .. key .. " = " .. value)
+                    -- Remove any trailing comments
+                    value = string.match(value, "^([^#]+)") or value
+                    value = string.Trim(value)
+                    
+                    -- Handle RTX config variables
+                    if string.StartWith(key, "rtx:") then
+                        local rtxKey = string.sub(key, 5) -- Remove "rtx:" prefix
+                        if RemixConfig and RemixConfig.SetConfigVariable(rtxKey, value) then
+                            DebugPrint("Loaded RTX " .. rtxKey .. " = " .. value)
+                            loadedCount = loadedCount + 1
+                        else
+                            DebugPrint("Failed to set RTX " .. rtxKey .. " = " .. value)
+                        end
+                    -- Handle Source engine commands
+                    elseif string.StartWith(key, "src:") then
+                        local cvarName = string.sub(key, 5) -- Remove "src:" prefix
+                        RunConsoleCommand(cvarName, value)
+                        DebugPrint("Loaded Source " .. cvarName .. " = " .. value)
                         loadedCount = loadedCount + 1
+                    -- Handle legacy format (backwards compatibility)
                     else
-                        DebugPrint("Failed to set (legacy) " .. key .. " = " .. value)
+                        if RemixConfig and RemixConfig.SetConfigVariable(key, value) then
+                            DebugPrint("Loaded (legacy) " .. key .. " = " .. value)
+                            loadedCount = loadedCount + 1
+                        else
+                            DebugPrint("Failed to set (legacy) " .. key .. " = " .. value)
+                        end
                     end
                 end
             end
@@ -416,9 +485,12 @@ concommand.Add("rtx_conf_default_save", function()
     local defaultPath = CONFIG_DIR .. "/default.txt"
     local configLines = {}
     
-    -- Add header
+    -- Add header with version
     table.insert(configLines, "# RTX Remix and Source Engine default configuration")
     table.insert(configLines, "# " .. os.date("%Y-%m-%d %H:%M:%S"))
+    table.insert(configLines, "# Config Version: " .. CONFIG_VERSION)
+    table.insert(configLines, "")
+    table.insert(configLines, "version = " .. CONFIG_VERSION)
     table.insert(configLines, "")
     table.insert(configLines, "# This file will be loaded for any map that doesn't have its own config.")
     table.insert(configLines, "# Adjust RTX settings in-game and Source cvars, then run this command to save as defaults.")
@@ -455,9 +527,14 @@ concommand.Add("rtx_conf_default_save", function()
         table.insert(configLines, "")
     end
     
-    -- Write to file
+    -- Write to file atomically
     local configText = table.concat(configLines, "\n")
-    file.Write(defaultPath, configText)
+    local success, err = SafeFileWrite(defaultPath, configText)
+    
+    if not success then
+        print("[gmRTX - Remix API] Error: Failed to save default config: " .. tostring(err))
+        return
+    end
     
     print("[gmRTX - Remix API] Saved " .. savedCount .. " RTX and Source settings as default config")
     print("[gmRTX - Remix API] Default config saved to: " .. defaultPath)

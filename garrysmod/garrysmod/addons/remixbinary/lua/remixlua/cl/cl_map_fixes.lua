@@ -80,7 +80,7 @@ local function CheckMapOnLoad()
         -- Only do this if the CVar actually exists to avoid errors
         if GetConVar("mat_forcedynamic") then
              RunConsoleCommand("mat_forcedynamic", "0")
-             RunConsoleCommand("prop_disable_distance_fade", "0")
+             RunConsoleCommand("prop_disable_distance_fade", "1")
         end
     end
 end

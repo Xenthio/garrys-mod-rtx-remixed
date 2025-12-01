@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 #include <mutex>
+#include <unordered_set>
 
 namespace RemixAPI {
     // Forward declarations
@@ -24,6 +25,7 @@ namespace RemixAPI {
     class ConfigManager;
     class ResourceManager;
     class LightManager;
+    class BSPGeometryManager;
 
     // Main RemixAPI class
     class RemixAPI {
@@ -42,6 +44,7 @@ namespace RemixAPI {
         ConfigManager& GetConfigManager() { return *m_configManager; }
         ResourceManager& GetResourceManager() { return *m_resourceManager; }
         LightManager& GetLightManager() { return *m_lightManager; }
+        BSPGeometryManager& GetBSPGeometryManager() { return *m_bspGeometryManager; }
         
         // Direct interface access
         remix::Interface* GetRemixInterface() { return m_remixInterface; }
@@ -65,6 +68,7 @@ namespace RemixAPI {
         std::unique_ptr<ConfigManager> m_configManager;
         std::unique_ptr<ResourceManager> m_resourceManager;
         std::unique_ptr<LightManager> m_lightManager;
+        std::unique_ptr<BSPGeometryManager> m_bspGeometryManager;
         
         bool m_initialized;
     };
@@ -80,17 +84,26 @@ namespace RemixAPI {
         uint64_t CreateRectLight(const remix::LightInfo& base, const remix::LightInfoRectEXT& ext, uint64_t entityId);
         uint64_t CreateDiskLight(const remix::LightInfo& base, const remix::LightInfoDiskEXT& ext, uint64_t entityId);
         uint64_t CreateDistantLight(const remix::LightInfo& base, const remix::LightInfoDistantEXT& ext, uint64_t entityId);
+        uint64_t CreateCylinderLight(const remix::LightInfo& base, const remix::LightInfoCylinderEXT& ext, uint64_t entityId);
+        uint64_t CreateDomeLight(const remix::LightInfo& base, const remix::LightInfoDomeEXT& ext, uint64_t entityId);
 
         // Update existing light definition (hash preserved)
         bool UpdateSphereLight(uint64_t lightId, const remix::LightInfo& base, const remix::LightInfoSphereEXT& ext);
         bool UpdateRectLight(uint64_t lightId, const remix::LightInfo& base, const remix::LightInfoRectEXT& ext);
         bool UpdateDiskLight(uint64_t lightId, const remix::LightInfo& base, const remix::LightInfoDiskEXT& ext);
         bool UpdateDistantLight(uint64_t lightId, const remix::LightInfo& base, const remix::LightInfoDistantEXT& ext);
+        bool UpdateCylinderLight(uint64_t lightId, const remix::LightInfo& base, const remix::LightInfoCylinderEXT& ext);
+        bool UpdateDomeLight(uint64_t lightId, const remix::LightInfo& base, const remix::LightInfoDomeEXT& ext);
 
         // Lifecycle
         bool DestroyLight(uint64_t lightId);
         bool HasLight(uint64_t lightId) const;
         bool HasLightForEntity(uint64_t entityId) const;
+        std::vector<uint64_t> GetLightsForEntity(uint64_t entityId) const;
+        std::vector<uint64_t> GetAllLightIds() const;
+        // Cached state access for safer partial updates (sphere only for now)
+        bool GetSphereState(uint64_t lightId, remix::LightInfo& outBase, remix::LightInfoSphereEXT& outSphere) const;
+        bool ApplySphereState(uint64_t lightId, const remix::LightInfo& base, const remix::LightInfoSphereEXT& sphere);
         void DestroyLightsForEntity(uint64_t entityId);
         void ClearAllLights();
         size_t GetLightCount() const;
@@ -105,13 +118,18 @@ namespace RemixAPI {
         struct ManagedLight {
             remixapi_LightHandle handle { nullptr };
             uint64_t entityId { 0 };
+            // Cached state for partial updates
+            bool isSphere { false };
+            remix::LightInfo cachedBase {};
+            remix::LightInfoSphereEXT cachedSphere {};
         };
 
         remix::Interface* m_remixInterface;
         GarrysMod::Lua::ILuaBase* m_lua;
-        std::mutex m_mutex;
+        mutable std::mutex m_mutex;
         std::unordered_map<uint64_t, ManagedLight> m_lights; // lightId -> data
         std::unordered_multimap<uint64_t, uint64_t> m_entityToLight; // entityId -> lightId
+        std::unordered_set<remixapi_LightHandle> m_activeLightHandles;
         uint64_t m_nextLightId { 1 };
         // No per-frame queue needed with internal auto-instancing
     };
@@ -130,6 +148,7 @@ namespace RemixAPI {
         bool UpdateMaterial(uint64_t materialId, const remix::MaterialInfo& info);
         bool DestroyMaterial(uint64_t materialId);
         bool HasMaterial(uint64_t materialId) const;
+        remixapi_MaterialHandle GetMaterialHandle(uint64_t materialId) const;
         
         // Lua bindings
         void InitializeLuaBindings();
@@ -158,6 +177,7 @@ namespace RemixAPI {
         bool UpdateMesh(uint64_t meshId, const remix::MeshInfo& info);
         bool DestroyMesh(uint64_t meshId);
         bool HasMesh(uint64_t meshId) const;
+        remixapi_MeshHandle GetMeshHandle(uint64_t meshId) const;
         
         // Lua bindings
         void InitializeLuaBindings();

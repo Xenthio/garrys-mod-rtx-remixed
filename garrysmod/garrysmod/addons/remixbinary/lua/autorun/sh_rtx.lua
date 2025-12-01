@@ -26,6 +26,7 @@ LoadSharedFiles()
 
 if (SERVER) then
 	util.AddNetworkString( "RTXPlayerSpawnedFully" )
+    util.AddNetworkString( "remix_spawn_rt_light" )
 end
 
 hook.Add( "PlayerInitialSpawn", "RTXFullLoadSetup", function( ply )

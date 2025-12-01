@@ -2,6 +2,10 @@
 -- ConVars
 local cv_enabled = CreateClientConVar("rtx_pseudoplayer", 1, true, false)
 local cv_pseudoweapon = CreateClientConVar("rtx_pseudoweapon", 1, true, false)
+
+-- Entity references
+local pseudoplayer_entity = nil
+local pseudoweapon_entity = nil
 local cv_disablevertexlighting = CreateClientConVar("rtx_disablevertexlighting", 0, true, false)
 local cv_disablevertexlighting_old = CreateClientConVar("rtx_disablevertexlighting_old", 0, true, false)
 local cv_experimental_manuallight = CreateClientConVar("rtx_experimental_manuallight", 0, true, false)
@@ -15,6 +19,80 @@ local LIGHT_UPDATE_INTERVAL = 1.0
 -- Remove halos
 halo.Add = function() end
 
+
+-- Pseudoplayer management
+local function CreatePseudoplayer()
+    if IsValid(pseudoplayer_entity) then
+        return -- Already exists
+    end
+    
+    pseudoplayer_entity = ents.CreateClientside("rtx_pseudoplayer")
+    if IsValid(pseudoplayer_entity) then
+        pseudoplayer_entity:Spawn()
+        DebugPrint("[gmRTX] - Pseudoplayer created")
+        
+        -- Trigger auto-categorization after a short delay
+        timer.Simple(3, function()
+            RunConsoleCommand("remix_categorize_pseudoplayer")
+        end)
+    else
+        DebugPrint("[gmRTX] - Failed to create pseudoplayer")
+    end
+end
+
+local function RemovePseudoplayer()
+    if IsValid(pseudoplayer_entity) then
+        pseudoplayer_entity:Remove()
+        pseudoplayer_entity = nil
+        DebugPrint("[gmRTX] - Pseudoplayer removed")
+    end
+end
+
+-- Pseudoweapon management
+local function CreatePseudoweapon()
+    if IsValid(pseudoweapon_entity) then
+        return -- Already exists
+    end
+    
+    pseudoweapon_entity = ents.CreateClientside("rtx_pseudoweapon")
+    if IsValid(pseudoweapon_entity) then
+        pseudoweapon_entity:Spawn()
+        DebugPrint("[gmRTX] - Pseudoweapon created")
+        
+        -- Trigger auto-categorization after a short delay
+        timer.Simple(3, function()
+            RunConsoleCommand("remix_categorize_pseudoweapon")
+        end)
+    else
+        DebugPrint("[gmRTX] - Failed to create pseudoweapon")
+    end
+end
+
+local function RemovePseudoweapon()
+    if IsValid(pseudoweapon_entity) then
+        pseudoweapon_entity:Remove()
+        pseudoweapon_entity = nil
+        DebugPrint("[gmRTX] - Pseudoweapon removed")
+    end
+end
+
+-- ConVar callback for pseudoplayer toggle
+cvars.AddChangeCallback("rtx_pseudoplayer", function(convar, oldValue, newValue)
+    if tonumber(newValue) == 1 then
+        CreatePseudoplayer()
+    else
+        RemovePseudoplayer()
+    end
+end, "RTX_PseudoplayerToggle")
+
+-- ConVar callback for pseudoweapon toggle
+cvars.AddChangeCallback("rtx_pseudoweapon", function(convar, oldValue, newValue)
+    if tonumber(newValue) == 1 then
+        CreatePseudoweapon()
+    else
+        RemovePseudoweapon()
+    end
+end, "RTX_PseudoweaponToggle")
 
 -- Entity management
 local function DrawFix(self, flags)
@@ -33,8 +111,9 @@ local function DrawFix(self, flags)
         end
     end
 
-    -- Draw the model with static lighting
-    self:DrawModel(flags + STUDIO_STATIC_LIGHTING)
+    -- Draw the model with static lighting (handle nil flags from infmap addon)
+    local drawFlags = (flags or 0) + STUDIO_STATIC_LIGHTING
+    self:DrawModel(drawFlags)
     render.MaterialOverride(nil)
     render.SuppressEngineLighting(false)
 end
@@ -62,9 +141,15 @@ local function RTXLoad()
     RunConsoleCommand("r_lightinterp", "0")
     RunConsoleCommand("mat_fullbright", cv_experimental_manuallight:GetBool() and "1" or "0")
 
-    -- Create entities
-    local pseudoply = ents.CreateClientside("rtx_pseudoplayer")
-    pseudoply:Spawn()
+    -- Create pseudoplayer if enabled
+    if cv_enabled:GetBool() then
+        CreatePseudoplayer()
+    end
+    
+    -- Create pseudoweapon if enabled
+    if cv_pseudoweapon:GetBool() then
+        CreatePseudoweapon()
+    end
 
     -- Initialize systems
     FixupEntities()
@@ -100,6 +185,22 @@ hook.Add("OnEntityCreated", "RTXEntityFixups", FixupEntity)
 
 -- Console commands
 concommand.Add("rtx_fixnow", RTXLoad)
+concommand.Add("rtx_pseudoplayer_reload", function()
+    RemovePseudoplayer()
+    timer.Simple(0.1, function()
+        if cv_enabled:GetBool() then
+            CreatePseudoplayer()
+        end
+    end)
+end)
+concommand.Add("rtx_pseudoweapon_reload", function()
+    RemovePseudoweapon()
+    timer.Simple(0.1, function()
+        if cv_pseudoweapon:GetBool() then
+            CreatePseudoweapon()
+        end
+    end)
+end)
 concommand.Add("rtx_force_no_fullbright", function()
     render.SetLightingMode(0)
 end)

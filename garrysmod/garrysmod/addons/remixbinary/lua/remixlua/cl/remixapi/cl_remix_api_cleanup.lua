@@ -17,12 +17,25 @@ local function DebugMsg(msg)
     end
 end
 
+-- Guard to prevent concurrent cleanup operations
+local cleanupInProgress = false
+
 -- Function to handle cleanup
 local function CleanupRTX()
-    DebugMsg("Starting RTX cleanup...")
+    -- Prevent concurrent cleanup
+    if cleanupInProgress then
+        DebugMsg("Cleanup already in progress, skipping...")
+        return
+    end
     
-    -- Clear existing meshes first
-    if mapMeshes then
+    cleanupInProgress = true
+    
+    -- Use pcall to ensure lock is always released
+    local success, err = pcall(function()
+        DebugMsg("Starting RTX cleanup...")
+        
+        -- Clear existing meshes first
+        if mapMeshes then
         for renderType, chunks in pairs(mapMeshes) do
             for chunkKey, materials in pairs(chunks) do
                 for matName, group in pairs(materials) do
@@ -47,29 +60,37 @@ local function CleanupRTX()
     -- Clear material cache
     materialCache = {}
     
-    -- Force GC to clean up Lua resources
-    collectgarbage("collect")
-    
-    -- Call native cleanup using new RemixResource API
-    local success = false
-    if RemixResource and RemixResource.ClearResources then
-        success = RemixResource.ClearResources()
-    else
-        DebugMsg("RemixResource API not available")
-    end
-    
-    if success then
-        DebugMsg("RTX cleanup completed successfully")
-    else
-        DebugMsg("RTX cleanup failed!")
-    end
-    
-    -- Wait a frame before rebuilding
-    timer.Simple(0, function()
-        if BuildMapMeshes then
-            BuildMapMeshes()
+        -- Force GC to clean up Lua resources
+        collectgarbage("collect")
+        
+        -- Call native cleanup using new RemixResource API
+        local nativeSuccess = false
+        if RemixResource and RemixResource.ClearResources then
+            nativeSuccess = RemixResource.ClearResources()
+        else
+            DebugMsg("RemixResource API not available")
         end
+        
+        if nativeSuccess then
+            DebugMsg("RTX cleanup completed successfully")
+        else
+            DebugMsg("RTX cleanup failed!")
+        end
+        
+        -- Wait a frame before rebuilding
+        timer.Simple(0, function()
+            if BuildMapMeshes then
+                BuildMapMeshes()
+            end
+        end)
     end)
+    
+    -- Release the lock even if cleanup failed
+    cleanupInProgress = false
+    
+    if not success then
+        ErrorNoHalt("[gmRTX - Remix Cleanup] Error during cleanup: " .. tostring(err) .. "\n")
+    end
 end
 
 -- Add cleanup hooks

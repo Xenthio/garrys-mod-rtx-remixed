@@ -14,7 +14,7 @@ ENT.Spawnable		= false
 ENT.AdminSpawnable	= false
 
 local pseudoweapon
-
+local materialSuffix = ""  -- Unique suffix for material names
 local prevclassname = ""
 
 function ENT:Initialize()
@@ -83,7 +83,7 @@ local function MaterialSet()
 		local tex = mat:GetTexture( "$basetexture" )   
 
 	    -- create a copy so we can have the texture be drawn unlit.
-		local matblank = CreateMaterial( "pseudoweaponmaterialtemp" .. k, "UnlitGeneric", {
+		local matblank = CreateMaterial( "pseudoweaponmaterialtemp" .. k .. materialSuffix, "UnlitGeneric", {
 			["$basetexture"] = "color/white",
 			["$model"] = 1,
 			["$translucent"] = 0,
@@ -91,7 +91,7 @@ local function MaterialSet()
 			["$vertexcolor"] = 0,  
 		} )
 	    -- we need to create a second material so we can write the alpha, since gmod doesnt do it properly for some reason.
-		local matblankalpha = CreateMaterial( "pseudoweaponmaterialtempalpha" .. k, "UnlitGeneric", {
+		local matblankalpha = CreateMaterial( "pseudoweaponmaterialtempalpha" .. k .. materialSuffix, "UnlitGeneric", {
 			["$basetexture"] = "color/white",
 			["$model"] = 1,
 			["$translucent"] = 1,
@@ -105,7 +105,7 @@ local function MaterialSet()
 
 		local width = tex:Width() / GetConVar( "rtx_pseudoweapon_unique_hashes_downscale" ):GetInt()
 		local height = tex:Height() / GetConVar( "rtx_pseudoweapon_unique_hashes_downscale" ):GetInt()
-		local texname = "pseudoweapontexture" .. k .. width .. "x" .. height -- we need to create one unique for different widths and heights.
+		local texname = "pseudoweapontexture" .. k .. width .. "x" .. height .. materialSuffix -- we need to create one unique for different widths and heights.
 		local newtex = GetRenderTargetEx( texname, width, height, RT_SIZE_LITERAL, MATERIAL_RT_DEPTH_NONE, 0, 0, IMAGE_FORMAT_RGBA8888 ) 
 		render.PushRenderTarget( newtex )
 			cam.Start2D()
@@ -158,7 +158,7 @@ local function MaterialSet()
 
 		-- Create our final material, since we need custom keyvalues and we cant do that when we make a material from a png. so instead we copy the texture from above.
 		local kv = mat:GetKeyValues() 
-		local matlua = CreateMaterial( "pseudoweaponmaterial" .. k, mat:GetShader(), kv )
+		local matlua = CreateMaterial( "pseudoweaponmaterial" .. k .. materialSuffix, mat:GetShader(), kv )
 		matlua:SetTexture( "$basetexture", newertex)
 
 		-- add them to the table, we apply the new material every frame in the RenderOverride, since Entity:SetMaterial() is broken in dx7 mode.
@@ -204,6 +204,14 @@ function ENT:Think()
 			pseudoweapon:SetModel(LocalPlayer():GetActiveWeapon():GetModel())
 			pseudoweapon:SetParent(self)
 			pseudoweapon:AddEffects( EF_BONEMERGE )
+			
+			-- Generate deterministic suffix based on weapon class so the same weapon produces the same hash
+			local weaponClass = LocalPlayer():GetActiveWeapon():GetClass() or "unknown"
+			materialSuffix = "_" .. util.CRC(weaponClass)
+			print("[gmRTX] - Weapon changed, material suffix: " .. materialSuffix .. " (" .. weaponClass .. ")")
+			
+			-- Clear material table and recreate materials
+			materialtable = {}
 			MaterialSet()
 			 
 		end

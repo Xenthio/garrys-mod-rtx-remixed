@@ -50,9 +50,9 @@ rtx:rtx.localtonemap.useAgX = True
 rtx:rtx.localtonemap.finalizeWithACES = False
 
 ### Lights
-rtx:rtx.ignoreGamePointLights = False
-rtx:rtx.ignoreGameSpotLights = False
-rtx:rtx.ignoreGameDirectionalLights = False
+rtx:rtx.ignoreGamePointLights = True
+rtx:rtx.ignoreGameSpotLights = True
+rtx:rtx.ignoreGameDirectionalLights = True
 rtx:rtx.lightConversionSphereLightFixedRadius = 9
 
 ### Sky

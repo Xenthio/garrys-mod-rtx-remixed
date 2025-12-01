@@ -94,9 +94,20 @@ function MapMarker:GenerateMesh(id)
         end
     end
     
+    local imesh = Mesh()
+    mesh.Begin(imesh, MATERIAL_TRIANGLES, #meshData / 3)
+    for _, vertex in ipairs(meshData) do
+        mesh.Position(vertex.pos)
+        mesh.Normal(vertex.normal)
+        mesh.TexCoord(0, vertex.u, vertex.v)
+        mesh.AdvanceVertex()
+    end
+    mesh.End()
+    
     -- Store mesh data for this ID
     self.Meshes[id] = {
         data = meshData,
+        imesh = imesh,  -- Store the IMesh object
         hash = hash,
         width = width,
         height = height,
@@ -139,7 +150,7 @@ end
 -- Render a specific mesh
 function MapMarker:RenderMesh(id, pos, ang, color)
     local meshData = self:GenerateMesh(id)
-    if not meshData then return end
+    if not meshData or not meshData.imesh then return end
     
     pos = pos or Vector(0, 0, 0)
     ang = ang or Angle(0, 0, 0)
@@ -158,17 +169,8 @@ function MapMarker:RenderMesh(id, pos, ang, color)
     
     cam.PushModelMatrix(matrix)
     
-    -- Draw each triangle
-    mesh.Begin(MATERIAL_TRIANGLES, meshData.triangles)
-    
-    for _, vertex in ipairs(meshData.data) do
-        mesh.Position(vertex.pos)
-        mesh.Normal(vertex.normal)
-        mesh.TexCoord(0, vertex.u, vertex.v)
-        mesh.AdvanceVertex()
-    end
-    
-    mesh.End()
+    -- Draw the pre-built
+    meshData.imesh:Draw()
     
     cam.PopModelMatrix()
 end
@@ -244,8 +246,8 @@ function MapMarker:Cleanup()
     
     -- Clear meshes
     for id, meshData in pairs(self.Meshes) do
-        if meshData.mesh and meshData.mesh.Destroy then
-            meshData.mesh:Destroy()
+        if meshData.imesh and meshData.imesh.Destroy then
+            meshData.imesh:Destroy()
         end
     end
     

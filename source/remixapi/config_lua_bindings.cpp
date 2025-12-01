@@ -26,6 +26,11 @@ LUA_FUNCTION(RemixConfig_SetConfigVariable) {
     auto& configManager = RemixAPI::Instance().GetConfigManager();
     bool result = configManager.SetConfigVariable(key, value);
     
+    if (!result) {
+        Warning("[RemixConfig] SetConfigVariable: Failed to set '%s' = '%s' (check if key exists and value is valid)\n", 
+                key.c_str(), value.c_str());
+    }
+    
     LUA->PushBool(result);
     return 1;
 }

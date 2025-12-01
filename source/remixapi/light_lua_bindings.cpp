@@ -3,6 +3,39 @@
 #include <tier0/dbg.h>
 
 using namespace GarrysMod::Lua;
+// Helpers: push LightInfo to Lua table
+static void PushLightInfoToLua(ILuaBase* LUA, const remix::LightInfo& info) {
+    LUA->CreateTable();
+    LUA->PushNumber(static_cast<double>(info.hash)); LUA->SetField(-2, "hash");
+    LUA->CreateTable();
+    LUA->PushNumber(info.radiance.x); LUA->SetField(-2, "x");
+    LUA->PushNumber(info.radiance.y); LUA->SetField(-2, "y");
+    LUA->PushNumber(info.radiance.z); LUA->SetField(-2, "z");
+    LUA->SetField(-2, "radiance");
+}
+
+static void PushSphereInfoToLua(ILuaBase* LUA, const remix::LightInfoSphereEXT& info) {
+    LUA->CreateTable();
+    LUA->CreateTable();
+    LUA->PushNumber(info.position.x); LUA->SetField(-2, "x");
+    LUA->PushNumber(info.position.y); LUA->SetField(-2, "y");
+    LUA->PushNumber(info.position.z); LUA->SetField(-2, "z");
+    LUA->SetField(-2, "position");
+    LUA->PushNumber(info.radius); LUA->SetField(-2, "radius");
+    // shaping
+    LUA->CreateTable();
+    LUA->CreateTable();
+    LUA->PushNumber(info.shaping_value.direction.x); LUA->SetField(-2, "x");
+    LUA->PushNumber(info.shaping_value.direction.y); LUA->SetField(-2, "y");
+    LUA->PushNumber(info.shaping_value.direction.z); LUA->SetField(-2, "z");
+    LUA->SetField(-2, "direction");
+    LUA->PushNumber(info.shaping_value.coneAngleDegrees); LUA->SetField(-2, "coneAngleDegrees");
+    LUA->PushNumber(info.shaping_value.coneSoftness); LUA->SetField(-2, "coneSoftness");
+    LUA->PushNumber(info.shaping_value.focusExponent); LUA->SetField(-2, "focusExponent");
+    LUA->SetField(-2, "shaping");
+    LUA->PushNumber(info.volumetricRadianceScale); LUA->SetField(-2, "volumetricRadianceScale");
+}
+
 
 namespace RemixAPI {
 // No per-frame submission required with internal auto-instancing
@@ -43,6 +76,20 @@ static remix::LightInfo LuaToLightInfo(ILuaBase* LUA, int index) {
             info.radiance.z = static_cast<float>(LUA->GetNumber(-1));
         }
         LUA->Pop();
+    }
+    LUA->Pop();
+    
+    // Get isDynamic flag (optional, defaults to false for static behavior)
+    LUA->GetField(index, "isDynamic");
+    if (LUA->IsType(-1, Type::Bool)) {
+        info.isDynamic = LUA->GetBool(-1);
+    }
+    LUA->Pop();
+    
+    // Get ignoreViewModel flag (optional, defaults to false)
+    LUA->GetField(index, "ignoreViewModel");
+    if (LUA->IsType(-1, Type::Bool)) {
+        info.ignoreViewModel = LUA->GetBool(-1);
     }
     LUA->Pop();
     
@@ -400,6 +447,34 @@ static remix::LightInfoDiskEXT LuaToDiskInfo(ILuaBase* LUA, int index) {
     return info;
 }
 
+// Helper function to extract LightInfoCylinderEXT from Lua table
+static remix::LightInfoCylinderEXT LuaToCylinderInfo(ILuaBase* LUA, int index) {
+    remix::LightInfoCylinderEXT info;
+    if (!LUA->IsType(index, Type::Table)) { LUA->ThrowError("Expected table for CylinderInfo"); return info; }
+    // position
+    LUA->GetField(index, "position"); if (LUA->IsType(-1, Type::Table)) { LUA->GetField(-1, "x"); if (LUA->IsType(-1, Type::Number)) info.position.x = (float)LUA->GetNumber(-1); LUA->Pop(); LUA->GetField(-1, "y"); if (LUA->IsType(-1, Type::Number)) info.position.y = (float)LUA->GetNumber(-1); LUA->Pop(); LUA->GetField(-1, "z"); if (LUA->IsType(-1, Type::Number)) info.position.z = (float)LUA->GetNumber(-1); LUA->Pop(); } LUA->Pop();
+    // radius
+    LUA->GetField(index, "radius"); if (LUA->IsType(-1, Type::Number)) info.radius = (float)LUA->GetNumber(-1); LUA->Pop();
+    // axis
+    LUA->GetField(index, "axis"); if (LUA->IsType(-1, Type::Table)) { LUA->GetField(-1, "x"); if (LUA->IsType(-1, Type::Number)) info.axis.x = (float)LUA->GetNumber(-1); LUA->Pop(); LUA->GetField(-1, "y"); if (LUA->IsType(-1, Type::Number)) info.axis.y = (float)LUA->GetNumber(-1); LUA->Pop(); LUA->GetField(-1, "z"); if (LUA->IsType(-1, Type::Number)) info.axis.z = (float)LUA->GetNumber(-1); LUA->Pop(); } LUA->Pop();
+    // axisLength
+    LUA->GetField(index, "axisLength"); if (LUA->IsType(-1, Type::Number)) info.axisLength = (float)LUA->GetNumber(-1); LUA->Pop();
+    // volumetricRadianceScale
+    LUA->GetField(index, "volumetricRadianceScale"); if (LUA->IsType(-1, Type::Number)) info.volumetricRadianceScale = (float)LUA->GetNumber(-1); LUA->Pop();
+    return info;
+}
+
+// Helper function to extract LightInfoDomeEXT from Lua table
+static remix::LightInfoDomeEXT LuaToDomeInfo(ILuaBase* LUA, int index) {
+    remix::LightInfoDomeEXT info;
+    if (!LUA->IsType(index, Type::Table)) { LUA->ThrowError("Expected table for DomeInfo"); return info; }
+    // transform (3x4 matrix) as { matrix = { {a,b,c,d}, {..}, {..} } } optional; default identity
+    // Keep default unless provided
+    // colorTexture: string path
+    LUA->GetField(index, "colorTexture"); if (LUA->IsType(-1, Type::String)) { std::filesystem::path p = LUA->GetString(-1); info.set_colorTexture(p); } LUA->Pop();
+    return info;
+}
+
 // Helper function to extract LightInfoDistantEXT from Lua table
 static remix::LightInfoDistantEXT LuaToDistantInfo(ILuaBase* LUA, int index) {
     remix::LightInfoDistantEXT info;
@@ -472,6 +547,10 @@ LUA_FUNCTION(RemixLight_CreateSphere) {
     auto& lightManager = RemixAPI::Instance().GetLightManager();
     uint64_t lightId = lightManager.CreateSphereLight(baseInfo, sphereInfo, entityID);
     
+    if (lightId == 0) {
+        Warning("[RemixLight] CreateSphere: Failed to create light (API may not be initialized or handle creation failed)\n");
+    }
+    
     LUA->PushNumber(static_cast<double>(lightId));
     return 1;
 }
@@ -494,6 +573,11 @@ LUA_FUNCTION(RemixLight_UpdateSphere) {
     remix::LightInfoSphereEXT sphereInfo = LuaToSphereInfo(LUA, 2);
     uint64_t lightId = static_cast<uint64_t>(LUA->GetNumber(3));
     bool ok = RemixAPI::Instance().GetLightManager().UpdateSphereLight(lightId, baseInfo, sphereInfo);
+    
+    if (!ok) {
+        Warning("[RemixLight] UpdateSphere: Failed to update light ID %llu (light may not exist or API call failed)\n", lightId);
+    }
+    
     LUA->PushBool(ok);
     return 1;
 }
@@ -594,6 +678,54 @@ LUA_FUNCTION(RemixLight_UpdateDisk) {
     bool ok = RemixAPI::Instance().GetLightManager().UpdateDiskLight(lightId, baseInfo, diskInfo);
     LUA->PushBool(ok);
     return 1;
+}
+
+// Lua function: RemixLight.CreateCylinder(baseInfo, cylinderInfo, entityID)
+LUA_FUNCTION(RemixLight_CreateCylinder) {
+    if (!LUA->IsType(1, Type::Table)) { LUA->ThrowError("Expected table for base light info"); return 0; }
+    if (!LUA->IsType(2, Type::Table)) { LUA->ThrowError("Expected table for cylinder info"); return 0; }
+    remix::LightInfo baseInfo = LuaToLightInfo(LUA, 1);
+    remix::LightInfoCylinderEXT cylInfo = LuaToCylinderInfo(LUA, 2);
+    uint64_t entityID = 0; if (LUA->IsType(3, Type::Number)) entityID = (uint64_t)LUA->GetNumber(3);
+    auto& lm = RemixAPI::Instance().GetLightManager();
+    uint64_t id = lm.CreateCylinderLight(baseInfo, cylInfo, entityID);
+    LUA->PushNumber((double)id); return 1;
+}
+
+// Lua function: RemixLight.UpdateCylinder(baseInfo, cylinderInfo, lightId)
+LUA_FUNCTION(RemixLight_UpdateCylinder) {
+    if (!LUA->IsType(1, Type::Table)) { LUA->ThrowError("Expected table for base light info"); return 0; }
+    if (!LUA->IsType(2, Type::Table)) { LUA->ThrowError("Expected table for cylinder info"); return 0; }
+    if (!LUA->IsType(3, Type::Number)) { LUA->ThrowError("Expected number for light ID"); return 0; }
+    remix::LightInfo baseInfo = LuaToLightInfo(LUA, 1);
+    remix::LightInfoCylinderEXT cylInfo = LuaToCylinderInfo(LUA, 2);
+    uint64_t id = (uint64_t)LUA->GetNumber(3);
+    bool ok = RemixAPI::Instance().GetLightManager().UpdateCylinderLight(id, baseInfo, cylInfo);
+    LUA->PushBool(ok); return 1;
+}
+
+// Lua function: RemixLight.CreateDome(baseInfo, domeInfo, entityID)
+LUA_FUNCTION(RemixLight_CreateDome) {
+    if (!LUA->IsType(1, Type::Table)) { LUA->ThrowError("Expected table for base light info"); return 0; }
+    if (!LUA->IsType(2, Type::Table)) { LUA->ThrowError("Expected table for dome info"); return 0; }
+    remix::LightInfo baseInfo = LuaToLightInfo(LUA, 1);
+    remix::LightInfoDomeEXT domeInfo = LuaToDomeInfo(LUA, 2);
+    uint64_t entityID = 0; if (LUA->IsType(3, Type::Number)) entityID = (uint64_t)LUA->GetNumber(3);
+    auto& lm = RemixAPI::Instance().GetLightManager();
+    uint64_t id = lm.CreateDomeLight(baseInfo, domeInfo, entityID);
+    LUA->PushNumber((double)id); return 1;
+}
+
+// Lua function: RemixLight.UpdateDome(baseInfo, domeInfo, lightId)
+LUA_FUNCTION(RemixLight_UpdateDome) {
+    if (!LUA->IsType(1, Type::Table)) { LUA->ThrowError("Expected table for base light info"); return 0; }
+    if (!LUA->IsType(2, Type::Table)) { LUA->ThrowError("Expected table for dome info"); return 0; }
+    if (!LUA->IsType(3, Type::Number)) { LUA->ThrowError("Expected number for light ID"); return 0; }
+    remix::LightInfo baseInfo = LuaToLightInfo(LUA, 1);
+    remix::LightInfoDomeEXT domeInfo = LuaToDomeInfo(LUA, 2);
+    uint64_t id = (uint64_t)LUA->GetNumber(3);
+    bool ok = RemixAPI::Instance().GetLightManager().UpdateDomeLight(id, baseInfo, domeInfo);
+    LUA->PushBool(ok); return 1;
 }
 
 // Lua function: RemixLight.CreateDistant(baseInfo, distantInfo, entityID)
@@ -727,6 +859,86 @@ LUA_FUNCTION(RemixLight_ClearAllLights) {
     return 1;
 }
 
+// Lua function: RemixLight.GetSphereState(lightId) -> baseTable, sphereTable or nil
+LUA_FUNCTION(RemixLight_GetSphereState) {
+    if (!LUA->IsType(1, Type::Number)) { LUA->ThrowError("Expected number for light ID"); return 0; }
+    uint64_t lightId = static_cast<uint64_t>(LUA->GetNumber(1));
+    auto& lm = RemixAPI::Instance().GetLightManager();
+    remix::LightInfo base{}; remix::LightInfoSphereEXT sphere{};
+    if (!lm.GetSphereState(lightId, base, sphere)) { LUA->PushNil(); return 1; }
+    PushLightInfoToLua(LUA, base);
+    PushSphereInfoToLua(LUA, sphere);
+    return 2;
+}
+
+// Lua function: RemixLight.GetLightsForEntity(entityID)
+LUA_FUNCTION(RemixLight_GetLightsForEntity) {
+    if (!LUA->IsType(1, Type::Number)) {
+        LUA->ThrowError("Expected number for entity ID");
+        return 0;
+    }
+    uint64_t entityID = static_cast<uint64_t>(LUA->GetNumber(1));
+    auto& lm = RemixAPI::Instance().GetLightManager();
+    auto ids = lm.GetLightsForEntity(entityID);
+    LUA->CreateTable();
+    int idx = 1;
+    for (auto id : ids) {
+        LUA->PushNumber((double)idx++);
+        LUA->PushNumber((double)id);
+        LUA->SetTable(-3);
+    }
+    return 1;
+}
+
+// Lua function: RemixLight.GetAllLightIds()
+LUA_FUNCTION(RemixLight_GetAllLightIds) {
+    auto& lm = RemixAPI::Instance().GetLightManager();
+    auto ids = lm.GetAllLightIds();
+    LUA->CreateTable();
+    int idx = 1;
+    for (auto id : ids) {
+        LUA->PushNumber((double)idx++);
+        LUA->PushNumber((double)id);
+        LUA->SetTable(-3);
+    }
+    return 1;
+}
+
+// Lua function: RemixLight.UpdateSphereFields(lightId, fields)
+// fields can contain { radiance={x,y,z}, position={x,y,z}, radius=number, shaping={direction, coneAngleDegrees, coneSoftness, focusExponent}, volumetricRadianceScale }
+LUA_FUNCTION(RemixLight_UpdateSphereFields) {
+    if (!LUA->IsType(1, Type::Number)) { LUA->ThrowError("Expected number for light ID"); return 0; }
+    if (!LUA->IsType(2, Type::Table)) { LUA->ThrowError("Expected table for fields"); return 0; }
+    uint64_t lightId = static_cast<uint64_t>(LUA->GetNumber(1));
+    auto& lm = RemixAPI::Instance().GetLightManager();
+    remix::LightInfo base{}; remix::LightInfoSphereEXT sphere{};
+    if (!lm.GetSphereState(lightId, base, sphere)) { LUA->PushBool(false); return 1; }
+    // Merge fields into cached state
+    auto mergeVec = [&](int idx, remixapi_Float3D& dst){ LUA->GetField(idx, "x"); if (LUA->IsType(-1, Type::Number)) dst.x = (float)LUA->GetNumber(-1); LUA->Pop(); LUA->GetField(idx, "y"); if (LUA->IsType(-1, Type::Number)) dst.y = (float)LUA->GetNumber(-1); LUA->Pop(); LUA->GetField(idx, "z"); if (LUA->IsType(-1, Type::Number)) dst.z = (float)LUA->GetNumber(-1); LUA->Pop(); };
+    // radiance
+    LUA->GetField(2, "radiance"); if (LUA->IsType(-1, Type::Table)) { mergeVec(-1, base.radiance); } LUA->Pop();
+    // position
+    LUA->GetField(2, "position"); if (LUA->IsType(-1, Type::Table)) { mergeVec(-1, sphere.position); } LUA->Pop();
+    // radius
+    LUA->GetField(2, "radius"); if (LUA->IsType(-1, Type::Number)) { sphere.radius = (float)LUA->GetNumber(-1); } LUA->Pop();
+    // volumetricRadianceScale
+    LUA->GetField(2, "volumetricRadianceScale"); if (LUA->IsType(-1, Type::Number)) { sphere.volumetricRadianceScale = (float)LUA->GetNumber(-1); } LUA->Pop();
+    // shaping
+    LUA->GetField(2, "shaping");
+    if (LUA->IsType(-1, Type::Table)) {
+        remix::LightInfoLightShaping shaping = sphere.shaping_value;
+        LUA->GetField(-1, "direction"); if (LUA->IsType(-1, Type::Table)) { mergeVec(-1, shaping.direction); } LUA->Pop();
+        LUA->GetField(-1, "coneAngleDegrees"); if (LUA->IsType(-1, Type::Number)) shaping.coneAngleDegrees = (float)LUA->GetNumber(-1); LUA->Pop();
+        LUA->GetField(-1, "coneSoftness"); if (LUA->IsType(-1, Type::Number)) shaping.coneSoftness = (float)LUA->GetNumber(-1); LUA->Pop();
+        LUA->GetField(-1, "focusExponent"); if (LUA->IsType(-1, Type::Number)) shaping.focusExponent = (float)LUA->GetNumber(-1); LUA->Pop();
+        sphere.set_shaping(shaping);
+    }
+    LUA->Pop();
+    bool ok = lm.ApplySphereState(lightId, base, sphere);
+    LUA->PushBool(ok);
+    return 1;
+}
+
 // Initialize Light Manager Lua bindings
 void LightManager::InitializeLuaBindings() {
     if (!m_lua) return;
@@ -757,6 +969,14 @@ void LightManager::InitializeLuaBindings() {
     m_lua->SetField(-2, "CreateDistant");
     m_lua->PushCFunction(RemixLight_UpdateDistant);
     m_lua->SetField(-2, "UpdateDistant");
+    m_lua->PushCFunction(RemixLight_CreateCylinder);
+    m_lua->SetField(-2, "CreateCylinder");
+    m_lua->PushCFunction(RemixLight_UpdateCylinder);
+    m_lua->SetField(-2, "UpdateCylinder");
+    m_lua->PushCFunction(RemixLight_CreateDome);
+    m_lua->SetField(-2, "CreateDome");
+    m_lua->PushCFunction(RemixLight_UpdateDome);
+    m_lua->SetField(-2, "UpdateDome");
     
     // Light management functions
     m_lua->PushCFunction(RemixLight_DestroyLight);
@@ -771,6 +991,12 @@ void LightManager::InitializeLuaBindings() {
     
     m_lua->PushCFunction(RemixLight_DestroyLightsForEntity);
     m_lua->SetField(-2, "DestroyLightsForEntity");
+    m_lua->PushCFunction(RemixLight_GetLightsForEntity);
+    m_lua->SetField(-2, "GetLightsForEntity");
+    m_lua->PushCFunction(RemixLight_GetAllLightIds);
+    m_lua->SetField(-2, "GetAllLightIds");
+    m_lua->PushCFunction(RemixLight_UpdateSphereFields);
+    m_lua->SetField(-2, "UpdateSphereFields");
     
     // Utility functions
     m_lua->PushCFunction(RemixLight_GetLightCount);
@@ -778,6 +1004,8 @@ void LightManager::InitializeLuaBindings() {
     
     m_lua->PushCFunction(RemixLight_ClearAllLights);
     m_lua->SetField(-2, "ClearAllLights");
+    m_lua->PushCFunction(RemixLight_GetSphereState);
+    m_lua->SetField(-2, "GetSphereState");
 
     // No per-frame submission needed with internal auto-instancing
     
@@ -787,7 +1015,9 @@ void LightManager::InitializeLuaBindings() {
     // Pop the global table
     m_lua->Pop();
     
+#ifdef _DEBUG
     Msg("[LightManager] Lua bindings initialized\n");
+#endif
 }
 
 } // namespace RemixAPI

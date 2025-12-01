@@ -5,8 +5,8 @@ local CONVARS = {
     SHOW_3DSKY_WARNING = CreateClientConVar("rtx_show_3dsky_warning", "1", true, false, "Show warning when enabling r_3dsky")
 }
 
-hook.Add( "PopulateToolMenu", "RTXOptionsClient", function()
-    spawnmenu.AddToolMenuOption( "Utilities", "User", "RTX_Client", "#RTX", "", "", function( panel )
+hook.Add( "PopulateToolMenu", "RTXOptionsClient_BaseOptions", function()
+    spawnmenu.AddToolMenuOption( "Utilities", "RTX Remix", "RTX_Client_BaseOptions", "#Base Options", "", "", function( panel )
         panel:ClearControls()
 
         panel:CheckBox( "Pseudoplayer Enabled", "rtx_pseudoplayer" )
@@ -14,50 +14,31 @@ hook.Add( "PopulateToolMenu", "RTXOptionsClient", function()
         panel:CheckBox( "Pseudoweapon Enabled", "rtx_pseudoweapon" )
         panel:ControlHelp( "Similar to above, but for the weapon you're holding." )
 
-        panel:CheckBox( "Disable Vertex Lighting.", "rtx_disablevertexlighting" )
-        panel:ControlHelp( "Disables vertex lighting on models and props, as these look incorrect with Remix" )
-        panel:ControlHelp( "Breaks some lightupdaters when enabled." )
+        panel:AddControl("Header", {Description = "Render Options:"})
+        panel:CheckBox("Show Render Debug HUD", "rtx_render_debug")
+        panel:CheckBox("2D Skybox", "rtx_sky2d_enable")
+    end )
+end )
 
-        -- Force Dynamic Buttons
-        panel:Help( "Map Render Fixes" )
+hook.Add( "PopulateToolMenu", "RTXOptionsClient_Culling", function()
+    spawnmenu.AddToolMenuOption( "Utilities", "RTX Remix", "RTX_Client_Culling", "#Culling", "", "", function( panel )
+        panel:ClearControls()
+        
+        panel:AddControl("Header", {Description = "Rendering Options:"})
+        panel:CheckBox("Use SPR for Static Props", "rtx_spr_enable")
+        panel:ControlHelp("Disables engine rendering of static props and replaces it with a lua-based renderer. Massive performance boost on dense maps.")
+        panel:ControlHelp("")
+        panel:ControlHelp("This breaks remix mesh replacements for engine rendered static props.")
 
-        -- Create a panel for the buttons
-        local buttonsPanel = vgui.Create("DPanel", panel)
-        buttonsPanel:SetTall(25)
-        buttonsPanel:SetPaintBackground(false)
-        panel:AddItem(buttonsPanel)
+        panel:CheckBox("Use Mesh Combining", "rtx_spr_mesh_combining")
+        panel:ControlHelp("Combines props into single meshes per material to reduce draw calls. This can improve performance on dense maps.")
+        panel:ControlHelp("Requires a map reload to take effect.")
         
-        -- Set margin and spacing
-        local margin = 10  -- Margin from panel edges
-        local spacing = 5  -- Space between buttons
-        
-        -- Create buttons without setting position/size yet
-        local enableButton = vgui.Create("DButton", buttonsPanel)
-        enableButton:SetText("Enable")
-        enableButton.DoClick = function()
-            RunConsoleCommand("rtx_mf_enable_current_map")
-        end
-        
-        local disableButton = vgui.Create("DButton", buttonsPanel)
-        disableButton:SetText("Disable")
-        disableButton.DoClick = function()
-            RunConsoleCommand("rtx_mf_disable_current_map")
-        end
-        
-        -- Size and position buttons when the panel is laid out
-        buttonsPanel.PerformLayout = function(self)
-            local panelWidth = self:GetWide()
-            local buttonWidth = (panelWidth - (2 * margin) - spacing) / 2
-            
-            enableButton:SetSize(buttonWidth, 25)
-            disableButton:SetSize(buttonWidth, 25)
-            
-            enableButton:SetPos(margin, 0)
-            disableButton:SetPos(margin + buttonWidth + spacing, 0)
-        end
-        
-        panel:ControlHelp("Enables/Disables Map Fixes for the current map and remembers the setting for future loads of this map. This helps fix map rendering issues.")
-
+        panel:CheckBox("Use PVS Culling", "rtx_spr_use_pvs")
+        panel:ControlHelp("Enables Potentially Visible Set culling for static prop renderer. Improves performance but may cause some props to cull incorrectly.")
+        panel:NumSlider("PVS Safety Distance", "rtx_spr_pvs_safety_distance", 0, 8192, 0)
+        panel:ControlHelp("Distance within which PVS culling is disabled (prevents close-range culling bugs).")
+        panel:ControlHelp("Saves value per map")
     end )
 end )
 
@@ -68,7 +49,7 @@ local function Show3DSkyWarning()
     -- Create the warning panel
     local frame = vgui.Create("DFrame")
     frame:SetTitle("RTX Remix Fixes 2")
-    frame:SetSize(400, 200)
+    frame:SetSize(400, 200) 
     frame:Center()
     frame:MakePopup()
     
