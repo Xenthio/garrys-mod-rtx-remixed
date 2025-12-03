@@ -6,13 +6,46 @@
 #include <materialsystem/imaterialsystem.h>
 #include <materialsystem/imaterial.h>
 #include <materialsystem/imaterialvar.h>
+#include <filesystem.h>
 #include <algorithm>
 #include <functional>
+#include <cctype>
 #include <remix/remix.h>
 
 // Global material system pointer (from module.cpp)
 extern IMaterialSystem* materials;
 extern remix::Interface* g_remix;
+
+// Local filesystem pointer - we'll initialize this ourselves
+static IFileSystem* s_pFileSystem = nullptr;
+
+// Helper to get filesystem interface
+static IFileSystem* GetFileSystem() {
+    if (s_pFileSystem) return s_pFileSystem;
+    
+    // Try to get the filesystem interface from the engine
+    HMODULE fsModule = GetModuleHandle("filesystem_stdio.dll");
+    if (!fsModule) {
+        fsModule = GetModuleHandle("filesystem.dll");
+    }
+    
+    if (fsModule) {
+        typedef void* (*CreateInterfaceFn)(const char* name, int* returnCode);
+        CreateInterfaceFn createInterface = (CreateInterfaceFn)GetProcAddress(fsModule, "CreateInterface");
+        if (createInterface) {
+            s_pFileSystem = (IFileSystem*)createInterface("VFileSystem022", nullptr);
+            if (!s_pFileSystem) {
+                // Try older interface versions
+                s_pFileSystem = (IFileSystem*)createInterface("VFileSystem021", nullptr);
+            }
+            if (!s_pFileSystem) {
+                s_pFileSystem = (IFileSystem*)createInterface("VFileSystem017", nullptr);
+            }
+        }
+    }
+    
+    return s_pFileSystem;
+}
 
 // Simple vtable hook implementation
 namespace VTableHook {
@@ -380,56 +413,191 @@ std::vector<std::pair<std::string, uint64_t>> D3D9TextureTracker::FindTexturesBy
     return results;
 }
 
-void D3D9TextureTracker::CheckAndApplyCategories(IDirect3DTexture9* pTexture) {
-    if (!g_remix) {
-        // Msg("[D3D9] CheckCat: g_remix is null\n");
-        return;
+// Helper: Check if VMT file contains "$selfillum" "1" or "$selfillum" 1
+// This is a fallback when IMaterial::FindVar doesn't expose the parameter
+static bool CheckVMTForSelfillum(const std::string& materialName, bool debug = false) {
+    IFileSystem* fs = GetFileSystem();
+    if (!fs) {
+        if (debug) Msg("[D3D9] CheckVMT: Could not get filesystem interface\n");
+        return false;
     }
-    if (!m_currentMaterial) {
-        // This happens a lot for engine textures, only log for effects/particles paths
-        if (m_currentMaterialName.find("effects/") == 0 || 
-            m_currentMaterialName.find("particles/") == 0 ||
-            m_currentMaterialName.find("sprites/") == 0) {
-            Msg("[D3D9] CheckCat: m_currentMaterial is null for '%s'\n", m_currentMaterialName.c_str());
+    
+    // Build VMT path
+    std::string vmtPath = "materials/" + materialName + ".vmt";
+    
+    // Try to open the file
+    FileHandle_t file = fs->Open(vmtPath.c_str(), "rb", "GAME");
+    if (!file) {
+        // Try without .vmt extension (in case materialName already has it)
+        vmtPath = "materials/" + materialName;
+        file = fs->Open(vmtPath.c_str(), "rb", "GAME");
+        if (!file) {
+            if (debug) Msg("[D3D9] CheckVMT: Could not open '%s'\n", vmtPath.c_str());
+            return false;
         }
-        return;
     }
+    
+    // Read file content
+    int fileSize = fs->Size(file);
+    if (fileSize <= 0 || fileSize > 65536) { // Sanity check
+        if (debug) Msg("[D3D9] CheckVMT: Invalid file size %d\n", fileSize);
+        fs->Close(file);
+        return false;
+    }
+    
+    std::string content;
+    content.resize(fileSize);
+    int bytesRead = fs->Read(&content[0], fileSize, file);
+    fs->Close(file);
+    
+    if (bytesRead <= 0) {
+        if (debug) Msg("[D3D9] CheckVMT: Read failed\n");
+        return false;
+    }
+    
+    if (debug) Msg("[D3D9] CheckVMT: Read %d bytes from '%s'\n", bytesRead, vmtPath.c_str());
+    
+    // Convert to lowercase for case-insensitive search
+    std::transform(content.begin(), content.end(), content.begin(), ::tolower);
+    
+    // Look for $selfillum followed by 1
+    // Patterns: "$selfillum" "1", "$selfillum" 1, $selfillum 1
+    size_t pos = content.find("$selfillum");
+    if (pos == std::string::npos) {
+        if (debug) Msg("[D3D9] CheckVMT: '$selfillum' not found in file\n");
+        return false;
+    }
+    
+    if (debug) Msg("[D3D9] CheckVMT: Found '$selfillum' at position %zu\n", pos);
+    
+    // Skip past "$selfillum" and any whitespace/quotes
+    pos += 10; // length of "$selfillum"
+    while (pos < content.size() && (content[pos] == ' ' || content[pos] == '\t' || 
+           content[pos] == '"' || content[pos] == '\'')) {
+        pos++;
+    }
+    
+    // Check if next character is '1'
+    if (pos < content.size() && content[pos] == '1') {
+        if (debug) Msg("[D3D9] CheckVMT: Found '$selfillum' = 1!\n");
+        return true;
+    }
+    
+    if (debug) Msg("[D3D9] CheckVMT: '$selfillum' found but value is not '1' (char at %zu = '%c')\n", 
+                   pos, pos < content.size() ? content[pos] : '?');
+    return false;
+}
+
+void D3D9TextureTracker::CheckAndApplyCategories(IDirect3DTexture9* pTexture) {
+    if (!g_remix) return;
     if (m_currentMaterialName.empty()) return;
     
     // Skip internal/engine materials
     if (m_currentMaterialName.find("__") == 0) return; // __fontpage, __error, etc.
-
-    // 1. Check Particles (Name, Shader, and VMT flags)
-    bool isParticle = false;
     
     // Lowercase the material name for case-insensitive matching
     std::string lowerName = m_currentMaterialName;
     std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), ::tolower);
     
-    // Check path prefixes
-    if (lowerName.find("particles/") == 0 || 
-        lowerName.find("particle/") == 0 ||
-        lowerName.find("effects/") == 0 || 
-        lowerName.find("sprites/") == 0 ||
-        lowerName.find("/particles/") != std::string::npos ||
-        lowerName.find("/particle/") != std::string::npos ||
-        lowerName.find("/effects/") != std::string::npos ||
-        lowerName.find("/sprites/") != std::string::npos) {
-        isParticle = true;
+    // Category flags - these are internal flags that get mapped to Remix API strings
+    // We use the same bit positions as the Lua RemixCategoryManager for consistency
+    constexpr uint32_t CAT_SKY            = 0x4;       // bit 2 - rtx.skyBoxTextures
+    constexpr uint32_t CAT_IGNORE         = 0x8;       // bit 3 - rtx.ignoreTextures  
+    constexpr uint32_t CAT_PARTICLE       = 0x400;     // bit 10 - rtx.particleTextures
+    constexpr uint32_t CAT_DECAL_STATIC   = 0x1000;    // bit 12 - rtx.decalTextures
+    constexpr uint32_t CAT_ANIMATED_WATER = 0x40000;   // bit 18 - rtx.animatedWaterTextures
+    constexpr uint32_t CAT_EMISSIVE       = 0x1000000; // bit 24 - rtx.legacyEmissiveTextures
+    
+    uint32_t categoryFlags = 0;
+    const char* categoryName = nullptr;
+    
+    // === PRIORITY 1: SKY ===
+    // Skybox textures - highest priority
+    if (lowerName.find("tools/toolsskybox") != std::string::npos ||
+        lowerName.find("skybox/") == 0 ||
+        lowerName.find("/skybox/") != std::string::npos) {
+        categoryFlags = CAT_SKY;
+        categoryName = "SKY";
     }
     
-    if (!isParticle) {
-        // Check shader name
+    // === PRIORITY 2: IGNORE ===
+    // Nodraw, invisible, clip textures - should be ignored by RTX
+    else if (lowerName.find("tools/toolsnodraw") != std::string::npos ||
+             lowerName.find("tools/toolsinvisible") != std::string::npos ||
+             lowerName.find("tools/toolsclip") != std::string::npos ||
+             lowerName.find("tools/toolsplayerclip") != std::string::npos ||
+             lowerName.find("tools/toolsnpcclip") != std::string::npos ||
+             lowerName.find("tools/toolstrigger") != std::string::npos ||
+             lowerName.find("tools/toolsblocklight") != std::string::npos ||
+             lowerName.find("tools/toolsareaportal") != std::string::npos ||
+             lowerName.find("tools/toolsoccluder") != std::string::npos) {
+        categoryFlags = CAT_IGNORE;
+        categoryName = "IGNORE";
+    }
+    
+    // === PRIORITY 3: PARTICLES ===
+    // Check path prefixes
+    else if (lowerName.find("particles/") == 0 || 
+             lowerName.find("particle/") == 0 ||
+             lowerName.find("effects/") == 0 || 
+             lowerName.find("sprites/") == 0 ||
+             lowerName.find("/particles/") != std::string::npos ||
+             lowerName.find("/particle/") != std::string::npos ||
+             lowerName.find("/effects/") != std::string::npos ||
+             lowerName.find("/sprites/") != std::string::npos) {
+        categoryFlags = CAT_PARTICLE;
+        categoryName = "PARTICLE";
+    }
+    
+    // === PRIORITY 4: WATER ===
+    else if (lowerName.find("water") != std::string::npos ||
+             lowerName.find("slime") != std::string::npos) {
+        // Check if it's actually a water shader
+        if (m_currentMaterial) {
+            const char* shaderName = m_currentMaterial->GetShaderName();
+            if (shaderName) {
+                std::string s = shaderName;
+                std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+                if (s.find("water") != std::string::npos || 
+                    s.find("refract") != std::string::npos) {
+                    categoryFlags = CAT_ANIMATED_WATER;
+                    categoryName = "WATER";
+                }
+            }
+        }
+        // Fallback: if name contains water but shader isn't water, still mark it
+        if (categoryFlags == 0 && lowerName.find("water") != std::string::npos) {
+            categoryFlags = CAT_ANIMATED_WATER;
+            categoryName = "WATER";
+        }
+    }
+    
+    // === PRIORITY 5: DECALS (map overlays, bullet holes, blood) ===
+    else if (lowerName.find("decals/") == 0 ||
+             lowerName.find("/decals/") != std::string::npos ||
+             lowerName.find("overlay") != std::string::npos ||
+             lowerName.find("bulleth") != std::string::npos ||
+             lowerName.find("_blood") != std::string::npos ||
+             lowerName.find("blood_") != std::string::npos ||
+             lowerName.find("/blood") != std::string::npos ||
+             lowerName.find("scorch") != std::string::npos) {
+        categoryFlags = CAT_DECAL_STATIC;
+        categoryName = "DECAL";
+    }
+    
+    // If no category matched yet, check shader-based detection
+    if (categoryFlags == 0 && m_currentMaterial) {
         const char* shaderName = m_currentMaterial->GetShaderName();
         if (shaderName) {
             std::string s = shaderName;
             std::transform(s.begin(), s.end(), s.begin(), ::tolower);
-            // Direct particle shaders
-            if (s.find("sprite") != std::string::npos ||  // Sprite, SpriteCard, Sprite_DX6
-                s.find("modulate") != std::string::npos || 
-                s.find("refract") != std::string::npos || 
+            
+            // Particle shaders
+            if (s.find("sprite") != std::string::npos ||
+                s.find("modulate") != std::string::npos ||
                 s == "cable") {
-                isParticle = true;
+                categoryFlags = CAT_PARTICLE;
+                categoryName = "PARTICLE";
             }
             // UnlitGeneric with $vertexalpha + $vertexcolor = particle/effect
             else if (s.find("unlitgeneric") != std::string::npos) {
@@ -448,48 +616,74 @@ void D3D9TextureTracker::CheckAndApplyCategories(IDirect3DTexture9* pTexture) {
                     hasVertexColor = true;
                 }
                 
-                // Both $vertexalpha and $vertexcolor = almost certainly a particle/effect
                 if (hasVertexAlpha && hasVertexColor) {
-                    isParticle = true;
+                    categoryFlags = CAT_PARTICLE;
+                    categoryName = "PARTICLE";
                 }
             }
         }
     }
     
-    // 2. Check Emissive ($selfillum)
+    // === EMISSIVE CHECK (can be combined with other categories) ===
     bool isEmissive = false;
     
-    // Check $selfillum var
-    bool found = false;
-    IMaterialVar* pVar = m_currentMaterial->FindVar("$selfillum", &found, false);
-    if (found && pVar) {
-        if (pVar->GetIntValue() == 1) {
+    // Method 1: Check IMaterial::FindVar for $selfillum
+    if (m_currentMaterial) {
+        bool found = false;
+        IMaterialVar* pVar = m_currentMaterial->FindVar("$selfillum", &found, false);
+        if (found && pVar && pVar->GetIntValue() == 1) {
+            isEmissive = true;
+        }
+        
+        // Method 2: Check $emissive var (vector)
+        if (!isEmissive) {
+            bool foundEmissive = false;
+            IMaterialVar* pEmissiveVar = m_currentMaterial->FindVar("$emissive", &foundEmissive, false);
+            if (foundEmissive && pEmissiveVar) {
+                const float* val = pEmissiveVar->GetVecValue();
+                if (val && (val[0] > 0.0f || val[1] > 0.0f || val[2] > 0.0f)) {
+                    isEmissive = true;
+                }
+            }
+        }
+    }
+    
+    // Method 3: Fallback - read VMT file directly
+    // This catches cases where the engine doesn't expose $selfillum via FindVar
+    // (common with DX7/DX6 shader fallbacks)
+    if (!isEmissive) {
+        isEmissive = CheckVMTForSelfillum(m_currentMaterialName);
+    }
+    
+    // Method 4: Keyword-based detection for VTF self-illumination
+    // These materials use VTF-based self-illumination (no VMT parameter)
+    if (!isEmissive) {
+        // Pattern 1: Material name contains "_on" (light fixtures, LEDs, screens, etc.)
+        // AND is from known emissive content packs (pkvoidplaces, pb_ prefix)
+        // Examples: pkvoidplaces/props/pb_propremake_ceilinglightbase_on
+        //           pkvoidplaces/props/pb_pmall_prop_led_pink_on
+        bool hasOnSuffix = (lowerName.find("_on") != std::string::npos);
+        bool isKnownEmissivePack = (lowerName.find("pkvoidplaces") != std::string::npos ||
+                                    lowerName.find("/pb_") != std::string::npos ||
+                                    lowerName.find("pb_") == 0);
+        
+        // Pattern 2: Contains "light" + "_on" anywhere (generic light fixtures)
+        bool hasLightOn = (lowerName.find("light") != std::string::npos && 
+                          lowerName.find("_on") != std::string::npos);
+        
+        if ((hasOnSuffix && isKnownEmissivePack) || hasLightOn) {
             isEmissive = true;
         }
     }
     
-    // Also check $emissive var (vector)
-    if (!isEmissive) {
-        bool foundEmissive = false;
-        IMaterialVar* pEmissiveVar = m_currentMaterial->FindVar("$emissive", &foundEmissive, false);
-        if (foundEmissive && pEmissiveVar) {
-             const float* val = pEmissiveVar->GetVecValue();
-             if (val && (val[0] > 0.0f || val[1] > 0.0f || val[2] > 0.0f)) {
-                 isEmissive = true;
-             }
-        }
+    // Combine emissive flag
+    if (isEmissive) {
+        categoryFlags |= CAT_EMISSIVE;
+        if (!categoryName) categoryName = "EMISSIVE";
     }
     
     // If nothing to categorize, skip
-    if (!isParticle && !isEmissive) {
-        // Debug: log materials that start with effects/ but weren't detected
-        if (lowerName.find("effects/") == 0 || lowerName.find("particles/") == 0 || 
-            lowerName.find("sprites/") == 0) {
-            Msg("[D3D9] WARNING: '%s' matches particle path but isParticle=false!\n", 
-                m_currentMaterialName.c_str());
-        }
-        return;
-    }
+    if (categoryFlags == 0) return;
     
     // Get hash
     auto result = g_remix->dxvk_GetTextureHash(pTexture);
@@ -508,33 +702,60 @@ void D3D9TextureTracker::CheckAndApplyCategories(IDirect3DTexture9* pTexture) {
         }
         if (!alreadyPending) {
             pTexture->AddRef(); // Keep texture alive
-            m_pendingCategories.push_back({pTexture, m_currentMaterialName, isParticle, isEmissive});
-            // Msg("[D3D9] Added to pending: '%s' (particle=%d, emissive=%d)\n", 
-            //     m_currentMaterialName.c_str(), isParticle, isEmissive);
+            m_pendingCategories.push_back({pTexture, m_currentMaterialName, categoryFlags});
         }
         return;
     }
     
-    // Convert hash to string for API
+    // Apply the category
+    ApplyCategoryToHash(hash, categoryFlags, m_currentMaterialName.c_str());
+}
+
+// Helper function to apply category flags to a texture hash
+void D3D9TextureTracker::ApplyCategoryToHash(uint64_t hash, uint32_t categoryFlags, const char* materialName) {
+    if (!g_remix || hash == 0 || categoryFlags == 0) return;
+    
+    // Category flag constants (same as in CheckAndApplyCategories)
+    constexpr uint32_t CAT_SKY            = 0x4;
+    constexpr uint32_t CAT_IGNORE         = 0x8;
+    constexpr uint32_t CAT_PARTICLE       = 0x400;
+    constexpr uint32_t CAT_DECAL_STATIC   = 0x1000;
+    constexpr uint32_t CAT_ANIMATED_WATER = 0x40000;
+    constexpr uint32_t CAT_EMISSIVE       = 0x1000000;
+    
     char hashStr[32];
     sprintf_s(hashStr, "0x%llX", hash);
     
-    // Apply categories
-    if (isParticle) {
+    // Map category flags to Remix API texture lists
+    if (categoryFlags & CAT_SKY) {
+        g_remix->AddTextureHash("rtx.skyBoxTextures", hashStr);
+        Msg("[D3D9] Categorized SKY: '%s' -> %s\n", materialName, hashStr);
+    }
+    if (categoryFlags & CAT_IGNORE) {
+        g_remix->AddTextureHash("rtx.ignoreTextures", hashStr);
+        Msg("[D3D9] Categorized IGNORE: '%s' -> %s\n", materialName, hashStr);
+    }
+    if (categoryFlags & CAT_PARTICLE) {
         g_remix->AddTextureHash("rtx.particleTextures", hashStr);
-        uint32_t currentFlags = 0;
-        GetHashCategoryFlags(hash, &currentFlags);
-        SetHashCategoryFlags(hash, currentFlags | 0x400); // PARTICLE
-        Msg("[D3D9] Categorized PARTICLE: '%s' -> %s\n", m_currentMaterialName.c_str(), hashStr);
+        Msg("[D3D9] Categorized PARTICLE: '%s' -> %s\n", materialName, hashStr);
+    }
+    if (categoryFlags & CAT_DECAL_STATIC) {
+        g_remix->AddTextureHash("rtx.decalTextures", hashStr);
+        Msg("[D3D9] Categorized DECAL: '%s' -> %s\n", materialName, hashStr);
+    }
+    if (categoryFlags & CAT_ANIMATED_WATER) {
+        g_remix->AddTextureHash("rtx.animatedWaterTextures", hashStr);
+        Msg("[D3D9] Categorized WATER: '%s' -> %s\n", materialName, hashStr);
+    }
+    if (categoryFlags & CAT_EMISSIVE) {
+        g_remix->AddTextureHash("rtx.legacyEmissiveTextures", hashStr);
+        Msg("[D3D9] Categorized EMISSIVE: '%s' -> %s\n", materialName, hashStr);
     }
     
-    if (isEmissive) {
-        g_remix->AddTextureHash("rtx.legacyEmissiveTextures", hashStr);
-        uint32_t currentFlags = 0;
-        GetHashCategoryFlags(hash, &currentFlags);
-        SetHashCategoryFlags(hash, currentFlags | 0x1000000); // LEGACY_EMISSIVE
-        Msg("[D3D9] Categorized EMISSIVE: '%s' -> %s\n", m_currentMaterialName.c_str(), hashStr);
-    }
+    // Update local tracking
+    uint32_t currentFlags = 0;
+    GetHashCategoryFlags(hash, &currentFlags);
+    SetHashCategoryFlags(hash, currentFlags | categoryFlags);
 }
 
 int D3D9TextureTracker::RetryPendingCategories() {
@@ -543,7 +764,6 @@ int D3D9TextureTracker::RetryPendingCategories() {
     if (m_pendingCategories.empty()) return 0;
     
     int successCount = 0;
-    int stillZeroCount = 0;
     std::vector<PendingCategory> stillPending;
     
     for (auto& pending : m_pendingCategories) {
@@ -556,29 +776,11 @@ int D3D9TextureTracker::RetryPendingCategories() {
         uint64_t hash = result.value();
         if (hash == 0) {
             stillPending.push_back(pending);
-            stillZeroCount++;
             continue;
         }
         
-        // Got a valid hash! Apply categories
-        char hashStr[32];
-        sprintf_s(hashStr, "0x%llX", hash);
-        
-        if (pending.isParticle) {
-            g_remix->AddTextureHash("rtx.particleTextures", hashStr);
-            uint32_t currentFlags = 0;
-            GetHashCategoryFlags(hash, &currentFlags);
-            SetHashCategoryFlags(hash, currentFlags | 0x400);
-            Msg("[D3D9] Retry OK - PARTICLE: '%s' -> %s\n", pending.materialName.c_str(), hashStr);
-        }
-        
-        if (pending.isEmissive) {
-            g_remix->AddTextureHash("rtx.legacyEmissiveTextures", hashStr);
-            uint32_t currentFlags = 0;
-            GetHashCategoryFlags(hash, &currentFlags);
-            SetHashCategoryFlags(hash, currentFlags | 0x1000000);
-            Msg("[D3D9] Retry OK - EMISSIVE: '%s' -> %s\n", pending.materialName.c_str(), hashStr);
-        }
+        // Got a valid hash! Apply categories using the helper function
+        ApplyCategoryToHash(hash, pending.categoryFlags, pending.materialName.c_str());
         
         // Release our reference
         pending.texture->Release();
@@ -593,6 +795,76 @@ int D3D9TextureTracker::RetryPendingCategories() {
     }
     
     return successCount;
+}
+
+int D3D9TextureTracker::RescanAllMaterials() {
+    if (!g_remix || !materials) return 0;
+    
+    Msg("[D3D9] RescanAllMaterials: Scanning %zu cached materials...\n", m_textureCache.size());
+    
+    // Category flag constants
+    constexpr uint32_t CAT_SKY            = 0x4;
+    constexpr uint32_t CAT_IGNORE         = 0x8;
+    constexpr uint32_t CAT_PARTICLE       = 0x400;
+    constexpr uint32_t CAT_DECAL_STATIC   = 0x1000;
+    constexpr uint32_t CAT_ANIMATED_WATER = 0x40000;
+    constexpr uint32_t CAT_EMISSIVE       = 0x1000000;
+    
+    int categorizedCount = 0;
+    int emissiveCount = 0;
+    
+    for (const auto& entry : m_textureCache) {
+        const std::string& materialName = entry.first;
+        const std::vector<IDirect3DTexture9*>& textures = entry.second;
+        
+        if (textures.empty()) continue;
+        
+        // Skip internal materials
+        if (materialName.find("__") == 0) continue;
+        
+        // Lowercase for matching
+        std::string lowerName = materialName;
+        std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), ::tolower);
+        
+        // Get the material
+        IMaterial* mat = materials->FindMaterial(materialName.c_str(), TEXTURE_GROUP_OTHER, false);
+        
+        // Check for emissive using VMT file fallback
+        bool isEmissive = false;
+        
+        // Method 1: IMaterial::FindVar
+        if (mat && !mat->IsErrorMaterial()) {
+            bool found = false;
+            IMaterialVar* pVar = mat->FindVar("$selfillum", &found, false);
+            if (found && pVar && pVar->GetIntValue() == 1) {
+                isEmissive = true;
+            }
+        }
+        
+        // Method 2: VMT file fallback (with debug output for first few)
+        if (!isEmissive) {
+            isEmissive = CheckVMTForSelfillum(materialName, emissiveCount < 3); // Debug first 3
+        }
+        
+        if (isEmissive) {
+            emissiveCount++;
+            
+            // Get hash for first texture variant
+            for (auto* tex : textures) {
+                auto result = g_remix->dxvk_GetTextureHash(tex);
+                if (result && result.value() != 0) {
+                    ApplyCategoryToHash(result.value(), CAT_EMISSIVE, materialName.c_str());
+                    categorizedCount++;
+                    break; // Only need to categorize once per material
+                }
+            }
+        }
+    }
+    
+    Msg("[D3D9] RescanAllMaterials: Found %d emissive materials, categorized %d\n", 
+        emissiveCount, categorizedCount);
+    
+    return categorizedCount;
 }
 
 #endif // _WIN64

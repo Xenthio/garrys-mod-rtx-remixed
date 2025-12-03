@@ -880,6 +880,15 @@ LUA_FUNCTION(RemixMaterial_GetPendingCount) {
     return 1;
 }
 
+// Lua function: RemixMaterial.RescanAllMaterials()
+// Re-scans all cached materials and applies categories (emissive, etc.)
+// Useful after code changes or to catch materials that were cached before detection was added
+LUA_FUNCTION(RemixMaterial_RescanAllMaterials) {
+    int count = D3D9TextureTracker::Instance().RescanAllMaterials();
+    LUA->PushNumber(count);
+    return 1;
+}
+
 // Lua function: RemixMaterial.FindTexturesByName(searchName)
 LUA_FUNCTION(RemixMaterial_FindTexturesByName) {
     if (!LUA->IsType(1, Type::String)) {
@@ -976,6 +985,9 @@ void MaterialManager::InitializeLuaBindings() {
     
     m_lua->PushCFunction(RemixMaterial_GetPendingCount);
     m_lua->SetField(-2, "GetPendingCount");
+    
+    m_lua->PushCFunction(RemixMaterial_RescanAllMaterials);
+    m_lua->SetField(-2, "RescanAllMaterials");
     
     // Set the table as a global field
     m_lua->SetField(-2, "RemixMaterial");

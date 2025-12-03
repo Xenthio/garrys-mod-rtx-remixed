@@ -28,8 +28,15 @@ public:
     // Track a material being rendered
     void SetCurrentMaterial(IMaterial* pMaterial);
     
-    // Check and apply automatic categories (particles, emissive)
+    // Check and apply automatic categories (particles, emissive, sky, water, etc.)
     void CheckAndApplyCategories(IDirect3DTexture9* pTexture);
+    
+    // Apply category flags to a texture hash (used by CheckAndApply and Retry)
+    void ApplyCategoryToHash(uint64_t hash, uint32_t categoryFlags, const char* materialName);
+    
+    // Re-scan all cached materials and apply categories
+    // This is useful after code changes or to catch materials that were cached before detection was added
+    int RescanAllMaterials();
     
     // Get the D3D9 texture for a material (returns null if not found)
     IDirect3DTexture9* GetTextureForMaterial(const char* materialName);
@@ -77,8 +84,7 @@ private:
     struct PendingCategory {
         IDirect3DTexture9* texture;
         std::string materialName;
-        bool isParticle;
-        bool isEmissive;
+        uint32_t categoryFlags;  // Combined category flags (SKY, PARTICLE, WATER, etc.)
     };
     D3D9TextureTracker() = default;
     ~D3D9TextureTracker();

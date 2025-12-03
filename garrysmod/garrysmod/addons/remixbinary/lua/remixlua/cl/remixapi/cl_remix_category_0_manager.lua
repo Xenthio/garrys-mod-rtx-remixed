@@ -1175,11 +1175,24 @@ concommand.Add("remix_retry_pending", function()
     end
 end, nil, "Retry categorizing textures that returned hash=0")
 
+-- Console command: remix_rescan_materials
+concommand.Add("remix_rescan_materials", function()
+    if not RemixMaterial or not RemixMaterial.RescanAllMaterials then
+        MsgC(Color(255, 100, 100), "[RemixCategoryManager] RemixMaterial.RescanAllMaterials not available\n")
+        return
+    end
+    
+    MsgC(Color(200, 200, 200), "[RemixCategoryManager] Rescanning all cached materials for emissive...\n")
+    local count = RemixMaterial.RescanAllMaterials()
+    MsgC(Color(100, 255, 100), string.format("[RemixCategoryManager] Categorized %d materials\n", count))
+end, nil, "Rescan all cached materials and apply categories (emissive, etc.)")
+
 MsgC(Color(100, 255, 100), "[RemixCategoryManager] Loaded successfully!\n")
 MsgC(Color(200, 200, 200), "[RemixCategoryManager] Commands:\n")
 MsgC(Color(200, 200, 200), "  remix_mark_world_textures    - Mark all world textures with DECAL_STATIC\n")
 MsgC(Color(200, 200, 200), "  remix_smart_mark_world       - Intelligently categorize world textures (BSP + Props)\n")
 MsgC(Color(200, 200, 200), "  remix_categorize_tracked     - Categorize all currently rendered materials (Particles, Effects)\n")
+MsgC(Color(200, 200, 200), "  remix_rescan_materials       - Rescan all cached materials for emissive (C++ VMT parsing)\n")
 MsgC(Color(200, 200, 200), "  remix_retry_pending          - Retry categorizing pending textures (hash=0)\n")
 MsgC(Color(200, 200, 200), "  remix_clear_categories       - Clear all category mappings\n")
 MsgC(Color(200, 200, 200), "  remix_find_texture_hash      - Search for texture by name\n")
