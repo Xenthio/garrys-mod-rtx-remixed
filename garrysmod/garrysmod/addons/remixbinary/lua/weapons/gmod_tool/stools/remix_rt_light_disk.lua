@@ -53,7 +53,9 @@ function TOOL:LeftClick(trace)
     local r = self:GetClientNumber("color_r") or 255
     local g = self:GetClientNumber("color_g") or 220
     local b = self:GetClientNumber("color_b") or 180
-    ent:SetNWVector("rtx_light_col", computeRadianceVector(r, g, b, self:GetClientNumber("brightness") or 1))
+    ent:SetNWFloat("rtx_light_color_r", r)
+    ent:SetNWFloat("rtx_light_color_g", g)
+    ent:SetNWFloat("rtx_light_color_b", b)
 
     if self:GetClientNumber("freeze") ~= 0 then
         local phys = ent:GetPhysicsObject()
@@ -86,7 +88,9 @@ function TOOL:RightClick(trace)
     local r = self:GetClientNumber("color_r") or 255
     local g = self:GetClientNumber("color_g") or 220
     local b = self:GetClientNumber("color_b") or 180
-    ent:SetNWVector("rtx_light_col", computeRadianceVector(r, g, b, self:GetClientNumber("brightness") or 1))
+    ent:SetNWFloat("rtx_light_color_r", r)
+    ent:SetNWFloat("rtx_light_color_g", g)
+    ent:SetNWFloat("rtx_light_color_b", b)
 
     return true
 end
@@ -102,11 +106,11 @@ function TOOL.BuildCPanel(panel)
     panel:Help("Spawn and edit Disk/Ellipse Area Lights")
 
 
-    panel:NumSlider("Brightness", "remix_rt_light_disk_brightness", 0, 10, 2)
+    panel:NumSlider("Brightness", "remix_rt_light_disk_brightness", 0, 10000, 2)
     panel:NumSlider("Volumetrics", "remix_rt_light_disk_volumetric", 0, 5, 2)
     
-    panel:NumSlider("X Radius", "remix_rt_light_disk_xradius", 1, 200, 0)
-    panel:NumSlider("Y Radius", "remix_rt_light_disk_yradius", 1, 200, 0)
+    panel:NumSlider("X Radius", "remix_rt_light_disk_xradius", 1, 2000, 0)
+    panel:NumSlider("Y Radius", "remix_rt_light_disk_yradius", 1, 2000, 0)
     
     panel:AddControl("Color", {
         Label = "Color",

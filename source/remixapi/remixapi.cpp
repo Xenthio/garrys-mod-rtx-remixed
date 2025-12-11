@@ -150,8 +150,19 @@ uint64_t LightManager::CreateSphereLight(const remix::LightInfo& base, const rem
     if (!m_remixInterface) return 0;
     
     std::lock_guard<std::mutex> guard(m_mutex);
-    remix::LightInfo info = base;
-    info.pNext = const_cast<remix::LightInfoSphereEXT*>(&ext);
+    
+    // FIX: Pre-create the ManagedLight with cached data to ensure stable memory
+    uint64_t id = m_nextLightId++;
+    ManagedLight ml;
+    ml.entityId = entityId;
+    ml.isSphere = true;
+    ml.cachedBase = base;
+    ml.cachedBase.pNext = nullptr;
+    ml.cachedSphere = ext;
+    
+    // Point to the CACHED data (stable memory address)
+    remix::LightInfo info = ml.cachedBase;
+    info.pNext = &ml.cachedSphere;
     
     // Use batched API for safer light creation
     auto created = m_remixInterface->CreateLightBatched(info);
@@ -161,9 +172,9 @@ uint64_t LightManager::CreateSphereLight(const remix::LightInfo& base, const rem
         return 0;
     }
     
-    uint64_t id = m_nextLightId++;
     remixapi_LightHandle handle = created.value();
-    ManagedLight ml; ml.handle = handle; ml.entityId = entityId; ml.isSphere = true; ml.cachedBase = base; ml.cachedBase.pNext = nullptr; ml.cachedSphere = ext;
+    ml.handle = handle;
+    
     m_lights.emplace(id, std::move(ml));
     if (entityId) m_entityToLight.emplace(entityId, id);
     m_activeLightHandles.insert(handle);
@@ -177,8 +188,19 @@ uint64_t LightManager::CreateRectLight(const remix::LightInfo& base, const remix
     if (!m_remixInterface) return 0;
     
     std::lock_guard<std::mutex> guard(m_mutex);
-    remix::LightInfo info = base;
-    info.pNext = const_cast<remix::LightInfoRectEXT*>(&ext);
+    
+    // FIX: Pre-create the ManagedLight with cached data to ensure stable memory
+    uint64_t id = m_nextLightId++;
+    ManagedLight ml;
+    ml.entityId = entityId;
+    ml.isSphere = false;
+    ml.cachedBase = base;
+    ml.cachedBase.pNext = nullptr;
+    ml.cachedRect = ext;
+    
+    // Point to the CACHED data (stable memory address)
+    remix::LightInfo info = ml.cachedBase;
+    info.pNext = &ml.cachedRect;
     
     // Use batched API for safer light creation
     auto created = m_remixInterface->CreateLightBatched(info);
@@ -188,9 +210,9 @@ uint64_t LightManager::CreateRectLight(const remix::LightInfo& base, const remix
         return 0;
     }
     
-    uint64_t id = m_nextLightId++;
     remixapi_LightHandle handle = created.value();
-    ManagedLight ml; ml.handle = handle; ml.entityId = entityId; ml.isSphere = false; ml.cachedBase = base; ml.cachedBase.pNext = nullptr; // no sphere cache
+    ml.handle = handle;
+    
     m_lights.emplace(id, std::move(ml));
     if (entityId) m_entityToLight.emplace(entityId, id);
     m_activeLightHandles.insert(handle);
@@ -204,8 +226,19 @@ uint64_t LightManager::CreateDiskLight(const remix::LightInfo& base, const remix
     if (!m_remixInterface) return 0;
     
     std::lock_guard<std::mutex> guard(m_mutex);
-    remix::LightInfo info = base;
-    info.pNext = const_cast<remix::LightInfoDiskEXT*>(&ext);
+    
+    // FIX: Pre-create the ManagedLight with cached data to ensure stable memory
+    uint64_t id = m_nextLightId++;
+    ManagedLight ml;
+    ml.entityId = entityId;
+    ml.isSphere = false;
+    ml.cachedBase = base;
+    ml.cachedBase.pNext = nullptr;
+    ml.cachedDisk = ext;
+    
+    // Point to the CACHED data (stable memory address)
+    remix::LightInfo info = ml.cachedBase;
+    info.pNext = &ml.cachedDisk;
     
     // Use batched API for safer light creation
     auto created = m_remixInterface->CreateLightBatched(info);
@@ -215,9 +248,9 @@ uint64_t LightManager::CreateDiskLight(const remix::LightInfo& base, const remix
         return 0;
     }
     
-    uint64_t id = m_nextLightId++;
     remixapi_LightHandle handle = created.value();
-    ManagedLight ml; ml.handle = handle; ml.entityId = entityId; ml.isSphere = false; ml.cachedBase = base; ml.cachedBase.pNext = nullptr;
+    ml.handle = handle;
+    
     m_lights.emplace(id, std::move(ml));
     if (entityId) m_entityToLight.emplace(entityId, id);
     m_activeLightHandles.insert(handle);
@@ -231,8 +264,19 @@ uint64_t LightManager::CreateDistantLight(const remix::LightInfo& base, const re
     if (!m_remixInterface) return 0;
     
     std::lock_guard<std::mutex> guard(m_mutex);
-    remix::LightInfo info = base;
-    info.pNext = const_cast<remix::LightInfoDistantEXT*>(&ext);
+    
+    // FIX: Pre-create the ManagedLight with cached data to ensure stable memory
+    uint64_t id = m_nextLightId++;
+    ManagedLight ml;
+    ml.entityId = entityId;
+    ml.isSphere = false;
+    ml.cachedBase = base;
+    ml.cachedBase.pNext = nullptr;
+    ml.cachedDistant = ext;
+    
+    // Point to the CACHED data (stable memory address)
+    remix::LightInfo info = ml.cachedBase;
+    info.pNext = &ml.cachedDistant;
     
     // Use batched API for safer light creation
     auto created = m_remixInterface->CreateLightBatched(info);
@@ -242,9 +286,9 @@ uint64_t LightManager::CreateDistantLight(const remix::LightInfo& base, const re
         return 0;
     }
     
-    uint64_t id = m_nextLightId++;
     remixapi_LightHandle handle = created.value();
-    ManagedLight ml; ml.handle = handle; ml.entityId = entityId; ml.isSphere = false; ml.cachedBase = base; ml.cachedBase.pNext = nullptr;
+    ml.handle = handle;
+    
     m_lights.emplace(id, std::move(ml));
     if (entityId) m_entityToLight.emplace(entityId, id);
     m_activeLightHandles.insert(handle);
@@ -258,7 +302,19 @@ uint64_t LightManager::CreateCylinderLight(const remix::LightInfo& base, const r
     if (!m_remixInterface) return 0;
     
     std::lock_guard<std::mutex> guard(m_mutex);
-    remix::LightInfo info = base; info.pNext = const_cast<remix::LightInfoCylinderEXT*>(&ext);
+    
+    // FIX: Pre-create the ManagedLight with cached data to ensure stable memory
+    uint64_t id = m_nextLightId++;
+    ManagedLight ml;
+    ml.entityId = entityId;
+    ml.isSphere = false;
+    ml.cachedBase = base;
+    ml.cachedBase.pNext = nullptr;
+    ml.cachedCylinder = ext;
+    
+    // Point to the CACHED data (stable memory address)
+    remix::LightInfo info = ml.cachedBase;
+    info.pNext = &ml.cachedCylinder;
     
     // Use batched API for safer light creation
     auto created = m_remixInterface->CreateLightBatched(info);
@@ -268,9 +324,9 @@ uint64_t LightManager::CreateCylinderLight(const remix::LightInfo& base, const r
         return 0;
     }
     
-    uint64_t id = m_nextLightId++;
     remixapi_LightHandle handle = created.value();
-    ManagedLight ml; ml.handle = handle; ml.entityId = entityId; ml.isSphere = false; ml.cachedBase = base; ml.cachedBase.pNext = nullptr;
+    ml.handle = handle;
+    
     m_lights.emplace(id, std::move(ml));
     if (entityId) m_entityToLight.emplace(entityId, id);
     m_activeLightHandles.insert(handle);
@@ -284,7 +340,19 @@ uint64_t LightManager::CreateDomeLight(const remix::LightInfo& base, const remix
     if (!m_remixInterface) return 0;
     
     std::lock_guard<std::mutex> guard(m_mutex);
-    remix::LightInfo info = base; info.pNext = const_cast<remix::LightInfoDomeEXT*>(&ext);
+    
+    // FIX: Pre-create the ManagedLight with cached data to ensure stable memory
+    uint64_t id = m_nextLightId++;
+    ManagedLight ml;
+    ml.entityId = entityId;
+    ml.isSphere = false;
+    ml.cachedBase = base;
+    ml.cachedBase.pNext = nullptr;
+    ml.cachedDome = ext;
+    
+    // Point to the CACHED data (stable memory address)
+    remix::LightInfo info = ml.cachedBase;
+    info.pNext = &ml.cachedDome;
     
     // Use batched API for safer light creation
     auto created = m_remixInterface->CreateLightBatched(info);
@@ -294,9 +362,9 @@ uint64_t LightManager::CreateDomeLight(const remix::LightInfo& base, const remix
         return 0;
     }
     
-    uint64_t id = m_nextLightId++;
     remixapi_LightHandle handle = created.value();
-    ManagedLight ml; ml.handle = handle; ml.entityId = entityId; ml.isSphere = false; ml.cachedBase = base; ml.cachedBase.pNext = nullptr;
+    ml.handle = handle;
+    
     m_lights.emplace(id, std::move(ml));
     if (entityId) m_entityToLight.emplace(entityId, id);
     m_activeLightHandles.insert(handle);
@@ -390,9 +458,18 @@ bool LightManager::UpdateSphereLight(uint64_t lightId, const remix::LightInfo& b
     std::lock_guard<std::mutex> guard(m_mutex);
     auto it = m_lights.find(lightId);
     if (it == m_lights.end() || !it->second.handle) return false;
-    remix::LightInfo info = base; info.pNext = const_cast<remix::LightInfoSphereEXT*>(&ext);
+    
+    // FIX: Store data in cached storage FIRST to ensure pNext points to stable memory
+    it->second.cachedBase = base; 
+    it->second.cachedBase.pNext = nullptr;
+    it->second.cachedSphere = ext;
+    it->second.isSphere = true;
+    
+    // Point to the CACHED data (stable memory address)
+    remix::LightInfo info = it->second.cachedBase;
+    info.pNext = &it->second.cachedSphere;
+    
     auto ok = m_remixInterface->UpdateLightDefinition(it->second.handle, info);
-    if (ok) { it->second.cachedBase = base; it->second.cachedBase.pNext = nullptr; it->second.cachedSphere = ext; it->second.isSphere = true; }
     return ok;
 }
 
@@ -400,7 +477,16 @@ bool LightManager::UpdateRectLight(uint64_t lightId, const remix::LightInfo& bas
     std::lock_guard<std::mutex> guard(m_mutex);
     auto it = m_lights.find(lightId);
     if (it == m_lights.end() || !it->second.handle) return false;
-    remix::LightInfo info = base; info.pNext = const_cast<remix::LightInfoRectEXT*>(&ext);
+    
+    // FIX: Store data in cached storage FIRST to ensure pNext points to stable memory
+    it->second.cachedBase = base;
+    it->second.cachedBase.pNext = nullptr;
+    it->second.cachedRect = ext;
+    
+    // Point to the CACHED data (stable memory address)
+    remix::LightInfo info = it->second.cachedBase;
+    info.pNext = &it->second.cachedRect;
+    
     return m_remixInterface->UpdateLightDefinition(it->second.handle, info);
 }
 
@@ -408,7 +494,16 @@ bool LightManager::UpdateDiskLight(uint64_t lightId, const remix::LightInfo& bas
     std::lock_guard<std::mutex> guard(m_mutex);
     auto it = m_lights.find(lightId);
     if (it == m_lights.end() || !it->second.handle) return false;
-    remix::LightInfo info = base; info.pNext = const_cast<remix::LightInfoDiskEXT*>(&ext);
+    
+    // FIX: Store data in cached storage FIRST to ensure pNext points to stable memory
+    it->second.cachedBase = base;
+    it->second.cachedBase.pNext = nullptr;
+    it->second.cachedDisk = ext;
+    
+    // Point to the CACHED data (stable memory address)
+    remix::LightInfo info = it->second.cachedBase;
+    info.pNext = &it->second.cachedDisk;
+    
     return m_remixInterface->UpdateLightDefinition(it->second.handle, info);
 }
 
@@ -416,7 +511,16 @@ bool LightManager::UpdateDistantLight(uint64_t lightId, const remix::LightInfo& 
     std::lock_guard<std::mutex> guard(m_mutex);
     auto it = m_lights.find(lightId);
     if (it == m_lights.end() || !it->second.handle) return false;
-    remix::LightInfo info = base; info.pNext = const_cast<remix::LightInfoDistantEXT*>(&ext);
+    
+    // FIX: Store data in cached storage FIRST to ensure pNext points to stable memory
+    it->second.cachedBase = base;
+    it->second.cachedBase.pNext = nullptr;
+    it->second.cachedDistant = ext;
+    
+    // Point to the CACHED data (stable memory address)
+    remix::LightInfo info = it->second.cachedBase;
+    info.pNext = &it->second.cachedDistant;
+    
     return m_remixInterface->UpdateLightDefinition(it->second.handle, info);
 }
 
@@ -424,7 +528,16 @@ bool LightManager::UpdateCylinderLight(uint64_t lightId, const remix::LightInfo&
     std::lock_guard<std::mutex> guard(m_mutex);
     auto it = m_lights.find(lightId);
     if (it == m_lights.end() || !it->second.handle) return false;
-    remix::LightInfo info = base; info.pNext = const_cast<remix::LightInfoCylinderEXT*>(&ext);
+    
+    // FIX: Store data in cached storage FIRST to ensure pNext points to stable memory
+    it->second.cachedBase = base;
+    it->second.cachedBase.pNext = nullptr;
+    it->second.cachedCylinder = ext;
+    
+    // Point to the CACHED data (stable memory address)
+    remix::LightInfo info = it->second.cachedBase;
+    info.pNext = &it->second.cachedCylinder;
+    
     return m_remixInterface->UpdateLightDefinition(it->second.handle, info);
 }
 
@@ -432,7 +545,16 @@ bool LightManager::UpdateDomeLight(uint64_t lightId, const remix::LightInfo& bas
     std::lock_guard<std::mutex> guard(m_mutex);
     auto it = m_lights.find(lightId);
     if (it == m_lights.end() || !it->second.handle) return false;
-    remix::LightInfo info = base; info.pNext = const_cast<remix::LightInfoDomeEXT*>(&ext);
+    
+    // FIX: Store data in cached storage FIRST to ensure pNext points to stable memory
+    it->second.cachedBase = base;
+    it->second.cachedBase.pNext = nullptr;
+    it->second.cachedDome = ext;
+    
+    // Point to the CACHED data (stable memory address)
+    remix::LightInfo info = it->second.cachedBase;
+    info.pNext = &it->second.cachedDome;
+    
     return m_remixInterface->UpdateLightDefinition(it->second.handle, info);
 }
 bool LightManager::HasLight(uint64_t lightId) const {

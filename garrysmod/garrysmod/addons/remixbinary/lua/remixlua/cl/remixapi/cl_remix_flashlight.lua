@@ -291,7 +291,7 @@ local function ToggleFlashlight()
 end
 
 -- RenderScene hook for low-latency updates (runs every frame during rendering)
-hook.Add("PreRender", "RTXFlashlight_Update", function(origin, angles, fov)
+hook.Add("Think", "RTXFlashlight_Update", function(origin, angles, fov)
     -- Update cached settings periodically
     UpdateCachedSettings()
     

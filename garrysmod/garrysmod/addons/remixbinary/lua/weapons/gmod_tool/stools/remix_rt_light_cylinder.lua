@@ -49,7 +49,9 @@ function TOOL:LeftClick(trace)
     local r = self:GetClientNumber("color_r") or 255
     local g = self:GetClientNumber("color_g") or 220
     local b = self:GetClientNumber("color_b") or 180
-    ent:SetNWVector("rtx_light_col", computeRadianceVector(r, g, b, self:GetClientNumber("brightness") or 1))
+    ent:SetNWFloat("rtx_light_color_r", r)
+    ent:SetNWFloat("rtx_light_color_g", g)
+    ent:SetNWFloat("rtx_light_color_b", b)
 
     if self:GetClientNumber("freeze") ~= 0 then
         local phys = ent:GetPhysicsObject()
@@ -79,7 +81,9 @@ function TOOL:RightClick(trace)
     local r = self:GetClientNumber("color_r") or 255
     local g = self:GetClientNumber("color_g") or 220
     local b = self:GetClientNumber("color_b") or 180
-    ent:SetNWVector("rtx_light_col", computeRadianceVector(r, g, b, self:GetClientNumber("brightness") or 1))
+    ent:SetNWFloat("rtx_light_color_r", r)
+    ent:SetNWFloat("rtx_light_color_g", g)
+    ent:SetNWFloat("rtx_light_color_b", b)
 
     return true
 end
@@ -94,10 +98,10 @@ end
 function TOOL.BuildCPanel(panel)
     panel:Help("Spawn and edit Cylindrical Lights")
 
-    panel:NumSlider("Radius", "remix_rt_light_cylinder_radius", 1, 200, 0)
-    panel:NumSlider("Brightness", "remix_rt_light_cylinder_brightness", 0, 10, 2)
+    panel:NumSlider("Radius", "remix_rt_light_cylinder_radius", 1, 2000, 0)
+    panel:NumSlider("Brightness", "remix_rt_light_cylinder_brightness", 0, 10000, 2)
     panel:NumSlider("Volumetrics", "remix_rt_light_cylinder_volumetric", 0, 5, 2)
-    panel:NumSlider("Axis Length", "remix_rt_light_cylinder_axislen", 1, 400, 0)
+    panel:NumSlider("Axis Length", "remix_rt_light_cylinder_axislen", 1, 2000, 0)
     
     panel:AddControl("Color", {
         Label = "Color",

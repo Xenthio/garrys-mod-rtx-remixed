@@ -118,10 +118,17 @@ namespace RemixAPI {
         struct ManagedLight {
             remixapi_LightHandle handle { nullptr };
             uint64_t entityId { 0 };
-            // Cached state for partial updates
-            bool isSphere { false };
+            // Cached state for partial updates - ensures pNext points to stable memory
             remix::LightInfo cachedBase {};
+            
+            // Light type specific cached data
+            bool isSphere { false };
             remix::LightInfoSphereEXT cachedSphere {};
+            remix::LightInfoRectEXT cachedRect {};
+            remix::LightInfoDiskEXT cachedDisk {};
+            remix::LightInfoCylinderEXT cachedCylinder {};
+            remix::LightInfoDistantEXT cachedDistant {};
+            remix::LightInfoDomeEXT cachedDome {};
         };
 
         remix::Interface* m_remixInterface;
