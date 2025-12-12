@@ -740,10 +740,18 @@ local function createRemixLight(pos, color, brightness, size, lightType, lightPr
     -- Compute intensity using Source engine's formula
     -- Source: intensity = (color_linear) * (brightness / 255.0) * lightscale
     -- where color_linear = pow(color/255, 2.2) * 255 (but srgbToLinear already does this)
-    -- brightness is the 4th value in _light field (0-255 range)
+    -- brightness is the 4th value in _light field (0-255 range for LDR, >255 for bright lights)
     -- Point/spot lights need ~100x boost to compensate for missing radiosity calculations
     local baseScale = (kind == "env") and 1.0 or 100.0
-    local intensity = (appliedBrightness / 255.0) * baseScale * typeBrightnessMult
+    
+    -- Apply extra boost for high brightness values (>255) to compensate for lack of HDR tone mapping
+    local brightBoost = 1.0
+    if appliedBrightness > 255 then
+        -- Scale: 256-2000 -> 2x-20x boost, >2000 -> clamp at 20x
+        brightBoost = math.min(20.0, 1.0 + (appliedBrightness - 255) / 92.0)
+    end
+    
+    local intensity = (appliedBrightness / 255.0) * baseScale * typeBrightnessMult * brightBoost
     
     local base = {
         hash = tonumber(util.CRC(string.format("maplight_%s", posKey))) or entityId,
@@ -1033,10 +1041,18 @@ local function updateEntryRuntime(entry)
     -- Compute intensity using Source engine's formula
     -- Source: intensity = (color_linear) * (brightness / 255.0) * lightscale
     -- where color_linear = pow(color/255, 2.2) * 255 (but srgbToLinear already does this)
-    -- brightness is the 4th value in _light field (0-255 range)
+    -- brightness is the 4th value in _light field (0-255 range for LDR, >255 for bright lights)
     -- Point/spot lights need ~100x boost to compensate for missing radiosity calculations
     local baseScale = (kind == "env") and 1.0 or 100.0
-    local intensity = (baseBright / 255.0) * baseScale * bmult * amult
+    
+    -- Apply extra boost for high brightness values (>255) to compensate for lack of HDR tone mapping
+    local brightBoost = 1.0
+    if baseBright > 255 then
+        -- Scale: 256-2000 -> 2x-20x boost, >2000 -> clamp at 20x
+        brightBoost = math.min(20.0, 1.0 + (baseBright - 255) / 92.0)
+    end
+    
+    local intensity = (baseBright / 255.0) * baseScale * bmult * amult * brightBoost
     
     local base = {
         hash = tonumber(util.CRC("upd_" .. tostring(entry.id))) or entry.entityId,
