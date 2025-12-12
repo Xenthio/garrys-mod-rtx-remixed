@@ -50,6 +50,7 @@ local function UpdateRTXFromDynamicLight(lightId, dlight)
             g * scale,
             b * scale
         ),
+        isDynamic = true,
     }
     
     local sphere = {

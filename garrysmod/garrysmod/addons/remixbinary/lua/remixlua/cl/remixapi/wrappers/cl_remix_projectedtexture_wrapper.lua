@@ -72,6 +72,7 @@ local function UpdateRTXFromProjectedTexture(projTex, textureId)
             color.g * scale,
             color.b * scale
         ),
+        isDynamic = true,
     }
     
     -- ProjectedTexture uses FOV (full cone angle)

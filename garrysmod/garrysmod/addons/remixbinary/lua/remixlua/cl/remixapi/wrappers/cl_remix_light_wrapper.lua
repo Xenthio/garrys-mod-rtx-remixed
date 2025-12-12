@@ -256,6 +256,7 @@ local function CreateRTXLightFromEntity(ent)
             props.color.g * scale,
             props.color.b * scale
         ),
+        isDynamic = true,
     }
     
     local sphere = {
@@ -335,6 +336,7 @@ local function UpdateRTXLightFromEntity(ent, lightId, oldProps)
             props.color.g * scale,
             props.color.b * scale
         ),
+        isDynamic = true,
     }
     
     local sphere = {
