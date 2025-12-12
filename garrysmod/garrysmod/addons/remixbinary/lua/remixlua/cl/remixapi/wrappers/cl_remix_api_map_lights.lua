@@ -642,6 +642,10 @@ local function findLightsInBSP()
                 end
                 end
                 
+                -- Check if light should start disabled (spawnflags bit 1 = "Initially dark")
+                local spawnflags = tonumber(ent.spawnflags or ent._spawnflags or 0) or 0
+                local initiallyDark = (bit.band(spawnflags, 1) == 1)
+                
                 table.insert(lights, {
                     pos = pos,
                     color = color,
@@ -651,11 +655,12 @@ local function findLightsInBSP()
                     lightType = lightType,
                     lightProps = lightProps,
                     angles = lightProps.angles, -- Store angles if available
-                    targetname = ent.targetname or ent._targetname
+                    targetname = ent.targetname or ent._targetname,
+                    initiallyDark = initiallyDark
                 })
                 
-                DebugPrint(string.format("Found light: %s (RTX Type: %d) at %.2f,%.2f,%.2f - Color: %d,%d,%d - Brightness: %.1f - Size: %.1f", 
-                    ent.classname, lightType, pos.x, pos.y, pos.z, color.r, color.g, color.b, brightness, size))
+                DebugPrint(string.format("Found light: %s (RTX Type: %d) at %.2f,%.2f,%.2f - Color: %d,%d,%d - Brightness: %.1f - Size: %.1f%s", 
+                    ent.classname, lightType, pos.x, pos.y, pos.z, color.r, color.g, color.b, brightness, size, initiallyDark and " [Initially Dark]" or ""))
             end
         end
     end
@@ -706,7 +711,7 @@ local function createVisualProp(pos, color, classname)
 end
 
 -- Create a Remix light using the newer RemixLight Lua API (sphere for now)
-local function createRemixLight(pos, color, brightness, size, lightType, lightProps, angles, visualProp, classname, targetname)
+local function createRemixLight(pos, color, brightness, size, lightType, lightProps, angles, visualProp, classname, targetname, initiallyDark)
     -- Generate a unique position key with some tolerance (0.1 units)
     local posKey = string.format("%.1f_%.1f_%.1f", pos.x, pos.y, pos.z)
     if createdLightPositions[posKey] then
@@ -747,6 +752,7 @@ local function createRemixLight(pos, color, brightness, size, lightType, lightPr
             y = srgbToLinear(color.g) * intensity, 
             z = srgbToLinear(color.b) * intensity 
         },
+        isDynamic = true,
     }
 
     -- Direction from angles if present
@@ -845,8 +851,8 @@ local function createRemixLight(pos, color, brightness, size, lightType, lightPr
         coneSoftness = (lightProps and tonumber(lightProps.coneSoftness)) or nil,
         -- Animation / linkage
         targetname = targetname,
-        animMul = 1.0,
-        animEnabled = true,
+        animMul = (initiallyDark and 0.0) or 1.0,  -- Respect "Initially dark" spawnflag
+        animEnabled = not initiallyDark,  -- Start disabled if initially dark
     }
     return entry
 end
@@ -945,7 +951,8 @@ local function batchCreateRTXLights()
                     light.angles,
                     visualProp,
                     light.classname,
-                    light.targetname
+                    light.targetname,
+                    light.initiallyDark  -- Respect "Initially dark" spawnflag from BSP
                 )
                 
                 if entry and entry.id then
@@ -1038,6 +1045,7 @@ local function updateEntryRuntime(entry)
             y = srgbToLinear(entry.color.g) * intensity, 
             z = srgbToLinear(entry.color.b) * intensity 
         },
+        isDynamic = true,
     }
     -- Helper to compute direction for distant/spot from stored angles if available
     local function computeDir()
@@ -1256,7 +1264,7 @@ hook.Add("Think", "rtx_api_map_lights_PhysgunThink", function()
                             RemixLight.UpdateSphereFields(entry.id, { position = { x = newPos.x, y = newPos.y, z = newPos.z } })
                         elseif istable(RemixLight) and RemixLight.UpdateSphere then
                             -- Fallback: build minimal base+info from cached entry, only include shaping if enabled
-                            local base = { hash = tonumber(util.CRC("upd_" .. tostring(entry.id))) or entry.entityId, radiance = { x = entry.color.r, y = entry.color.g, z = entry.color.b } }
+                            local base = { hash = tonumber(util.CRC("upd_" .. tostring(entry.id))) or entry.entityId, radiance = { x = entry.color.r, y = entry.color.g, z = entry.color.b }, isDynamic = true }
                             local info = { position = { x = newPos.x, y = newPos.y, z = newPos.z }, radius = entry.size or 200, volumetricRadianceScale = 1.0 }
                             if entry.shapingEnabled then
                                 info.shaping = { direction = { x = 0, y = 0, z = -1 }, coneAngleDegrees = 45.0, coneSoftness = 0.2, focusExponent = 1.0 }
