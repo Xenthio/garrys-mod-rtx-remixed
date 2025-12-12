@@ -60,5 +60,8 @@ hook.Add("PopulateToolMenu", "RemixAPILights", function()
         -- Section: Debug
         panel:Help("Debug")
         panel:CheckBox("Draw Debug Directions", "rtx_api_map_lights_debug_vis")
+        panel:CheckBox("Show HUD Overlay", "rtx_api_map_lights_debug_hud")
+        panel:CheckBox("Show Disabled Lights", "rtx_api_map_lights_debug_hud_show_disabled")
+        panel:NumSlider("HUD Max Distance", "rtx_api_map_lights_debug_hud_max_distance", 512, 8192, 0)
     end)
 end)

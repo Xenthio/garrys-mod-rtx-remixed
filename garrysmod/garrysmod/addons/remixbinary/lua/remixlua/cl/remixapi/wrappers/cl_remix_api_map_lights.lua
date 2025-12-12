@@ -45,6 +45,9 @@ local autospawn_delay = CreateClientConVar("rtx_api_map_lights_autospawn_delay",
 
 -- Debug helpers
 local debug_vis = CreateClientConVar("rtx_api_map_lights_debug_vis", "0", true, false, "Draw debug direction for spotlights")
+local debug_hud = CreateClientConVar("rtx_api_map_lights_debug_hud", "0", true, false, "Show HUD overlay with light positions and info")
+local debug_hud_max_distance = CreateClientConVar("rtx_api_map_lights_debug_hud_max_distance", "2048", true, false, "Maximum distance to show lights in HUD")
+local debug_hud_show_disabled = CreateClientConVar("rtx_api_map_lights_debug_hud_show_disabled", "0", true, false, "Show disabled/dark lights in HUD")
 local spot_dir_basis = CreateClientConVar("rtx_api_map_lights_dir_basis", "0", true, false, "Angles basis if no target: 0=F,1=-F,2=U,3=-U,4=R,5=-R")
 local debug_beam_mat = Material("cable/physbeam")
 
@@ -1411,6 +1414,133 @@ hook.Add("PostDrawTranslucentRenderables", "rtx_api_map_lights_DebugDir", functi
             end
         end
     end
+end)
+
+-- HUD overlay showing light positions and info
+hook.Add("HUDPaint", "rtx_api_map_lights_DebugHUD", function()
+    if not debug_hud:GetBool() then return end
+    if #createdLights == 0 then return end
+    
+    local ply = LocalPlayer()
+    if not IsValid(ply) then return end
+    
+    local plyPos = ply:EyePos()
+    local maxDist = debug_hud_max_distance:GetFloat()
+    local showDisabled = debug_hud_show_disabled:GetBool()
+    
+    -- Font setup
+    surface.SetFont("DermaDefault")
+    
+    local visibleLights = 0
+    
+    for _, entry in ipairs(createdLights) do
+        if not entry.pos then continue end
+        
+        -- Check if light is enabled
+        local isEnabled = (entry.animMul or 1.0) > 0.01
+        if not isEnabled and not showDisabled then continue end
+        
+        -- Distance check
+        local dist = plyPos:Distance(entry.pos)
+        if dist > maxDist then continue end
+        
+        -- Convert world position to screen position
+        local scrPos = entry.pos:ToScreen()
+        if not scrPos.visible then continue end
+        
+        visibleLights = visibleLights + 1
+        
+        -- Determine light type and color
+        local lightType = "Point"
+        local typeColor = Color(255, 255, 0, 255)
+        
+        if entry.classname == "light_environment" then
+            lightType = "Sun"
+            typeColor = Color(255, 200, 100, 255)
+        elseif entry.classname == "light_spot" then
+            lightType = "Spot"
+            typeColor = Color(255, 100, 100, 255)
+        elseif entry.classname == "env_projectedtexture" then
+            lightType = "Proj"
+            typeColor = Color(255, 0, 255, 255)
+        end
+        
+        -- Fade based on distance
+        local alpha = math.Clamp(1 - (dist / maxDist), 0.3, 1)
+        typeColor.a = alpha * 255
+        
+        -- Draw background box
+        local text = string.format("%s", lightType)
+        local textW, textH = surface.GetTextSize(text)
+        local boxPadding = 4
+        local boxW = textW + boxPadding * 2
+        local boxH = textH + boxPadding * 2
+        
+        -- Background with light color tint
+        local bgColor = Color(0, 0, 0, alpha * 180)
+        surface.SetDrawColor(bgColor)
+        surface.DrawRect(scrPos.x - boxW / 2, scrPos.y - boxH / 2, boxW, boxH)
+        
+        -- Border with light color
+        local borderColor = Color(entry.color.r, entry.color.g, entry.color.b, alpha * 255)
+        surface.SetDrawColor(borderColor)
+        surface.DrawOutlinedRect(scrPos.x - boxW / 2, scrPos.y - boxH / 2, boxW, boxH)
+        
+        -- Draw light type text
+        draw.SimpleText(text, "DermaDefault", scrPos.x, scrPos.y, typeColor, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        
+        -- Draw additional info below if close enough
+        if dist < maxDist * 0.5 then
+            local infoY = scrPos.y + boxH / 2 + 2
+            
+            -- Distance
+            local distText = string.format("%dm", math.floor(dist / 39.37)) -- Convert to meters (Source units to meters)
+            local distColor = Color(200, 200, 200, alpha * 200)
+            draw.SimpleText(distText, "DermaDefault", scrPos.x, infoY, distColor, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+            
+            -- Targetname if available
+            if entry.targetname and entry.targetname ~= "" then
+                local nameText = string.format("%s", entry.targetname)
+                local nameColor = Color(100, 200, 255, alpha * 200)
+                draw.SimpleText(nameText, "DermaDefault", scrPos.x, infoY + textH, nameColor, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+            end
+            
+            -- Show disabled status
+            if not isEnabled then
+                local disabledText = "[OFF]"
+                local disabledColor = Color(255, 100, 100, alpha * 200)
+                draw.SimpleText(disabledText, "DermaDefault", scrPos.x, scrPos.y - boxH / 2 - textH, disabledColor, TEXT_ALIGN_CENTER, TEXT_ALIGN_BOTTOM)
+            end
+        end
+        
+        -- Draw line from player to light (if very close)
+        if dist < maxDist * 0.25 then
+            local centerX, centerY = scrPos.x, scrPos.y
+            local plyScreenPos = plyPos:ToScreen()
+            if plyScreenPos.visible then
+                surface.SetDrawColor(borderColor.r, borderColor.g, borderColor.b, alpha * 100)
+                surface.DrawLine(plyScreenPos.x, plyScreenPos.y, centerX, centerY)
+            end
+        end
+    end
+    
+    -- Draw legend in top-right corner
+    local legendX = ScrW() - 150
+    local legendY = 100
+    local legendBg = Color(0, 0, 0, 200)
+    
+    surface.SetDrawColor(legendBg)
+    surface.DrawRect(legendX - 5, legendY - 5, 145, 110)
+    
+    draw.SimpleText("Map Lights HUD", "DermaDefaultBold", legendX, legendY, Color(255, 255, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+    draw.SimpleText(string.format("Visible: %d / %d", visibleLights, #createdLights), "DermaDefault", legendX, legendY + 15, Color(200, 200, 200), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+    draw.SimpleText(string.format("Max Dist: %dm", math.floor(maxDist / 39.37)), "DermaDefault", legendX, legendY + 30, Color(200, 200, 200), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+    
+    -- Legend items
+    draw.SimpleText("Point", "DermaDefault", legendX, legendY + 50, Color(255, 255, 0), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+    draw.SimpleText("Spot", "DermaDefault", legendX, legendY + 65, Color(255, 100, 100), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+    draw.SimpleText("Sun", "DermaDefault", legendX, legendY + 80, Color(255, 200, 100), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+    draw.SimpleText("Proj", "DermaDefault", legendX, legendY + 95, Color(255, 0, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
 end)
 
 hook.Add("Initialize", "rtx_api_map_lights_Reset", function()
