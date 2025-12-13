@@ -19,6 +19,7 @@ RemixCategoryManager = RemixCategoryManager or {}
 -- ConVars for configuration
 CreateClientConVar("remix_auto_categorize", "1", true, false, "Automatically categorize world textures when a map loads (1 = enabled, 0 = disabled)")
 CreateClientConVar("remix_auto_categorize_delay", "5", true, false, "Delay in seconds before auto-categorization runs (default: 5)")
+CreateClientConVar("remix_require_emissive_mask", "1", true, false, "Require $selfillummask or alpha channel for emissive materials (1 = strict, 0 = allow any $selfillum)")
 
 -- Remix Instance Category Flags
 RemixCategoryManager.CATEGORY = {
@@ -51,10 +52,10 @@ RemixCategoryManager.CATEGORY = {
 
 -- Common category flag combinations
 RemixCategoryManager.PRESET = {
-    -- For opaque world geometry (walls, floors, etc.) - needs Decal for proper blending
+    -- For opaque world geometry (walls, floors, etc.) from BSP - mark as Decal for proper blending
     WORLD_GEOMETRY = RemixCategoryManager.CATEGORY.DECAL_STATIC,  -- 0x1000
     
-    -- For transparent world geometry (glass, windows, fences)
+    -- For transparent world geometry (glass, windows, fences) - still needs Decal for BSP geometry
     WORLD_GEOMETRY_TRANSPARENT = RemixCategoryManager.CATEGORY.DECAL_STATIC,  -- 0x1000
     
     -- For sky textures
@@ -66,7 +67,7 @@ RemixCategoryManager.PRESET = {
     -- For terrain (displacement surfaces) - mark as DECAL for proper blending
     TERRAIN = RemixCategoryManager.CATEGORY.DECAL_STATIC,  -- 0x1000
     
-    -- For map decals (overlays, bullet holes, blood, etc.)
+    -- For actual map decals (overlays, bullet holes, blood, etc.) - materials with $decal parameter
     MAP_DECAL = RemixCategoryManager.CATEGORY.DECAL_STATIC,  -- 0x1000
     
     -- For self-illuminated/emissive materials (lights, glows, LED panels)
@@ -74,6 +75,9 @@ RemixCategoryManager.PRESET = {
     
     -- For player model textures (pseudoplayer, third-person view)
     PLAYER_MODEL = RemixCategoryManager.CATEGORY.THIRD_PERSON_PLAYER_MODEL,  -- 0x80000
+    
+    -- For props and models (NO decal flag - they're not part of the world geometry)
+    PROP_STATIC = 0,  -- No special flags
 }
 
 -- Local cache of material name -> hash mappings
@@ -83,11 +87,220 @@ local materialHashCache = {}
 local processedTextures = {}
 
 --[[
-    Check if a material is self-illuminated (emissive)
+    Check if a material is self-illuminated (emissive) with proper validation
     @param materialName string - The material name
-    @return boolean - True if material has $selfillum enabled
+    @return boolean - True if material has $selfillum enabled AND proper masking
 ]]--
 function RemixCategoryManager.IsMaterialEmissive(materialName)
+    local mat = Material(materialName)
+    if not mat or mat:IsError() then
+        return false
+    end
+    
+    local requireMask = GetConVar("remix_require_emissive_mask"):GetBool()
+    local hasSelfillum = false
+    local hasMask = false
+    
+    -- Check Shader Name first - UnlitGeneric is always emissive (no mask needed)
+    local shader = mat:GetShader()
+    if shader and shader:lower() == "unlitgeneric" then
+        return true
+    end
+    
+    -- Method 1: Check raw KeyValues for $selfillum
+    local keyValues = mat:GetKeyValues()
+    if keyValues then
+        for k, v in pairs(keyValues) do
+            local lowerKey = k:lower()
+            if lowerKey == "$selfillum" then
+                local val = tonumber(v)
+                if val and val >= 1 then
+                    hasSelfillum = true
+                end
+            end
+            -- Check for $selfillummask
+            if lowerKey == "$selfillummask" then
+                hasMask = true
+            end
+        end
+    end
+
+    -- Method 2: Check standard GetInt (compiled params)
+    if not hasSelfillum then
+        local selfillum = mat:GetInt("$selfillum")
+        if selfillum and selfillum == 1 then
+            hasSelfillum = true
+        end
+    end
+    
+    -- Method 3: Check GetFloat (sometimes stored as float)
+    if not hasSelfillum then
+        local selfillumFloat = mat:GetFloat("$selfillum")
+        if selfillumFloat and selfillumFloat >= 1 then
+            hasSelfillum = true
+        end
+    end
+    
+    -- Method 4: Check for $selfillummask texture
+    if not hasMask then
+        local mask = mat:GetTexture("$selfillummask")
+        if mask and not mask:IsError() then
+            hasMask = true
+        end
+    end
+    
+    -- Method 5: Check $emissive parameter (used in some shaders - doesn't need mask)
+    local emissive = mat:GetVector("$emissive")
+    if emissive and (emissive.x > 0 or emissive.y > 0 or emissive.z > 0) then
+        return true
+    end
+    
+    -- Method 6: Check for $illumposition (volumetric lights/sprites - doesn't need mask)
+    if mat:GetVector("$illumposition") then
+        return true
+    end
+
+    -- Method 7: Raw VMT File Parse
+    local vmtPath = "materials/" .. materialName
+    if not string.EndsWith(vmtPath, ".vmt") then
+        vmtPath = vmtPath .. ".vmt"
+    end
+    
+    local content = file.Read(vmtPath, "GAME")
+    if content then
+        local lines = string.Explode("\n", content)
+        
+        for _, line in ipairs(lines) do
+            local lowerLine = line:lower()
+            local trimmedLine = string.Trim(lowerLine)
+            
+            -- Skip commented lines
+            if not string.StartsWith(trimmedLine, "//") then
+                -- Check for $selfillum set to 1
+                if lowerLine:find('["\']?%$selfillum["\']?%s+["\']?1["\']?') then
+                    hasSelfillum = true
+                end
+                
+                -- Check for $selfillummask
+                if lowerLine:find('%$selfillummask') then
+                    hasMask = true
+                end
+            end
+        end
+    end
+    
+    -- If $selfillum is found, check if mask is required
+    if hasSelfillum then
+        if requireMask then
+            -- Strict mode: require $selfillummask or alpha rendering mode
+            if hasMask then
+                return true
+            end
+            
+            -- Check if material has alpha rendering enabled
+            -- ($translucent or $alphatest indicates alpha channel is used for masking)
+            local translucent = mat:GetInt("$translucent")
+            local alphatest = mat:GetInt("$alphatest")
+            if (translucent and translucent == 1) or (alphatest and alphatest == 1) then
+                return true
+            end
+            
+            -- No valid mask found - return false to avoid fullbright materials
+            return false
+        else
+            -- Permissive mode: any $selfillum counts
+            return true
+        end
+    end
+
+    return false
+end
+
+--[[
+    Check if a material should be excluded from world geometry categorization
+    @param materialName string - The material name
+    @return boolean - True if material should NOT be treated as world geometry (no DECAL_STATIC)
+]]--
+function RemixCategoryManager.ShouldExcludeFromWorldGeometry(materialName)
+    local mat = Material(materialName)
+    if not mat or mat:IsError() then
+        return false
+    end
+    
+    -- Check for $translucent - these are alpha-blended surfaces (foliage, etc.)
+    local keyValues = mat:GetKeyValues()
+    if keyValues then
+        for k, v in pairs(keyValues) do
+            local lowerKey = k:lower()
+            
+            -- Check $translucent
+            if lowerKey == "$translucent" then
+                local val = tonumber(v)
+                if val and val >= 1 then
+                    return true  -- Translucent materials shouldn't be world geometry decals
+                end
+            end
+            
+            -- Check $surfaceprop for "no_decal"
+            if lowerKey == "$surfaceprop" then
+                local strVal = tostring(v):lower()
+                if strVal:find("no_decal") then
+                    return true  -- Explicitly marked to not receive decals
+                end
+            end
+        end
+    end
+    
+    -- Check GetInt for $translucent
+    local translucent = mat:GetInt("$translucent")
+    if translucent and translucent == 1 then
+        return true
+    end
+    
+    -- Check GetString for $surfaceprop
+    local surfaceprop = mat:GetString("$surfaceprop")
+    if surfaceprop and surfaceprop:lower():find("no_decal") then
+        return true
+    end
+    
+    -- Raw VMT file parse for reliability
+    local vmtPath = "materials/" .. materialName
+    if not string.EndsWith(vmtPath, ".vmt") then
+        vmtPath = vmtPath .. ".vmt"
+    end
+    
+    local content = file.Read(vmtPath, "GAME")
+    if content then
+        local lines = string.Explode("\n", content)
+        
+        for _, line in ipairs(lines) do
+            local lowerLine = line:lower()
+            local trimmedLine = string.Trim(lowerLine)
+            
+            -- Skip commented lines
+            if not string.StartsWith(trimmedLine, "//") then
+                -- Check for $translucent 1
+                if lowerLine:find('["\']?%$translucent["\']?%s+["\']?1["\']?') then
+                    return true
+                end
+                
+                -- Check for $surfaceprop "no_decal"
+                if lowerLine:find('%$surfaceprop') and lowerLine:find('no_decal') then
+                    return true
+                end
+            end
+        end
+    end
+    
+    return false
+end
+
+--[[
+    Check if a material is a decal (has $decal parameter)
+    @param materialName string - The material name
+    @return boolean - True if material has $decal enabled
+]]--
+function RemixCategoryManager.IsMaterialDecal(materialName)
     local mat = Material(materialName)
     if not mat or mat:IsError() then
         return false
@@ -96,48 +309,33 @@ function RemixCategoryManager.IsMaterialEmissive(materialName)
     -- Method 1: Check raw KeyValues (Most reliable for VMT parameters)
     local keyValues = mat:GetKeyValues()
     if keyValues then
-        -- Check $selfillum (case-insensitive scan)
+        -- Check $decal (case-insensitive scan)
         for k, v in pairs(keyValues) do
-            if k:lower() == "$selfillum" then
+            if k:lower() == "$decal" then
                 local val = tonumber(v)
                 if val and val >= 1 then return true end
             end
         end
     end
-
+    
     -- Method 2: Check standard GetInt (compiled params)
-    local selfillum = mat:GetInt("$selfillum")
-    if selfillum and selfillum == 1 then return true end
+    local decal = mat:GetInt("$decal")
+    if decal and decal == 1 then return true end
     
     -- Method 3: Check GetFloat (sometimes stored as float)
-    local selfillumFloat = mat:GetFloat("$selfillum")
-    if selfillumFloat and selfillumFloat >= 1 then return true end
-
-    -- Method 4: Check Shader Name (UnlitGeneric is always emissive)
+    local decalFloat = mat:GetFloat("$decal")
+    if decalFloat and decalFloat >= 1 then return true end
+    
+    -- Method 4: Check decal shaders
     local shader = mat:GetShader()
-    if shader and shader:lower() == "unlitgeneric" then return true end
-    
-    -- Method 5: Check $emissive parameter (used in some shaders)
-    local emissive = mat:GetVector("$emissive")
-    if emissive and (emissive.x > 0 or emissive.y > 0 or emissive.z > 0) then
-        return true
+    if shader then
+        local s = shader:lower()
+        if s == "decal" or s == "decalmodulate" then
+            return true
+        end
     end
     
-    -- Method 6: Check for $selfillummask texture
-    -- If a dedicated mask texture is defined, it's definitely emissive
-    local mask = mat:GetTexture("$selfillummask")
-    if mask and not mask:IsError() then
-        return true
-    end
-    
-    -- Method 7: Check for $illumposition (usually implies lights/emissive)
-    -- This is often used for volumetric lights or sprites
-    if mat:GetVector("$illumposition") then
-        return true
-    end
-
-    -- Method 8: Raw VMT File Parse (The "Nuclear Option")
-    -- If the engine hides the parameter (e.g. in DX7 fallback shaders), read the file directly
+    -- Method 5: Raw VMT File Parse
     local vmtPath = "materials/" .. materialName
     if not string.EndsWith(vmtPath, ".vmt") then
         vmtPath = vmtPath .. ".vmt"
@@ -145,17 +343,23 @@ function RemixCategoryManager.IsMaterialEmissive(materialName)
     
     local content = file.Read(vmtPath, "GAME")
     if content then
-        -- Simple pattern match for "$selfillum" followed by "1"
-        -- Normalize to lowercase
-        local lowerContent = content:lower()
+        -- Parse line-by-line to properly handle comments
+        local lines = string.Explode("\n", content)
         
-        -- Escape the $ symbol with % because it's a magic character in Lua patterns
-        -- Pattern: optional quote, literal $selfillum, optional quote, whitespace, optional quote, 1, optional quote
-        if lowerContent:find('["\']?%$selfillum["\']?%s+["\']?1["\']?') then
-            return true
+        for _, line in ipairs(lines) do
+            local lowerLine = line:lower()
+            
+            -- Skip commented lines
+            local trimmedLine = string.Trim(lowerLine)
+            if not string.StartsWith(trimmedLine, "//") then
+                -- Check for $decal set to 1 (not commented out)
+                if lowerLine:find('["\']?%$decal["\']?%s+["\']?1["\']?') then
+                    return true
+                end
+            end
         end
     end
-
+    
     return false
 end
 
@@ -721,53 +925,60 @@ function RemixCategoryManager.SmartMarkWorldTextures()
                             -- Get material from this displacement face
                             local ok_mat, material = pcall(function() return face:GetMaterial() end)
                             if ok_mat and material then
-                                -- Displacement materials often have two base textures ($basetexture and $basetexture2)
-                                local texturesToAdd = {}
+                                -- Get the actual material name being rendered
+                                local matName = material:GetName()
                                 
-                                -- Try to get $basetexture
+                                if matName and matName ~= "" and not displacementTextures[matName] then
+                                    displacementTextures[matName] = true
+                                    dispCount = dispCount + 1
+                                    
+                                    -- Store normalized versions for matching
+                                    local normalizedMatName = matName
+                                    normalizedMatName = string.gsub(normalizedMatName, "^materials/", "")
+                                    normalizedMatName = string.gsub(normalizedMatName, "%.vmt$", "")
+                                    normalizedMatName = string.gsub(normalizedMatName, "\\", "/")  -- Normalize slashes
+                                    displacementTextures[normalizedMatName] = true
+                                    displacementTextures[string.lower(normalizedMatName)] = true
+                                    
+                                    -- Debug: Log first few
+                                    if dispCount <= 5 then
+                                        MsgC(Color(200, 200, 255), string.format("[RemixCategoryManager] Displacement #%d: material='%s'\n", dispCount, normalizedMatName))
+                                        
+                                        -- Also show the base textures
+                                        local baseTex = material:GetTexture("$basetexture")
+                                        local baseTex2 = material:GetTexture("$basetexture2")
+                                        if baseTex and baseTex.GetName then
+                                            MsgC(Color(200, 200, 200), string.format("    $basetexture: %s\n", baseTex:GetName()))
+                                        end
+                                        if baseTex2 and baseTex2.GetName then
+                                            MsgC(Color(200, 200, 200), string.format("    $basetexture2: %s\n", baseTex2:GetName()))
+                                        end
+                                    end
+                                end
+                                
+                                -- ALSO track individual texture names for reference
+                                -- (these might be used in other contexts)
                                 local baseTex = material:GetTexture("$basetexture")
                                 if baseTex and baseTex.GetName then
                                     local texName = baseTex:GetName()
                                     if texName and texName ~= "" then
-                                        table.insert(texturesToAdd, texName)
+                                        local normTex = string.gsub(texName, "^materials/", "")
+                                        normTex = string.gsub(normTex, "%.vmt$", "")
+                                        normTex = string.gsub(normTex, "\\", "/")
+                                        displacementTextures[normTex] = true
+                                        displacementTextures[string.lower(normTex)] = true
                                     end
                                 end
                                 
-                                -- Try to get $basetexture2
                                 local baseTex2 = material:GetTexture("$basetexture2")
                                 if baseTex2 and baseTex2.GetName then
                                     local texName2 = baseTex2:GetName()
                                     if texName2 and texName2 ~= "" then
-                                        table.insert(texturesToAdd, texName2)
-                                    end
-                                end
-                                
-                                -- Force-track and add all found textures
-                                for _, texName in ipairs(texturesToAdd) do
-                                    if not displacementTextures[texName] then
-                                        displacementTextures[texName] = true  -- Mark as displacement
-                                        dispCount = dispCount + 1
-                                        
-                                        -- Force the texture to be tracked by D3D9
-                                        local trackedMatName = RemixCategoryManager.ForceTrackTexture(texName)
-                                        
-                                        if trackedMatName then
-                                            -- Also mark the tracked material name as displacement
-                                            displacementTextures[trackedMatName] = true
-                                            
-                                            -- Check if not already in main texture list
-                                            local found = false
-                                            for _, existingTex in ipairs(textures) do
-                                                if existingTex == trackedMatName then
-                                                    found = true
-                                                    break
-                                                end
-                                            end
-                                            
-                                            if not found then
-                                                table.insert(textures, trackedMatName)
-                                            end
-                                        end
+                                        local normTex2 = string.gsub(texName2, "^materials/", "")
+                                        normTex2 = string.gsub(normTex2, "%.vmt$", "")
+                                        normTex2 = string.gsub(normTex2, "\\", "/")
+                                        displacementTextures[normTex2] = true
+                                        displacementTextures[string.lower(normTex2)] = true
                                     end
                                 end
                             end
@@ -781,16 +992,74 @@ function RemixCategoryManager.SmartMarkWorldTextures()
             leafCount, faceCount, dispFaceCount))
         
         if dispCount > 0 then
-            MsgC(Color(100, 255, 100), string.format("[RemixCategoryManager] Added %d displacement textures\n", dispCount))
+            MsgC(Color(100, 255, 100), string.format("[RemixCategoryManager] Found %d unique displacement materials\n", dispCount))
+            
+            -- Debug: List all displacement material names (limited output)
+            local debugCount = 0
+            local debugList = {}
+            for matName, _ in pairs(displacementTextures) do
+                -- Only show actual material names (not texture names)
+                if not string.find(matName, "^rtx_force_track") then
+                    table.insert(debugList, matName)
+                end
+            end
+            
+            table.sort(debugList)
+            for _, matName in ipairs(debugList) do
+                if debugCount < 10 then
+                    MsgC(Color(200, 200, 200), string.format("  - %s\n", matName))
+                    debugCount = debugCount + 1
+                end
+            end
+            
+            if #debugList > 10 then
+                MsgC(Color(200, 200, 200), string.format("  ... and %d more\n", #debugList - 10))
+            end
         else
-            MsgC(Color(200, 200, 200), "[RemixCategoryManager] No displacement textures found\n")
+            MsgC(Color(200, 200, 200), "[RemixCategoryManager] No displacement materials found\n")
         end
     else
         MsgC(Color(255, 200, 100), "[RemixCategoryManager] Could not get leafs from BSP\n")
     end
     
+    -- Track which materials are from BSP world geometry (these get DECAL_STATIC)
+    local bspWorldTextures = {}
+    for _, texName in ipairs(textures or {}) do
+        bspWorldTextures[texName] = true
+    end
+    
+    -- Track which materials are from displacements (these also get DECAL_STATIC)
+    local bspDisplacementTextures = displacementTextures
+    
+    -- Add displacement materials to the main textures list for processing
+    -- (They might not be in the BSP GetTextures() list)
+    textures = textures or {}
+    local addedDispCount = 0
+    for dispMat, _ in pairs(displacementTextures) do
+        -- Only add if not a texture name (avoid duplicates)
+        if not string.find(dispMat, "^rtx_force_track") then
+            local found = false
+            for _, existing in ipairs(textures) do
+                if existing == dispMat then
+                    found = true
+                    break
+                end
+            end
+            
+            if not found then
+                table.insert(textures, dispMat)
+                addedDispCount = addedDispCount + 1
+            end
+        end
+    end
+    
+    if addedDispCount > 0 then
+        MsgC(Color(100, 255, 100), string.format("[RemixCategoryManager] Added %d displacement materials to processing queue\n", addedDispCount))
+    end
+    
     -- Process Static Props (models placed in Hammer)
-    -- These often contain emissive materials that aren't used on world brushes
+    -- These should NOT get DECAL_STATIC unless they have $decal parameter
+    local propTextures = {}  -- Track prop materials separately
     MsgC(Color(200, 200, 200), "[RemixCategoryManager] Checking static props...\n")
     if bsp.GetStaticProps then
         local ok_props, staticProps = pcall(function() return bsp:GetStaticProps() end)
@@ -822,6 +1091,9 @@ function RemixCategoryManager.SmartMarkWorldTextures()
                     end
                     
                     for _, matName in ipairs(matNames) do
+                        -- Mark as prop texture
+                        propTextures[matName] = true
+                        
                         -- Check if already in list to avoid duplicates
                         local found = false
                         for _, existing in ipairs(textures) do
@@ -856,6 +1128,7 @@ function RemixCategoryManager.SmartMarkWorldTextures()
         displacements = 0,
         decals = 0,
         emissive = 0,
+        props = 0,  -- Materials from static props (not categorized unless special)
         skipped = 0
     }
     
@@ -878,7 +1151,16 @@ function RemixCategoryManager.SmartMarkWorldTextures()
             if not processedTextures[lowerName] then
                 processedTextures[lowerName] = true
                 
-                -- Determine category based on texture properties and name patterns
+                -- Determine if this is from BSP world geometry or a static prop
+                local isFromBSP = bspWorldTextures[texName] or false
+                local isFromProp = propTextures[texName] or false
+                -- Check multiple variants for displacement detection
+                local isFromDisplacement = bspDisplacementTextures[texName] or 
+                                          bspDisplacementTextures[materialName] or 
+                                          bspDisplacementTextures[lowerName] or
+                                          false
+                
+                -- Determine category based on texture properties and source
                 local category = nil
                 
                 -- Sky textures (check first, highest priority for exclusion)
@@ -892,56 +1174,71 @@ function RemixCategoryManager.SmartMarkWorldTextures()
                     category = RemixCategoryManager.PRESET.EMISSIVE
                     stats.emissive = stats.emissive + 1
                 
-                -- Map decals (overlays, bullet holes, blood, etc.)
-                elseif string.find(lowerName, "^decals/") or 
-                       string.find(lowerName, "/decals/") or
-                       string.find(lowerName, "overlay") or
-                       string.find(lowerName, "bulleth") or
-                       string.find(lowerName, "blood") or
-                       string.find(lowerName, "scorch") then
+                -- Materials with $decal parameter (actual decals)
+                elseif RemixCategoryManager.IsMaterialDecal(materialName) then
                     category = RemixCategoryManager.CATEGORY.DECAL_STATIC
                     stats.decals = stats.decals + 1
                 
-                -- Displacement textures (terrain) - also marked as DECAL_STATIC
-                elseif displacementTextures[texName] then
+                -- Displacement textures (terrain) - always marked as DECAL_STATIC
+                elseif isFromDisplacement then
                     category = RemixCategoryManager.PRESET.TERRAIN  -- This is DECAL_STATIC (0x1000)
                     stats.displacements = stats.displacements + 1
-                
-                -- Sky textures
-                elseif string.find(lowerName, "sky") or string.find(lowerName, "skybox") then
-                    category = RemixCategoryManager.PRESET.SKY
-                    stats.sky = stats.sky + 1
                     
+                    -- Debug: Log first few displacement categorizations
+                    if stats.displacements <= 3 then
+                        MsgC(Color(100, 255, 100), string.format("[RemixCategoryManager] Categorizing displacement: %s\n", materialName))
+                    end
+                
                 -- Water textures
                 elseif string.find(lowerName, "water") or string.find(lowerName, "slime") then
                     category = RemixCategoryManager.PRESET.WATER
                     stats.water = stats.water + 1
+                
+                -- BSP world geometry textures (faces from brushes) - mark as DECAL_STATIC
+                -- This is ONLY for actual world brushes, not props
+                elseif isFromBSP and not isFromProp then
+                    -- Check if material should be excluded (translucent, no_decal, etc.)
+                    if RemixCategoryManager.ShouldExcludeFromWorldGeometry(materialName) then
+                        -- Don't categorize - let it render normally (foliage, translucent surfaces, etc.)
+                        stats.skipped = stats.skipped + 1
                     
-                -- Transparent textures (glass, fences, etc.)
-                elseif string.find(lowerName, "glass") or 
+                    -- Check for transparent world geometry (glass, fences, etc.)
+                    elseif string.find(lowerName, "glass") or 
                        string.find(lowerName, "window") or
                        string.find(lowerName, "fence") or
                        string.find(lowerName, "grate") or
                        string.find(lowerName, "chain") then
-                    category = RemixCategoryManager.PRESET.WORLD_GEOMETRY_TRANSPARENT
-                    stats.transparent = stats.transparent + 1
+                        category = RemixCategoryManager.PRESET.WORLD_GEOMETRY_TRANSPARENT
+                        stats.transparent = stats.transparent + 1
                     
-                -- Terrain textures
-                elseif string.find(lowerName, "dirt") or
-                       string.find(lowerName, "grass") or
-                       string.find(lowerName, "ground") or
-                       string.find(lowerName, "terrain") then
-                    category = RemixCategoryManager.PRESET.TERRAIN
-                    stats.terrain = stats.terrain + 1
+                    -- Check for terrain-like textures
+                    elseif string.find(lowerName, "dirt") or
+                           string.find(lowerName, "grass") or
+                           string.find(lowerName, "ground") or
+                           string.find(lowerName, "terrain") then
+                        category = RemixCategoryManager.PRESET.TERRAIN
+                        stats.terrain = stats.terrain + 1
                     
-                -- Default: solid world geometry
-                else
-                    category = RemixCategoryManager.PRESET.WORLD_GEOMETRY
-                    stats.solid = stats.solid + 1
+                    -- Default: solid world geometry (DECAL_STATIC)
+                    else
+                        category = RemixCategoryManager.PRESET.WORLD_GEOMETRY
+                        stats.solid = stats.solid + 1
+                    end
+                
+                -- Static prop materials - NO DECAL_STATIC unless they have $decal parameter
+                -- These are already handled by emissive/decal checks above
+                -- Leave uncategorized (category = nil) so they render as normal models
+                elseif isFromProp then
+                    stats.props = stats.props + 1
                 end
                 
                 if category then
                     RemixCategoryManager.SetMaterialCategory(materialName, category)
+                end
+                
+                -- If this is a displacement material, also ensure it's tracked
+                if isFromDisplacement and category then
+                    RemixMaterial.TrackMaterial(materialName)
                 end
             else
                 stats.skipped = stats.skipped + 1
@@ -950,8 +1247,8 @@ function RemixCategoryManager.SmartMarkWorldTextures()
     end
     
     MsgC(Color(100, 255, 100), "[RemixCategoryManager] Smart-mark complete:\n")
-    MsgC(Color(200, 200, 200), string.format("  Total: %d, Solid: %d, Emissive: %d, Transparent: %d, Water: %d, Sky: %d, Terrain: %d, Decals: %d, Skipped: %d\n",
-        stats.total, stats.solid, stats.emissive, stats.transparent, stats.water, stats.sky, stats.terrain, stats.decals, stats.skipped))
+    MsgC(Color(200, 200, 200), string.format("  Total: %d, Solid: %d, Emissive: %d, Transparent: %d, Water: %d, Sky: %d, Terrain: %d, Decals: %d, Props: %d, Skipped: %d\n",
+        stats.total, stats.solid, stats.emissive, stats.transparent, stats.water, stats.sky, stats.terrain, stats.decals, stats.props, stats.skipped))
     
     return stats
 end
@@ -977,8 +1274,14 @@ end, nil, "Mark all world geometry textures with a category (default: DECAL_STAT
     Console command to smart-mark world textures
 ]]--
 concommand.Add("remix_smart_mark_world", function(ply, cmd, args)
+    -- Optionally clear the processed cache to reprocess everything
+    if args[1] == "force" then
+        processedTextures = {}
+        MsgC(Color(255, 200, 100), "[RemixCategoryManager] Cleared processed texture cache\n")
+    end
+    
     RemixCategoryManager.SmartMarkWorldTextures()
-end, nil, "Intelligently mark world textures based on their properties")
+end, nil, "Intelligently mark world textures based on their properties (use 'force' to reprocess all)")
 
 --[[
     Console command to clear all category mappings
@@ -1051,11 +1354,21 @@ concommand.Add("remix_check_emissive", function(ply, cmd, args)
     local materialName = args[1]
     local isEmissive = RemixCategoryManager.IsMaterialEmissive(materialName)
     
+    local requireMask = GetConVar("remix_require_emissive_mask"):GetBool()
+    
     if isEmissive then
         MsgC(Color(100, 255, 100), string.format("[RemixCategoryManager] ✓ '%s' is EMISSIVE\n", materialName))
     else
-        MsgC(Color(255, 100, 100), string.format("[RemixCategoryManager] ✗ '%s' is NOT emissive\n", materialName))
+        MsgC(Color(255, 100, 100), string.format("[RemixCategoryManager] ✗ '%s' is NOT emissive", materialName))
+        if requireMask then
+            MsgC(Color(255, 200, 100), " (strict mode: requires mask)\n")
+        else
+            MsgC(Color(255, 200, 100), "\n")
+        end
     end
+    
+    MsgC(Color(200, 200, 200), string.format("  Mask requirement: %s (remix_require_emissive_mask)\n", 
+        requireMask and "STRICT" or "PERMISSIVE"))
 
     -- Show detailed debug info
     local mat = Material(materialName)
@@ -1064,7 +1377,30 @@ concommand.Add("remix_check_emissive", function(ply, cmd, args)
         MsgC(Color(200, 200, 200), string.format("  - Shader: %s\n", tostring(mat:GetShader())))
         
         local intVal = mat:GetInt("$selfillum")
-        MsgC(Color(200, 200, 200), string.format("  - GetInt($selfillum): %s\n", tostring(intVal or "nil")))
+        if intVal and intVal == 1 then
+            MsgC(Color(100, 255, 100), string.format("  - GetInt($selfillum): %s ✓\n", tostring(intVal)))
+        else
+            MsgC(Color(200, 200, 200), string.format("  - GetInt($selfillum): %s\n", tostring(intVal or "nil")))
+        end
+        
+        -- Check for mask
+        local mask = mat:GetTexture("$selfillummask")
+        if mask and not mask:IsError() then
+            MsgC(Color(100, 255, 100), string.format("  - $selfillummask: %s ✓\n", mask:GetName()))
+        else
+            MsgC(Color(255, 200, 100), "  - $selfillummask: (none) ⚠\n")
+        end
+        
+        -- Check for alpha channel indicators
+        local translucent = mat:GetInt("$translucent")
+        local alphatest = mat:GetInt("$alphatest")
+        if (translucent and translucent == 1) or (alphatest and alphatest == 1) then
+            MsgC(Color(100, 255, 100), string.format("  - Alpha masking: $translucent=%s $alphatest=%s ✓\n", 
+                tostring(translucent), tostring(alphatest)))
+        else
+            MsgC(Color(255, 200, 100), string.format("  - Alpha masking: $translucent=%s $alphatest=%s ⚠\n", 
+                tostring(translucent or 0), tostring(alphatest or 0)))
+        end
         
         local floatVal = mat:GetFloat("$selfillum")
         MsgC(Color(200, 200, 200), string.format("  - GetFloat($selfillum): %s\n", tostring(floatVal or "nil")))
@@ -1080,10 +1416,15 @@ concommand.Add("remix_check_emissive", function(ply, cmd, args)
             else
                 MsgC(Color(255, 100, 100), "    - $selfillum: (missing)\n")
             end
+            if keyValues["$selfillummask"] then
+                MsgC(Color(100, 255, 100), string.format("    - $selfillummask: %s\n", tostring(keyValues["$selfillummask"])))
+            end
             -- Print other relevant keys
             for k, v in pairs(keyValues) do
-                if k:lower():find("illum") or k:lower():find("emiss") then
-                    MsgC(Color(200, 200, 200), string.format("    - %s: %s\n", k, tostring(v)))
+                if k:lower():find("illum") or k:lower():find("emiss") or k:lower():find("alpha") or k:lower():find("transluc") then
+                    if not (k:lower() == "$selfillum" or k:lower() == "$selfillummask") then
+                        MsgC(Color(200, 200, 200), string.format("    - %s: %s\n", k, tostring(v)))
+                    end
                 end
             end
         else
@@ -1101,11 +1442,29 @@ concommand.Add("remix_check_emissive", function(ply, cmd, args)
             if lowerContent:find("%$selfillum") then
                 MsgC(Color(100, 255, 100), "    - Found '$selfillum' string in file!\n")
                 
-                -- Check for value 1
-                if lowerContent:find('["\']?%$selfillum["\']?%s+["\']?1["\']?') then
-                    MsgC(Color(100, 255, 100), "    - Found '$selfillum 1' pattern match!\n")
-                else
+                -- Parse line-by-line to check if it's commented
+                local lines = string.Explode("\n", content)
+                local foundActive = false
+                local foundCommented = false
+                
+                for _, line in ipairs(lines) do
+                    local lowerLine = line:lower()
+                    if lowerLine:find("%$selfillum") then
+                        local trimmedLine = string.Trim(lowerLine)
+                        if string.StartsWith(trimmedLine, "//") then
+                            foundCommented = true
+                            MsgC(Color(255, 200, 100), "    - Found COMMENTED OUT: " .. string.Trim(line) .. "\n")
+                        elseif lowerLine:find('["\']?%$selfillum["\']?%s+["\']?1["\']?') then
+                            foundActive = true
+                            MsgC(Color(100, 255, 100), "    - Found ACTIVE '$selfillum 1': " .. string.Trim(line) .. "\n")
+                        end
+                    end
+                end
+                
+                if not foundActive and not foundCommented then
                     MsgC(Color(255, 200, 100), "    - '$selfillum' found but not set to 1 (or pattern failed)\n")
+                elseif not foundActive and foundCommented then
+                    MsgC(Color(255, 150, 100), "    - '$selfillum' is COMMENTED OUT (not emissive)\n")
                 end
             else
                 MsgC(Color(200, 200, 200), "    - '$selfillum' string NOT found in file.\n")
@@ -1117,6 +1476,186 @@ concommand.Add("remix_check_emissive", function(ply, cmd, args)
         MsgC(Color(255, 100, 100), "  - Invalid Material\n")
     end
 end, nil, "Check if a material has $selfillum enabled")
+
+--[[
+    Console command to check if a material is a decal
+]]--
+concommand.Add("remix_check_decal", function(ply, cmd, args)
+    if not args[1] then
+        MsgC(Color(255, 200, 100), "Usage: remix_check_decal <material_name>\n")
+        MsgC(Color(255, 200, 100), "Example: remix_check_decal decals/decalgraffiti036a\n")
+        return
+    end
+    
+    local materialName = args[1]
+    local isDecal = RemixCategoryManager.IsMaterialDecal(materialName)
+    
+    if isDecal then
+        MsgC(Color(100, 255, 100), string.format("[RemixCategoryManager] ✓ '%s' is a DECAL\n", materialName))
+    else
+        MsgC(Color(255, 100, 100), string.format("[RemixCategoryManager] ✗ '%s' is NOT a decal\n", materialName))
+    end
+
+    -- Show detailed debug info
+    local mat = Material(materialName)
+    if mat and not mat:IsError() then
+        MsgC(Color(200, 200, 200), "  Debug Info:\n")
+        MsgC(Color(200, 200, 200), string.format("  - Shader: %s\n", tostring(mat:GetShader())))
+        
+        local intVal = mat:GetInt("$decal")
+        MsgC(Color(200, 200, 200), string.format("  - GetInt($decal): %s\n", tostring(intVal or "nil")))
+        
+        local floatVal = mat:GetFloat("$decal")
+        MsgC(Color(200, 200, 200), string.format("  - GetFloat($decal): %s\n", tostring(floatVal or "nil")))
+        
+        local keyValues = mat:GetKeyValues()
+        if keyValues then
+            MsgC(Color(200, 200, 200), "  - KeyValues (VMT raw):\n")
+            if keyValues["$decal"] then
+                MsgC(Color(100, 255, 100), string.format("    - $decal: %s\n", tostring(keyValues["$decal"])))
+            else
+                MsgC(Color(255, 100, 100), "    - $decal: (missing)\n")
+            end
+        else
+             MsgC(Color(255, 100, 100), "  - KeyValues: nil (Failed to read VMT)\n")
+        end
+        
+        -- Check file directly
+        local vmtPath = "materials/" .. materialName
+        if not string.EndsWith(vmtPath, ".vmt") then vmtPath = vmtPath .. ".vmt" end
+        local content = file.Read(vmtPath, "GAME")
+        if content then
+            MsgC(Color(200, 200, 200), "  - Raw File Parse:\n")
+            local lowerContent = content:lower()
+            
+            if lowerContent:find("%$decal") then
+                MsgC(Color(100, 255, 100), "    - Found '$decal' string in file!\n")
+                
+                -- Parse line-by-line to check if it's commented
+                local lines = string.Explode("\n", content)
+                local foundActive = false
+                local foundCommented = false
+                
+                for _, line in ipairs(lines) do
+                    local lowerLine = line:lower()
+                    if lowerLine:find("%$decal") then
+                        local trimmedLine = string.Trim(lowerLine)
+                        if string.StartsWith(trimmedLine, "//") then
+                            foundCommented = true
+                            MsgC(Color(255, 200, 100), "    - Found COMMENTED OUT: " .. string.Trim(line) .. "\n")
+                        elseif lowerLine:find('["\']?%$decal["\']?%s+["\']?1["\']?') then
+                            foundActive = true
+                            MsgC(Color(100, 255, 100), "    - Found ACTIVE '$decal 1': " .. string.Trim(line) .. "\n")
+                        end
+                    end
+                end
+                
+                if not foundActive and not foundCommented then
+                    MsgC(Color(255, 200, 100), "    - '$decal' found but not set to 1 (or pattern failed)\n")
+                elseif not foundActive and foundCommented then
+                    MsgC(Color(255, 150, 100), "    - '$decal' is COMMENTED OUT (not a decal)\n")
+                end
+            else
+                MsgC(Color(200, 200, 200), "    - '$decal' string NOT found in file.\n")
+            end
+        else
+            MsgC(Color(255, 100, 100), "  - Raw File Parse: File not found (" .. vmtPath .. ")\n")
+        end
+    else
+        MsgC(Color(255, 100, 100), "  - Invalid Material\n")
+    end
+end, nil, "Check if a material has $decal enabled")
+
+--[[
+    Console command to check if a material should be excluded from world geometry
+]]--
+concommand.Add("remix_check_world_exclude", function(ply, cmd, args)
+    if not args[1] then
+        MsgC(Color(255, 200, 100), "Usage: remix_check_world_exclude <material_name>\n")
+        MsgC(Color(255, 200, 100), "Example: remix_check_world_exclude nature/miltree007\n")
+        return
+    end
+    
+    local materialName = args[1]
+    local shouldExclude = RemixCategoryManager.ShouldExcludeFromWorldGeometry(materialName)
+    
+    if shouldExclude then
+        MsgC(Color(255, 200, 100), string.format("[RemixCategoryManager] ✓ '%s' EXCLUDED from world geometry (no DECAL_STATIC)\n", materialName))
+    else
+        MsgC(Color(100, 255, 100), string.format("[RemixCategoryManager] ✗ '%s' can be world geometry\n", materialName))
+    end
+
+    -- Show detailed debug info
+    local mat = Material(materialName)
+    if mat and not mat:IsError() then
+        MsgC(Color(200, 200, 200), "  Debug Info:\n")
+        MsgC(Color(200, 200, 200), string.format("  - Shader: %s\n", tostring(mat:GetShader())))
+        
+        local translucent = mat:GetInt("$translucent")
+        if translucent and translucent == 1 then
+            MsgC(Color(255, 200, 100), "  - GetInt($translucent): 1 (EXCLUDED)\n")
+        else
+            MsgC(Color(200, 200, 200), string.format("  - GetInt($translucent): %s\n", tostring(translucent or "nil")))
+        end
+        
+        local surfaceprop = mat:GetString("$surfaceprop")
+        if surfaceprop and surfaceprop:lower():find("no_decal") then
+            MsgC(Color(255, 200, 100), string.format("  - GetString($surfaceprop): %s (EXCLUDED)\n", surfaceprop))
+        else
+            MsgC(Color(200, 200, 200), string.format("  - GetString($surfaceprop): %s\n", tostring(surfaceprop or "nil")))
+        end
+        
+        local keyValues = mat:GetKeyValues()
+        if keyValues then
+            MsgC(Color(200, 200, 200), "  - KeyValues (VMT raw):\n")
+            for k, v in pairs(keyValues) do
+                local lowerKey = k:lower()
+                if lowerKey == "$translucent" or lowerKey == "$surfaceprop" then
+                    local val = tostring(v)
+                    if (lowerKey == "$translucent" and tonumber(v) == 1) or 
+                       (lowerKey == "$surfaceprop" and val:lower():find("no_decal")) then
+                        MsgC(Color(255, 200, 100), string.format("    - %s: %s (EXCLUDED)\n", k, val))
+                    else
+                        MsgC(Color(200, 200, 200), string.format("    - %s: %s\n", k, val))
+                    end
+                end
+            end
+        else
+             MsgC(Color(255, 100, 100), "  - KeyValues: nil (Failed to read VMT)\n")
+        end
+        
+        -- Check file directly
+        local vmtPath = "materials/" .. materialName
+        if not string.EndsWith(vmtPath, ".vmt") then vmtPath = vmtPath .. ".vmt" end
+        local content = file.Read(vmtPath, "GAME")
+        if content then
+            MsgC(Color(200, 200, 200), "  - Raw File Parse:\n")
+            
+            local lines = string.Explode("\n", content)
+            for _, line in ipairs(lines) do
+                local lowerLine = line:lower()
+                local trimmedLine = string.Trim(lowerLine)
+                
+                if not string.StartsWith(trimmedLine, "//") then
+                    if lowerLine:find("%$translucent") or lowerLine:find("%$surfaceprop") then
+                        local isExcluded = (lowerLine:find('["\']?%$translucent["\']?%s+["\']?1["\']?') or 
+                                          (lowerLine:find('%$surfaceprop') and lowerLine:find('no_decal')))
+                        
+                        if isExcluded then
+                            MsgC(Color(255, 200, 100), "    - " .. string.Trim(line) .. " (EXCLUDED)\n")
+                        else
+                            MsgC(Color(200, 200, 200), "    - " .. string.Trim(line) .. "\n")
+                        end
+                    end
+                end
+            end
+        else
+            MsgC(Color(255, 100, 100), "  - Raw File Parse: File not found (" .. vmtPath .. ")\n")
+        end
+    else
+        MsgC(Color(255, 100, 100), "  - Invalid Material\n")
+    end
+end, nil, "Check if a material should be excluded from world geometry (translucent, no_decal)")
 
 --[[
     Console command to categorize all tracked materials
@@ -1198,7 +1737,15 @@ MsgC(Color(200, 200, 200), "  remix_clear_categories       - Clear all category 
 MsgC(Color(200, 200, 200), "  remix_find_texture_hash      - Search for texture by name\n")
 MsgC(Color(200, 200, 200), "  remix_set_material_category  - Set category for a material\n")
 MsgC(Color(200, 200, 200), "  remix_check_emissive         - Check if material has $selfillum\n")
+MsgC(Color(200, 200, 200), "  remix_check_decal            - Check if material has $decal\n")
+MsgC(Color(200, 200, 200), "  remix_check_world_exclude    - Check if material excluded from world geo ($translucent, no_decal)\n")
 MsgC(Color(200, 200, 200), "[RemixCategoryManager] ConVars:\n")
-MsgC(Color(200, 200, 200), "  remix_auto_categorize (0/1), remix_auto_categorize_delay (seconds)\n")
+MsgC(Color(200, 200, 200), "  remix_auto_categorize (0/1) - Auto-categorize on map load\n")
+MsgC(Color(200, 200, 200), "  remix_auto_categorize_delay (seconds) - Delay before auto-categorization\n")
+MsgC(Color(200, 200, 200), "  remix_require_emissive_mask (0/1) - Require $selfillummask or alpha for emissive\n")
+MsgC(Color(255, 255, 100), "[RemixCategoryManager] DECAL_STATIC applied to: BSP faces, displacements, $decal materials\n")
+MsgC(Color(255, 255, 100), "[RemixCategoryManager] EXCLUDED from world geo: $translucent, $surfaceprop no_decal\n")
+MsgC(Color(255, 255, 100), "[RemixCategoryManager] Emissive validation: %s (prevents fullbright materials)\n", 
+    GetConVar("remix_require_emissive_mask"):GetBool() and "STRICT" or "PERMISSIVE")
 
 return RemixCategoryManager
