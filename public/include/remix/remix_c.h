@@ -94,6 +94,7 @@ extern "C" {
     REMIXAPI_STRUCT_TYPE_STARTUP_INFO                         = 22,
     REMIXAPI_STRUCT_TYPE_PRESENT_INFO                         = 23,
     REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_PARTICLE_SYSTEM_EXT    = 24,
+    REMIXAPI_STRUCT_TYPE_TEXTURE_INFO                         = 25,
     // NOTE: if adding a new struct, register it in 'rtx_remix_specialization.inl'
     //       and only extend this enum by appending, never adjust the order of these 
     //       as that will break backwards compatibility.
@@ -163,6 +164,7 @@ extern "C" {
   typedef struct remixapi_MaterialHandle_T* remixapi_MaterialHandle;
   typedef struct remixapi_MeshHandle_T* remixapi_MeshHandle;
   typedef struct remixapi_LightHandle_T* remixapi_LightHandle;
+  typedef struct remixapi_TextureHandle_T* remixapi_TextureHandle;
 
   typedef const wchar_t* remixapi_Path;
 
@@ -726,6 +728,42 @@ extern "C" {
     uint64_t*          out_hash);
 
 
+  // Texture upload API
+  typedef enum remixapi_Format {
+    REMIXAPI_FORMAT_R8G8B8A8_UNORM = 37,   // VK_FORMAT_R8G8B8A8_UNORM
+    REMIXAPI_FORMAT_R8G8B8A8_SRGB = 43,    // VK_FORMAT_R8G8B8A8_SRGB
+    REMIXAPI_FORMAT_B8G8R8A8_UNORM = 44,   // VK_FORMAT_B8G8R8A8_UNORM
+    REMIXAPI_FORMAT_B8G8R8A8_SRGB = 50,    // VK_FORMAT_B8G8R8A8_SRGB
+    REMIXAPI_FORMAT_BC1_RGB_UNORM = 131,   // VK_FORMAT_BC1_RGB_UNORM_BLOCK
+    REMIXAPI_FORMAT_BC1_RGB_SRGB = 132,    // VK_FORMAT_BC1_RGB_SRGB_BLOCK
+    REMIXAPI_FORMAT_BC3_UNORM = 135,       // VK_FORMAT_BC3_UNORM_BLOCK
+    REMIXAPI_FORMAT_BC3_SRGB = 136,        // VK_FORMAT_BC3_SRGB_BLOCK
+    REMIXAPI_FORMAT_BC5_UNORM = 139,       // VK_FORMAT_BC5_UNORM_BLOCK (normal maps)
+    REMIXAPI_FORMAT_BC7_UNORM = 145,       // VK_FORMAT_BC7_UNORM_BLOCK
+    REMIXAPI_FORMAT_BC7_SRGB = 146,        // VK_FORMAT_BC7_SRGB_BLOCK
+  } remixapi_Format;
+
+  typedef struct remixapi_TextureInfo {
+    remixapi_StructType sType;
+    void*               pNext;
+    uint64_t            hash;           // Unique identifier for this texture
+    uint32_t            width;
+    uint32_t            height;
+    uint32_t            depth;          // Set to 1 for 2D textures
+    uint32_t            mipLevels;      // Set to 1 for no mipmaps
+    remixapi_Format     format;
+    const void*         data;           // Pointer to pixel data (all mips sequential)
+    uint64_t            dataSize;       // Total size in bytes
+  } remixapi_TextureInfo;
+
+  typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_CreateTexture)(
+    const remixapi_TextureInfo* info,
+    remixapi_TextureHandle*     out_handle);
+
+  typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_DestroyTexture)(
+    remixapi_TextureHandle      handle);
+
+
   typedef struct remixapi_InitializeLibraryInfo {
     remixapi_StructType sType;
     void*               pNext;
@@ -748,6 +786,8 @@ extern "C" {
     PFN_remixapi_SetConfigVariable  SetConfigVariable;
     PFN_remixapi_AddTextureHash     AddTextureHash;
     PFN_remixapi_RemoveTextureHash  RemoveTextureHash;
+    PFN_remixapi_CreateTexture      CreateTexture;
+    PFN_remixapi_DestroyTexture     DestroyTexture;
 
     // DXVK interoperability
     PFN_remixapi_dxvk_CreateD3D9            dxvk_CreateD3D9;
