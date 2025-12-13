@@ -66,20 +66,21 @@ function PhysgunColorSync.Initialize()
         end
     end
     
-    -- Wait a bit for materials to be tracked, then get hashes
-    timer.Simple(0.5, function()
-        PhysgunColorSync.RefreshHashes()
-        PhysgunColorSync.ApplyColor() -- Apply initial color
-    end)
+    -- Immediately try to get hashes and apply color
+    PhysgunColorSync.RefreshHashes()
+    PhysgunColorSync.ApplyColor()
 end
 
 -- Refresh the hash cache
 function PhysgunColorSync.RefreshHashes()
     if not RemixMaterial or not RemixMaterial.GetTextureHash then return end
     
-    PhysgunColorSync.MaterialHashes = {}
+    local foundNewHash = false
     
     for _, matName in ipairs(PhysgunColorSync.PhysgunMaterials) do
+        -- Skip if we already have this hash
+        if PhysgunColorSync.MaterialHashes[matName] then continue end
+        
         -- GetTextureHash returns TWO values: number (lossy) and string (accurate)
         -- We MUST use the string version to preserve full 64-bit precision
         local hashNum, hashStr = RemixMaterial.GetTextureHash(matName)
@@ -87,13 +88,17 @@ function PhysgunColorSync.RefreshHashes()
         if hashStr and hashStr ~= "0x0" and hashStr ~= "0x0000000000000000" then
             PhysgunColorSync.MaterialHashes[matName] = hashStr
             print(string.format("[PhysgunColorSync] Found hash for '%s': %s", matName, hashStr))
+            foundNewHash = true
         end
     end
     
     local count = table.Count(PhysgunColorSync.MaterialHashes)
-    if count > 0 then
-        print(string.format("[PhysgunColorSync] Tracked %d physgun material hashes", count))
+    if foundNewHash then
+        print(string.format("[PhysgunColorSync] Now tracking %d/%d physgun material hashes", 
+            count, #PhysgunColorSync.PhysgunMaterials))
     end
+    
+    return foundNewHash
 end
 
 -- Get the current weapon color from the ConVar
@@ -116,7 +121,10 @@ end
 -- Apply the current weapon color to all physgun materials
 function PhysgunColorSync.ApplyColor()
     if not PhysgunColorSync.EnabledConVar:GetBool() then return end
-    if not RemixConfig or not RemixConfig.SetConfigVariable then return end
+    if not RemixConfig or not RemixConfig.SetConfigVariable then 
+        -- Remix not ready yet
+        return 
+    end
     
     local r, g, b = PhysgunColorSync.GetWeaponColor()
     
@@ -128,7 +136,10 @@ function PhysgunColorSync.ApplyColor()
     
     -- Check if color changed
     local colorKey = string.format("%.3f,%.3f,%.3f", normR, normG, normB)
-    if PhysgunColorSync.LastColor == colorKey then return end
+    if PhysgunColorSync.LastColor == colorKey and table.Count(PhysgunColorSync.MaterialHashes) > 0 then 
+        -- Only skip if we already applied AND we have hashes
+        return 
+    end
     PhysgunColorSync.LastColor = colorKey
     
     -- Build the color string for Remix
@@ -190,9 +201,16 @@ end, "PhysgunColorSync_Intensity")
 
 -- Console commands
 concommand.Add("remix_physgun_refresh", function()
+    PhysgunColorSync.MaterialHashes = {} -- Clear all hashes to force re-scan
     PhysgunColorSync.RefreshHashes()
     PhysgunColorSync.LastColor = nil
     PhysgunColorSync.ApplyColor()
+    
+    -- Restart the checks
+    PeriodicCheckCount = 0
+    ThinkCheckCount = 0
+    timer.Simple(0.5, PeriodicHashCheck)
+    
     print("[PhysgunColorSync] Refreshed physgun material hashes and applied color")
 end, nil, "Refresh physgun material hashes and reapply color")
 
@@ -218,14 +236,34 @@ concommand.Add("remix_physgun_debug", function()
     end
 end, nil, "Show physgun color sync debug info")
 
--- Periodic check to ensure hashes are acquired
+-- Persistent check to ensure hashes are acquired and color is applied
+local PeriodicCheckCount = 0
+local MaxPeriodicChecks = 30 -- Check for up to 60 seconds (30 * 2s intervals)
 local function PeriodicHashCheck()
+    PeriodicCheckCount = PeriodicCheckCount + 1
+    
     local count = table.Count(PhysgunColorSync.MaterialHashes)
-    if count == 0 then
+    local expectedCount = #PhysgunColorSync.PhysgunMaterials
+    
+    -- Always try to refresh hashes if we don't have them all
+    if count < expectedCount then
         PhysgunColorSync.RefreshHashes()
+    end
+    
+    -- Always try to apply color (it will skip if nothing changed)
+    PhysgunColorSync.ApplyColor()
+    
+    -- Stop early if we found all materials AND successfully applied color
+    if count >= expectedCount and PhysgunColorSync.LastColor ~= nil then
+        print(string.format("[PhysgunColorSync] All %d materials found and color applied - stopping periodic checks", count))
+        return
+    end
+    
+    -- Keep checking periodically if we haven't found everything or haven't applied yet
+    if PeriodicCheckCount < MaxPeriodicChecks then
         timer.Simple(2, PeriodicHashCheck)
     else
-        PhysgunColorSync.ApplyColor()
+        print(string.format("[PhysgunColorSync] Reached max periodic checks (%d/%d materials found)", count, expectedCount))
     end
 end
 
@@ -243,26 +281,99 @@ end)
 -- Also try when player spawns (in case they spawn with physgun)
 hook.Add("PlayerSpawn", "PhysgunColorSync_Spawn", function(ply)
     if ply == LocalPlayer() then
-        timer.Simple(1, function()
+        timer.Simple(0.5, function()
             PhysgunColorSync.RefreshHashes()
             PhysgunColorSync.ApplyColor()
         end)
     end
 end)
 
+-- Hook for when game is fully loaded (more reliable than InitPostEntity)
+local function SetupHUDPaintHook()
+    hook.Add("HUDPaint", "PhysgunColorSync_FirstFrame", function()
+        -- Run once on first HUDPaint, then remove self
+        hook.Remove("HUDPaint", "PhysgunColorSync_FirstFrame")
+        
+        -- Clear cache to force re-application on map load
+        PhysgunColorSync.LastColor = nil
+        
+        timer.Simple(1, function()
+            PhysgunColorSync.Initialize()
+            PeriodicCheckCount = 0
+            timer.Simple(0.5, PeriodicHashCheck)
+        end)
+    end)
+end
+
+-- Set up the hook initially
+SetupHUDPaintHook()
+
+-- Think hook to continuously check for materials during early gameplay
+local ThinkCheckCount = 0
+local MaxThinkChecks = 300 -- Check for 10 seconds (300 frames at 30fps, 150 at 60fps)
+local function SetupThinkHook()
+    -- Remove old hook if exists
+    hook.Remove("Think", "PhysgunColorSync_EarlyCheck")
+    ThinkCheckCount = 0
+    
+    hook.Add("Think", "PhysgunColorSync_EarlyCheck", function()
+        ThinkCheckCount = ThinkCheckCount + 1
+        
+        -- Check if we already have all materials
+        local count = table.Count(PhysgunColorSync.MaterialHashes)
+        local expectedCount = #PhysgunColorSync.PhysgunMaterials
+        
+        if count >= expectedCount then
+            -- Found everything, stop checking
+            hook.Remove("Think", "PhysgunColorSync_EarlyCheck")
+            print("[PhysgunColorSync] All materials found - stopping Think hook checks")
+            return
+        end
+        
+        -- Only check every 30 frames to avoid spam
+        if ThinkCheckCount % 30 == 0 then
+            local foundNew = PhysgunColorSync.RefreshHashes()
+            
+            -- If we found new hashes, apply color immediately
+            if foundNew then
+                PhysgunColorSync.ApplyColor()
+            end
+        end
+        
+        -- Remove hook after max checks
+        if ThinkCheckCount >= MaxThinkChecks then
+            hook.Remove("Think", "PhysgunColorSync_EarlyCheck")
+            print(string.format("[PhysgunColorSync] Think hook timeout (%d/%d materials found)", count, expectedCount))
+        end
+    end)
+end
+
+-- Set up the Think hook initially
+SetupThinkHook()
+
 -- Initialize when the player spawns
 hook.Add("InitPostEntity", "PhysgunColorSync_Init", function()
-    timer.Simple(2, function()
+    -- Reset state on map load - force fresh application
+    PeriodicCheckCount = 0
+    PhysgunColorSync.LastColor = nil  -- Clear cache to force re-application
+    
+    -- Re-add hooks for this map load
+    SetupHUDPaintHook()
+    SetupThinkHook()
+    
+    timer.Simple(0.5, function()
         PhysgunColorSync.Initialize()
-        timer.Simple(1, PeriodicHashCheck)
+        timer.Simple(0.5, PeriodicHashCheck)
     end)
 end)
 
 -- Also try to initialize if already in-game
 if LocalPlayer and IsValid(LocalPlayer()) then
-    timer.Simple(1, function()
+    PeriodicCheckCount = 0
+    PhysgunColorSync.LastColor = nil  -- Clear cache to force re-application
+    timer.Simple(0.5, function()
         PhysgunColorSync.Initialize()
-        timer.Simple(1, PeriodicHashCheck)
+        timer.Simple(0.5, PeriodicHashCheck)
     end)
 end
 
