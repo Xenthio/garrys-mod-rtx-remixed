@@ -368,21 +368,80 @@ local function getLightProperties(entity)
     }
     
     -- Extract color information from the _light property if available
+    -- Format: "R G B I" or sometimes just "R G B" (defaults intensity to 255)
     if entity._light then
-        local r, g, b, i = string.match(entity._light or "", "(%d+)%s+(%d+)%s+(%d+)%s+(%d+)")
+        -- Try parsing 4 values first (R G B I)
+        local r, g, b, i = string.match(entity._light or "", "([%+%-]?%d+)%s+([%+%-]?%d+)%s+([%+%-]?%d+)%s+([%+%-]?%d+)")
         if r and g and b and i then
             r, g, b, i = tonumber(r), tonumber(g), tonumber(b), tonumber(i)
+            -- Clamp negative values to 0 (some maps have malformed data)
+            if r < 0 then r = 0 end
+            if g < 0 then g = 0 end
+            if b < 0 then b = 0 end
+            if i < 0 then i = 255 end
             color = Color(r, g, b)
-            
-            -- Source engine keeps brightness in 0-255 range, not 0-100
-            -- We'll use the raw intensity value from the _light field
             brightness = i
+        else
+            -- Try parsing 3 values (R G B), default intensity to 200
+            r, g, b = string.match(entity._light or "", "([%+%-]?%d+)%s+([%+%-]?%d+)%s+([%+%-]?%d+)")
+            if r and g and b then
+                r, g, b = tonumber(r), tonumber(g), tonumber(b)
+                -- Clamp negative values
+                if r < 0 then r = 0 end
+                if g < 0 then g = 0 end
+                if b < 0 then b = 0 end
+                color = Color(r, g, b)
+                brightness = 200  -- Default intensity when not specified (matches Source Engine's vrad)
+            end
         end
     end
     
-    -- Get size from entity properties
-    if entity.distance or entity._distance then
-        entitySize = tonumber(entity.distance or entity._distance or nil)
+    -- Check _lightHDR for sentinel value (indicates "use SDR values")
+    -- Sentinel formats: "-1 -1 -1 1" or any negative RGB with negative intensity
+    if entity._lightHDR then
+        local hr, hg, hb, hi = string.match(entity._lightHDR or "", "([%+%-]?%d+)%s+([%+%-]?%d+)%s+([%+%-]?%d+)%s+([%+%-]?%d+)")
+        if hr and hg and hb and hi then
+            hr, hg, hb, hi = tonumber(hr), tonumber(hg), tonumber(hb), tonumber(hi)
+            local hasNegativeRGB = (hr < 0 or hg < 0 or hb < 0)
+            local hasNegativeIntensity = (hi and hi < 0)
+            -- If NOT a sentinel (no negative values), use HDR values instead
+            if not ((hr < 0 and hg < 0 and hb < 0) or (hasNegativeRGB and hasNegativeIntensity)) then
+                -- Valid HDR color, use it
+                if hr >= 0 and hg >= 0 and hb >= 0 and hi >= 0 then
+                    color = Color(hr, hg, hb)
+                    brightness = hi
+                end
+            end
+            -- Otherwise it's a sentinel, keep using SDR values from above
+        end
+    end
+    
+    -- Get size from entity properties and falloff distances
+    -- Source Engine uses these to control light attenuation:
+    -- _fifty_percent_distance (_distance): Distance where light is 50% bright
+    -- _zero_percent_distance: Distance where light reaches 0%
+    
+    -- Only apply falloff-based calculations if these fields are actually present
+    local fiftyPercent = tonumber(entity._fifty_percent_distance or entity._distance or entity.distance)
+    local zeroPercent = tonumber(entity._zero_percent_distance)
+    
+    if fiftyPercent and zeroPercent and fiftyPercent > 0 and zeroPercent > fiftyPercent then
+        -- Hybrid approach: Use fifty_percent for radius hint
+        -- Since RTX uses physical PBR (inverse-square falloff), we approximate Source's arbitrary curves
+        
+        -- Calculate radius from fifty_percent with a baseline offset to prevent tiny lights
+        -- Use a more conservative divisor and add a minimum base size
+        local radiusFromFalloff = (fiftyPercent / 40.0) + 2.0  -- Base size of 2.0 + scaled component
+        entitySize = radiusFromFalloff
+        
+        -- Apply a very modest brightness adjustment using square root scaling
+        -- This prevents extreme brightness for lights with large falloff distances
+        -- Square root provides diminishing returns: 100->1.0x, 400->2.0x, 900->3.0x
+        local baseline = 100.0  -- Source's typical default falloff distance
+        local reachScale = math.sqrt(fiftyPercent / baseline)
+        -- Cap the multiplier to reasonable values
+        reachScale = math.Clamp(reachScale, 0.3, 2.0)
+        brightness = brightness * reachScale
     end
     
     -- Estimate appropriate size
@@ -604,6 +663,15 @@ local function findLightsInBSP()
     -- Check entities in the BSP
     for _, ent in pairs(bsp:GetEntities()) do
         if ent.classname and lightClasses[ent.classname] then
+            -- ADD DIAGNOSTIC: Show all keys for light entities
+            if debug_mode:GetBool() then
+                print("[Light2RTX Debug] ===== All keys for " .. ent.classname .. " =====")
+                for k, v in pairs(ent) do
+                    print(string.format("  [%s] = %s (type: %s)", tostring(k), tostring(v), type(v)))
+                end
+                print("[Light2RTX Debug] ===== End keys =====")
+            end
+            
             -- Get position - convert to Vector if it's a string
             local pos = StringToVector(ent.origin)
             
