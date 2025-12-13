@@ -734,8 +734,13 @@ end)
 
 -- Hook to initiate caching when the map is ready
 RenderCore.Register("InitPostEntity", "CustomStaticRender_InitCache", function()
-    -- Delay slightly to ensure NikNaks has loaded its data
-    timer.Simple(3, CacheMapStaticProps)
+    -- Only start caching if the addon is enabled
+    if convar_Enable:GetBool() then
+        -- Delay slightly to ensure NikNaks has loaded its data
+        timer.Simple(3, CacheMapStaticProps)
+    else
+        print("[Custom Static Renderer] Skipping initial cache (addon disabled)")
+    end
 end)
 
 -- Clean up caches on disconnect/map change
@@ -985,6 +990,10 @@ cvars.AddChangeCallback("rtx_spr_enable", function(convar, oldValue, newValue)
     local enabled = (newValue == "1")
     if enabled then
         print("[Custom Static Renderer] Enabled - engine static props disabled")
+        -- If enabling and data isn't ready yet, start caching now
+        if not isDataReady and not isCachingInProgress then
+            timer.Simple(0.1, CacheMapStaticProps)
+        end
     else
         print("[Custom Static Renderer] Disabled - engine static props enabled")
     end
