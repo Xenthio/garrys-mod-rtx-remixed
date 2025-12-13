@@ -1157,6 +1157,11 @@ local function updateEntryRuntime(entry)
     
     local intensity = (baseBright / 255.0) * baseScale * bmult * amult * brightBoost
     
+    -- Force radiance to 0 if light is disabled (for compatibility with HDRI editor)
+    if not entry.animEnabled or amult <= 0.0 then
+        intensity = 0.0
+    end
+    
     local base = {
         hash = tonumber(util.CRC("upd_" .. tostring(entry.id))) or entry.entityId,
         radiance = { 
