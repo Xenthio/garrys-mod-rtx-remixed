@@ -14,7 +14,7 @@ local env_angular_mult = CreateClientConVar("rtx_api_map_lights_env_angular_mult
 
 local point_brightness_mult = CreateClientConVar("rtx_api_map_lights_point_brightness_mult", "2.0", true, false, "Brightness multiplier for point lights")
 local spot_brightness_mult = CreateClientConVar("rtx_api_map_lights_spot_brightness_mult", "1.0", true, false, "Brightness multiplier for spot lights")
-local env_brightness_mult = CreateClientConVar("rtx_api_map_lights_env_brightness_mult", "0.15", true, false, "Brightness multiplier for directional lights")
+local env_brightness_mult = CreateClientConVar("rtx_api_map_lights_env_brightness_mult", "1.0", true, false, "Brightness multiplier for directional lights")
 
 local point_volumetric_mult = CreateClientConVar("rtx_api_map_lights_point_volumetric_mult", "1.0", true, false, "Volumetric scale multiplier for point lights")
 local spot_volumetric_mult = CreateClientConVar("rtx_api_map_lights_spot_volumetric_mult", "1.0", true, false, "Volumetric scale multiplier for spot lights")
@@ -457,6 +457,8 @@ local function getLightProperties(entity)
         -- Read sun spread/diameter if available, else default to ~solar disc size
         local spread = tonumber(entity.sunspreadangle or entity._sunspreadangle or 0.53)
         lightProps.angularDiameter = spread or 0.53
+        -- Store HDR brightness scale for use in intensity calculation
+        lightProps._lightscaleHDR = tonumber(entity._lightscaleHDR or entity.lightscaleHDR or 1.0)
         -- Derive directional angles (reuse robust parser)
         local a, src = ParseEntityAngles(entity)
         if debug_mode:GetBool() then
@@ -812,14 +814,31 @@ local function createRemixLight(pos, color, brightness, size, lightType, lightPr
     -- Source: intensity = (color_linear) * (brightness / 255.0) * lightscale
     -- where color_linear = pow(color/255, 2.2) * 255 (but srgbToLinear already does this)
     -- brightness is the 4th value in _light field (0-255 range for LDR, >255 for bright lights)
-    -- Point/spot lights need ~100x boost to compensate for missing radiosity calculations
-    local baseScale = (kind == "env") and 1.0 or 100.0
-    
-    -- Apply extra boost for high brightness values (>255) to compensate for lack of HDR tone mapping
+    local baseScale = 1.0
     local brightBoost = 1.0
-    if appliedBrightness > 255 then
-        -- Scale: 256-2000 -> 2x-20x boost, >2000 -> clamp at 20x
-        brightBoost = math.min(20.0, 1.0 + (appliedBrightness - 255) / 92.0)
+    
+    if kind == "env" then
+        -- For light_environment, apply a baseline scale then multiply by mapper's HDR Brightness Scale
+        -- Use square root scaling to compress brightness range (prevents extreme lights from dominating)
+        local hdrScale = tonumber(lightProps._lightscaleHDR or 1.0)
+        
+        -- Normalize brightness to a baseline, then apply sqrt to compress range
+        -- Baseline of 200: sqrt(200/200) = 1.0x, sqrt(560/200) = 1.67x, sqrt(1000/200) = 2.24x
+        -- Clamp minimum to 0.9 to prevent very dim lights (50) from being over-bright
+        local brightnessNormalized = math.max(0.9, math.sqrt(appliedBrightness / 200.0))
+        local envBaseline = 0.2  -- Base multiplier (tuned for brightness ~200)
+        
+        baseScale = envBaseline * brightnessNormalized * hdrScale
+        -- No brightBoost for environment lights - HDR scale handles intensity variation
+    else
+        -- Point/spot lights need ~100x boost to compensate for missing radiosity calculations
+        baseScale = 100.0
+        
+        -- Apply extra boost for high brightness values (>255) to compensate for lack of HDR tone mapping
+        if appliedBrightness > 255 then
+            -- Scale: 256-2000 -> 2x-20x boost, >2000 -> clamp at 20x
+            brightBoost = math.min(20.0, 1.0 + (appliedBrightness - 255) / 92.0)
+        end
     end
     
     local intensity = (appliedBrightness / 255.0) * baseScale * typeBrightnessMult * brightBoost
@@ -922,6 +941,8 @@ local function createRemixLight(pos, color, brightness, size, lightType, lightPr
         baseAngular = (classname == "light_environment") and ((lightProps and tonumber(lightProps.angularDiameter)) or 0.53) or nil,
         baseRadius = (classname ~= "light_environment") and (tonumber(size) or 200) or nil,
         baseSizeBeforeMultipliers = (classname ~= "light_environment") and (lightProps and tonumber(lightProps.baseSizeBeforeMultipliers)) or nil,
+        -- Store HDR scale for environment lights (used in runtime updates)
+        hdrScale = (classname == "light_environment") and (lightProps and tonumber(lightProps._lightscaleHDR)) or nil,
         -- Debug/inspection fields
         angles = angles,
         direction = dir,
@@ -1113,14 +1134,25 @@ local function updateEntryRuntime(entry)
     -- Source: intensity = (color_linear) * (brightness / 255.0) * lightscale
     -- where color_linear = pow(color/255, 2.2) * 255 (but srgbToLinear already does this)
     -- brightness is the 4th value in _light field (0-255 range for LDR, >255 for bright lights)
-    -- Point/spot lights need ~100x boost to compensate for missing radiosity calculations
-    local baseScale = (kind == "env") and 1.0 or 100.0
-    
-    -- Apply extra boost for high brightness values (>255) to compensate for lack of HDR tone mapping
+    local baseScale = 1.0
     local brightBoost = 1.0
-    if baseBright > 255 then
-        -- Scale: 256-2000 -> 2x-20x boost, >2000 -> clamp at 20x
-        brightBoost = math.min(20.0, 1.0 + (baseBright - 255) / 92.0)
+    
+    if kind == "env" then
+        -- For light_environment, apply same formula as creation: baseline * sqrt(brightness) * hdrScale
+        local hdrScale = tonumber(entry.hdrScale or 1.0)
+        local brightnessNormalized = math.max(0.9, math.sqrt(baseBright / 200.0))
+        local envBaseline = 0.2
+        baseScale = envBaseline * brightnessNormalized * hdrScale
+        -- No brightBoost for environment lights
+    else
+        -- Point/spot lights need ~100x boost to compensate for missing radiosity calculations
+        baseScale = 100.0
+        
+        -- Apply extra boost for high brightness values (>255) to compensate for lack of HDR tone mapping
+        if baseBright > 255 then
+            -- Scale: 256-2000 -> 2x-20x boost, >2000 -> clamp at 20x
+            brightBoost = math.min(20.0, 1.0 + (baseBright - 255) / 92.0)
+        end
     end
     
     local intensity = (baseBright / 255.0) * baseScale * bmult * amult * brightBoost
