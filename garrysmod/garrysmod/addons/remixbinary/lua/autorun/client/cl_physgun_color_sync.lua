@@ -218,14 +218,52 @@ concommand.Add("remix_physgun_debug", function()
     end
 end, nil, "Show physgun color sync debug info")
 
+-- Periodic check to ensure hashes are acquired
+local function PeriodicHashCheck()
+    local count = table.Count(PhysgunColorSync.MaterialHashes)
+    if count == 0 then
+        PhysgunColorSync.RefreshHashes()
+        timer.Simple(2, PeriodicHashCheck)
+    else
+        PhysgunColorSync.ApplyColor()
+    end
+end
+
+-- Hook when player switches to physgun - materials will definitely be loaded then
+hook.Add("PlayerSwitchWeapon", "PhysgunColorSync_WeaponSwitch", function(ply, oldWep, newWep)
+    if not IsValid(newWep) then return end
+    if newWep:GetClass() == "weapon_physgun" then
+        timer.Simple(0.5, function()
+            PhysgunColorSync.RefreshHashes()
+            PhysgunColorSync.ApplyColor()
+        end)
+    end
+end)
+
+-- Also try when player spawns (in case they spawn with physgun)
+hook.Add("PlayerSpawn", "PhysgunColorSync_Spawn", function(ply)
+    if ply == LocalPlayer() then
+        timer.Simple(1, function()
+            PhysgunColorSync.RefreshHashes()
+            PhysgunColorSync.ApplyColor()
+        end)
+    end
+end)
+
 -- Initialize when the player spawns
 hook.Add("InitPostEntity", "PhysgunColorSync_Init", function()
-    timer.Simple(2, PhysgunColorSync.Initialize)
+    timer.Simple(2, function()
+        PhysgunColorSync.Initialize()
+        timer.Simple(1, PeriodicHashCheck)
+    end)
 end)
 
 -- Also try to initialize if already in-game
 if LocalPlayer and IsValid(LocalPlayer()) then
-    timer.Simple(1, PhysgunColorSync.Initialize)
+    timer.Simple(1, function()
+        PhysgunColorSync.Initialize()
+        timer.Simple(1, PeriodicHashCheck)
+    end)
 end
 
 print("[PhysgunColorSync] Loaded - use 'remix_physgun_debug' for info")
