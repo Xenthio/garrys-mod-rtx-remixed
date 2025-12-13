@@ -227,6 +227,12 @@ function RemixCategoryManager.ShouldExcludeFromWorldGeometry(materialName)
         return false
     end
     
+    -- IMPORTANT: If material has $decal flag, NEVER exclude it
+    -- Decals with $translucent are still valid decals (graffiti, blood, etc.)
+    if RemixCategoryManager.IsMaterialDecal(materialName) then
+        return false
+    end
+    
     -- Check for $translucent - these are alpha-blended surfaces (foliage, etc.)
     local keyValues = mat:GetKeyValues()
     if keyValues then
@@ -419,6 +425,7 @@ function RemixCategoryManager.CategorizeAllTrackedMaterials()
         total = #materials,
         particles = 0,
         emissive = 0,
+        decals = 0,
         newly_categorized = 0
     }
     
@@ -429,13 +436,25 @@ function RemixCategoryManager.CategorizeAllTrackedMaterials()
             processedTextures[lowerName] = true
             local category = nil
             
+            -- Check for particles first
             if RemixCategoryManager.IsMaterialParticle(matName) then
                 category = RemixCategoryManager.CATEGORY.PARTICLE
                 stats.particles = stats.particles + 1
+            
+            -- Check for decals (important - catches map overlay decals!)
+            elseif RemixCategoryManager.IsMaterialDecal(matName) then
+                category = RemixCategoryManager.CATEGORY.DECAL_STATIC
+                stats.decals = stats.decals + 1
+                
+                -- Debug first few
+                if stats.decals <= 3 then
+                    MsgC(Color(100, 255, 100), string.format("[RemixCategoryManager] Found overlay decal: %s\n", matName))
+                end
+            
+            -- Check for emissive
             elseif RemixCategoryManager.IsMaterialEmissive(matName) then
                 category = RemixCategoryManager.PRESET.EMISSIVE
                 stats.emissive = stats.emissive + 1
-            -- Add more checks if needed
             end
             
             if category then
@@ -446,8 +465,8 @@ function RemixCategoryManager.CategorizeAllTrackedMaterials()
         end
     end
     
-    MsgC(Color(100, 255, 100), string.format("[RemixCategoryManager] Tracked scan: %d total, %d particles, %d emissive found\n",
-        stats.total, stats.particles, stats.emissive))
+    MsgC(Color(100, 255, 100), string.format("[RemixCategoryManager] Tracked scan: %d total, %d particles, %d decals, %d emissive found\n",
+        stats.total, stats.particles, stats.decals, stats.emissive))
         
     return stats
 end
@@ -1178,6 +1197,11 @@ function RemixCategoryManager.SmartMarkWorldTextures()
                 elseif RemixCategoryManager.IsMaterialDecal(materialName) then
                     category = RemixCategoryManager.CATEGORY.DECAL_STATIC
                     stats.decals = stats.decals + 1
+                    
+                    -- Debug: Log first few decal categorizations
+                    if stats.decals <= 3 then
+                        MsgC(Color(100, 255, 100), string.format("[RemixCategoryManager] Categorizing decal: %s\n", materialName))
+                    end
                 
                 -- Displacement textures (terrain) - always marked as DECAL_STATIC
                 elseif isFromDisplacement then
@@ -1249,6 +1273,10 @@ function RemixCategoryManager.SmartMarkWorldTextures()
     MsgC(Color(100, 255, 100), "[RemixCategoryManager] Smart-mark complete:\n")
     MsgC(Color(200, 200, 200), string.format("  Total: %d, Solid: %d, Emissive: %d, Transparent: %d, Water: %d, Sky: %d, Terrain: %d, Decals: %d, Props: %d, Skipped: %d\n",
         stats.total, stats.solid, stats.emissive, stats.transparent, stats.water, stats.sky, stats.terrain, stats.decals, stats.props, stats.skipped))
+    
+    -- Also scan all tracked/rendered materials to catch overlay decals, effects, etc.
+    MsgC(Color(200, 200, 200), "[RemixCategoryManager] Scanning tracked materials for decals, particles, etc...\n")
+    local trackedStats = RemixCategoryManager.CategorizeAllTrackedMaterials()
     
     return stats
 end
