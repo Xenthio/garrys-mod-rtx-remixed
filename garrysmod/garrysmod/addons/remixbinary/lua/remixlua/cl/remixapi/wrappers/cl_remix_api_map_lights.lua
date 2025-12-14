@@ -642,6 +642,162 @@ local function getLightProperties(entity)
     return color, brightness, size, lightType, lightProps
 end
 
+-- Check if a position is within map bounds and clamp it if needed
+local function validateAndClampPosition(pos, classname)
+    if not NikNaks or not NikNaks.CurrentMap then return pos end
+    
+    local bsp = NikNaks.CurrentMap
+    
+    -- Try to get map bounds from BSP
+    local mins, maxs
+    
+    -- Method 1: Try GetModels() to get world geometry bounds (model 0 = worldspawn)
+    if bsp.GetModels then
+        local models = bsp:GetModels()
+        if models and models[0] then
+            local worldModel = models[0]
+            if worldModel.min and worldModel.max then
+                mins = worldModel.min
+                maxs = worldModel.max
+                DebugPrint(string.format("Got map bounds from model: mins=(%.1f, %.1f, %.1f) maxs=(%.1f, %.1f, %.1f)", 
+                    mins.x, mins.y, mins.z, maxs.x, maxs.y, maxs.z))
+            end
+        end
+    end
+    
+    -- Method 2: Try GetModel(0) directly
+    if not mins and bsp.GetModel then
+        local worldModel = bsp:GetModel(0)
+        if worldModel and worldModel.min and worldModel.max then
+            mins = worldModel.min
+            maxs = worldModel.max
+            DebugPrint(string.format("Got map bounds from GetModel(0): mins=(%.1f, %.1f, %.1f) maxs=(%.1f, %.1f, %.1f)", 
+                mins.x, mins.y, mins.z, maxs.x, maxs.y, maxs.z))
+        end
+    end
+    
+    -- Method 3: Calculate bounds from all brush entities
+    if not mins and bsp.GetEntities then
+        local calcMins = Vector(999999, 999999, 999999)
+        local calcMaxs = Vector(-999999, -999999, -999999)
+        local foundAny = false
+        
+        for _, ent in pairs(bsp:GetEntities()) do
+            if ent.origin then
+                local entPos = StringToVector(ent.origin)
+                if entPos ~= Vector(0, 0, 0) then
+                    calcMins.x = math.min(calcMins.x, entPos.x)
+                    calcMins.y = math.min(calcMins.y, entPos.y)
+                    calcMins.z = math.min(calcMins.z, entPos.z)
+                    calcMaxs.x = math.max(calcMaxs.x, entPos.x)
+                    calcMaxs.y = math.max(calcMaxs.y, entPos.y)
+                    calcMaxs.z = math.max(calcMaxs.z, entPos.z)
+                    foundAny = true
+                end
+            end
+        end
+        
+        if foundAny then
+            -- Add padding around calculated bounds
+            local padding = 512
+            mins = Vector(calcMins.x - padding, calcMins.y - padding, calcMins.z - padding)
+            maxs = Vector(calcMaxs.x + padding, calcMaxs.y + padding, calcMaxs.z + padding)
+            DebugPrint(string.format("Calculated map bounds from entities: mins=(%.1f, %.1f, %.1f) maxs=(%.1f, %.1f, %.1f)", 
+                mins.x, mins.y, mins.z, maxs.x, maxs.y, maxs.z))
+        end
+    end
+    
+    -- Method 4: Use a reasonable default fallback (very large bounds)
+    if not mins or not maxs then
+        mins = Vector(-16384, -16384, -16384)
+        maxs = Vector(16384, 16384, 16384)
+        DebugPrint("Using default map bounds for clamping")
+    end
+    
+    -- Check if position is out of bounds
+    local clamped = Vector(pos.x, pos.y, pos.z)
+    local wasOutOfBounds = false
+    
+    if pos.x < mins.x then clamped.x = mins.x + 10; wasOutOfBounds = true end
+    if pos.y < mins.y then clamped.y = mins.y + 10; wasOutOfBounds = true end
+    if pos.z < mins.z then clamped.z = mins.z + 10; wasOutOfBounds = true end
+    if pos.x > maxs.x then clamped.x = maxs.x - 10; wasOutOfBounds = true end
+    if pos.y > maxs.y then clamped.y = maxs.y - 10; wasOutOfBounds = true end
+    if pos.z > maxs.z then clamped.z = maxs.z - 10; wasOutOfBounds = true end
+    
+    if wasOutOfBounds then
+        print(string.format("[Light2RTX] WARNING: %s at (%.1f, %.1f, %.1f) is out of bounds! Clamped to (%.1f, %.1f, %.1f)", 
+            classname or "light", pos.x, pos.y, pos.z, clamped.x, clamped.y, clamped.z))
+    end
+    
+    return clamped
+end
+
+-- Check if a position is inside solid geometry and try to move it to a valid position
+local function validatePositionAgainstGeometry(pos, classname)
+    if not NikNaks or not NikNaks.CurrentMap then return pos end
+    
+    local bsp = NikNaks.CurrentMap
+    
+    -- Check if NikNaks supports point contents checking
+    if not bsp.PointContents then
+        DebugPrint("NikNaks doesn't support PointContents - skipping geometry check")
+        return pos
+    end
+    
+    -- Check if the position is inside solid geometry
+    local contents = bsp:PointContents(pos)
+    
+    -- CONTENTS_SOLID = 1 in Source engine
+    local CONTENTS_SOLID = 1
+    local isInSolid = (contents and bit.band(contents, CONTENTS_SOLID) ~= 0)
+    
+    if not isInSolid then
+        -- Position is valid, no adjustment needed
+        return pos
+    end
+    
+    print(string.format("[Light2RTX] WARNING: %s at (%.1f, %.1f, %.1f) is inside solid geometry!", 
+        classname or "light", pos.x, pos.y, pos.z))
+    
+    -- Try to find a valid position by tracing in multiple directions
+    local testDirections = {
+        Vector(0, 0, 1),    -- Up
+        Vector(0, 0, -1),   -- Down
+        Vector(1, 0, 0),    -- Right
+        Vector(-1, 0, 0),   -- Left
+        Vector(0, 1, 0),    -- Forward
+        Vector(0, -1, 0),   -- Back
+        Vector(1, 1, 0):GetNormalized(),   -- Diagonal
+        Vector(-1, 1, 0):GetNormalized(),
+        Vector(1, -1, 0):GetNormalized(),
+        Vector(-1, -1, 0):GetNormalized(),
+    }
+    
+    local testDistances = { 32, 64, 128, 256 }
+    
+    -- Try each direction at various distances
+    for _, dist in ipairs(testDistances) do
+        for _, dir in ipairs(testDirections) do
+            local testPos = pos + (dir * dist)
+            local testContents = bsp:PointContents(testPos)
+            
+            if testContents and bit.band(testContents, CONTENTS_SOLID) == 0 then
+                -- Found a valid position!
+                print(string.format("[Light2RTX] Moved %s to valid position (%.1f, %.1f, %.1f) - %d units %s", 
+                    classname or "light", testPos.x, testPos.y, testPos.z, dist, 
+                    dir.z > 0.5 and "up" or dir.z < -0.5 and "down" or "away"))
+                return testPos
+            end
+        end
+    end
+    
+    -- Could not find a valid position, return original with warning
+    print(string.format("[Light2RTX] ERROR: Could not find valid position for %s! Using original position.", 
+        classname or "light"))
+    return pos
+end
+
 -- Find lights in the BSP data
 local function findLightsInBSP()
     if not NikNaks or not NikNaks.CurrentMap then 
@@ -681,6 +837,12 @@ local function findLightsInBSP()
             if invalidPos then
                 DebugPrint("Could not parse position from:", ent.origin)
             else
+                -- Validate and clamp position to map bounds
+                pos = validateAndClampPosition(pos, ent.classname)
+                
+                -- Check if position is inside solid geometry and try to fix it
+                pos = validatePositionAgainstGeometry(pos, ent.classname)
+                
                 local color, brightness, size, lightType, lightProps = getLightProperties(ent)
                 
                 -- Derive direction for spotlights from target or angles when available
