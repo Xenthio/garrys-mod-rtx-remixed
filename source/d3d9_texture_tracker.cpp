@@ -287,9 +287,27 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
         }
 #endif
 
+        // DEBUG: Log all texture stages for displacement materials
+        if (pTexture && !tracker.m_currentMaterialName.empty()) {
+            std::string lowerName = tracker.m_currentMaterialName;
+            std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), 
+                [](unsigned char c){ return std::tolower(c); });
+            
+            if (lowerName.find("blend_") != std::string::npos || 
+                lowerName.find("_wvt_patch") != std::string::npos) {
+                static int dispSetTexCount = 0;
+                dispSetTexCount++;
+                if (dispSetTexCount <= 20) {
+                    Msg("[D3D9TextureTracker] SetTexture(Stage=%d, 0x%p) for displacement '%s'\n", 
+                        Stage, pTexture, tracker.m_currentMaterialName.c_str());
+                }
+            }
+        }
+
         // For now, let's just track ALL textures at stage 0 with a generic key
         // We'll use the texture pointer itself as a way to identify it
-        if (Stage == 0 && pTexture) {
+        // ALSO track Stage 1 for displacement materials (they use multi-stage blending)
+        if ((Stage == 0 || Stage == 1) && pTexture) {
             // Check if this is a 2D texture (not cube/volume)
             D3DRESOURCETYPE resType = pTexture->GetType();
             if (resType == D3DRTYPE_TEXTURE) {
@@ -297,7 +315,13 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                 
                 // If we have a current material name, use it
                 if (!tracker.m_currentMaterialName.empty()) {
-                    auto& textures = tracker.m_textureCache[tracker.m_currentMaterialName];
+                    // For Stage 1 textures, append "_stage1" to the material name to track separately
+                    std::string trackingName = tracker.m_currentMaterialName;
+                    if (Stage == 1) {
+                        trackingName += "_stage1";
+                    }
+                    
+                    auto& textures = tracker.m_textureCache[trackingName];
                     
                     // Check if we've seen this texture before
                     bool found = false;
@@ -310,18 +334,47 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                     
                     // Only log when we discover a NEW variant
                     if (!found) {
+                        // Get the hash immediately to see what Remix thinks
+                        uint64_t hash = 0;
+                        if (g_remix) {
+                            auto result = g_remix->dxvk_GetTextureHash(p2DTexture);
+                            if (result) {
+                                hash = result.value();
+                            }
+                        }
+                        
                         // AddRef to keep the texture alive while we reference it
                         p2DTexture->AddRef();
                         textures.push_back(p2DTexture);
                         // Re-enable logging for debugging texture capture issues
-                        Msg("[D3D9TextureTracker] NEW texture variant #%zu: 0x%p for '%s'\n", 
-                            textures.size(), p2DTexture, tracker.m_currentMaterialName.c_str());
+                        Msg("[D3D9TextureTracker] NEW texture variant #%zu: 0x%p for '%s'%s (hash: 0x%llX)\n", 
+                            textures.size(), p2DTexture, tracker.m_currentMaterialName.c_str(), 
+                            Stage == 1 ? " [STAGE1]" : "", hash);
                             
                         // Apply automatic categorization logic (Particles, Emissive)
-                        tracker.CheckAndApplyCategories(p2DTexture);
+                        // Only for Stage 0 to avoid double-categorization
+                        if (Stage == 0) {
+                            tracker.CheckAndApplyCategories(p2DTexture);
+                        }
+                    }
+                } else {
+                    // DEBUG: Log textures that are set without a material name
+                    // This helps diagnose why some hashes aren't being tracked
+                    static int unmatchedCount = 0;
+                    unmatchedCount++;
+                    if (unmatchedCount % 1000 == 0) {
+                        Msg("[D3D9TextureTracker] WARNING: %d textures set without material name (0x%p)\n", 
+                            unmatchedCount, p2DTexture);
+                    }
+                    
+                    // Try to get the hash and log it for debugging
+                    if (g_remix && unmatchedCount % 1000 == 0) {
+                        auto result = g_remix->dxvk_GetTextureHash(p2DTexture);
+                        if (result && result.value() != 0) {
+                            Msg("[D3D9TextureTracker] Untracked texture hash: 0x%llX\n", result.value());
+                        }
                     }
                 }
-                // No else block needed - we silently ignore untracked textures now
             }
         }
     }
@@ -347,6 +400,26 @@ void D3D9TextureTracker::Hook_Bind(IMatRenderContext* pContext, IMaterial* pMate
     D3D9TextureTracker& tracker = Instance();
     
     tracker.SetCurrentMaterial(pMaterial);
+    
+    // DEBUG: Log displacement materials to see if they're being bound
+    if (pMaterial) {
+        const char* name = pMaterial->GetName();
+        if (name) {
+            std::string lowerName = name;
+            std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), 
+                [](unsigned char c){ return std::tolower(c); });
+            
+            // Log if it's a displacement blend material
+            if (lowerName.find("blend_") != std::string::npos || 
+                lowerName.find("_wvt_patch") != std::string::npos) {
+                static int dispBindCount = 0;
+                dispBindCount++;
+                if (dispBindCount <= 10) {
+                    Msg("[D3D9TextureTracker] Bind() called for displacement: '%s'\n", name);
+                }
+            }
+        }
+    }
     
     if (tracker.m_pOriginalBind) {
         tracker.m_pOriginalBind(pContext, pMaterial, proxyData);
@@ -462,16 +535,32 @@ static bool CheckVMTForSelfillum(const std::string& materialName, bool debug = f
     
     // Look for $selfillum followed by 1
     // Patterns: "$selfillum" "1", "$selfillum" 1, $selfillum 1
-    size_t pos = content.find("$selfillum");
-    if (pos == std::string::npos) {
+    // IMPORTANT: Must check for word boundary to avoid matching $selfillumtint or $selfillummask
+    size_t pos = 0;
+    bool foundSelfillum = false;
+    
+    while ((pos = content.find("$selfillum", pos)) != std::string::npos) {
+        // Check if it's followed by whitespace, quote, or end of string (not 'tint', 'mask', etc.)
+        size_t endPos = pos + 10; // length of "$selfillum"
+        if (endPos >= content.size() || 
+            content[endPos] == ' ' || content[endPos] == '\t' || 
+            content[endPos] == '"' || content[endPos] == '\'' ||
+            content[endPos] == '\r' || content[endPos] == '\n') {
+            foundSelfillum = true;
+            pos = endPos;
+            break;
+        }
+        pos++; // Move forward and keep searching
+    }
+    
+    if (!foundSelfillum) {
         if (debug) Msg("[D3D9] CheckVMT: '$selfillum' not found in file\n");
         return false;
     }
     
-    if (debug) Msg("[D3D9] CheckVMT: Found '$selfillum' at position %zu\n", pos);
+    if (debug) Msg("[D3D9] CheckVMT: Found '$selfillum' at position %zu\n", pos - 10);
     
-    // Skip past "$selfillum" and any whitespace/quotes
-    pos += 10; // length of "$selfillum"
+    // Skip past any whitespace/quotes
     while (pos < content.size() && (content[pos] == ' ' || content[pos] == '\t' || 
            content[pos] == '"' || content[pos] == '\'')) {
         pos++;
@@ -625,14 +714,19 @@ void D3D9TextureTracker::CheckAndApplyCategories(IDirect3DTexture9* pTexture) {
     }
     
     // === EMISSIVE CHECK (can be combined with other categories) ===
+    // IMPORTANT: Skip emissive check if this is a decal (decals should never be emissive)
+    bool isDecal = (categoryFlags & CAT_DECAL_STATIC) != 0;
+    
     bool isEmissive = false;
+    std::string emissiveReason;
     
     // Method 1: Check IMaterial::FindVar for $selfillum
-    if (m_currentMaterial) {
+    if (!isDecal && m_currentMaterial) {
         bool found = false;
         IMaterialVar* pVar = m_currentMaterial->FindVar("$selfillum", &found, false);
         if (found && pVar && pVar->GetIntValue() == 1) {
             isEmissive = true;
+            emissiveReason = "IMaterial::FindVar($selfillum) = 1";
         }
         
         // Method 2: Check $emissive var (vector)
@@ -643,6 +737,7 @@ void D3D9TextureTracker::CheckAndApplyCategories(IDirect3DTexture9* pTexture) {
                 const float* val = pEmissiveVar->GetVecValue();
                 if (val && (val[0] > 0.0f || val[1] > 0.0f || val[2] > 0.0f)) {
                     isEmissive = true;
+                    emissiveReason = "$emissive vector";
                 }
             }
         }
@@ -651,13 +746,18 @@ void D3D9TextureTracker::CheckAndApplyCategories(IDirect3DTexture9* pTexture) {
     // Method 3: Fallback - read VMT file directly
     // This catches cases where the engine doesn't expose $selfillum via FindVar
     // (common with DX7/DX6 shader fallbacks)
-    if (!isEmissive) {
-        isEmissive = CheckVMTForSelfillum(m_currentMaterialName);
+    // SKIP for decals
+    if (!isDecal && !isEmissive) {
+        if (CheckVMTForSelfillum(m_currentMaterialName)) {
+            isEmissive = true;
+            emissiveReason = "VMT file $selfillum";
+        }
     }
     
     // Method 4: Keyword-based detection for VTF self-illumination
     // These materials use VTF-based self-illumination (no VMT parameter)
-    if (!isEmissive) {
+    // SKIP for decals
+    if (!isDecal && !isEmissive) {
         // Pattern 1: Material name contains "_on" (light fixtures, LEDs, screens, etc.)
         // AND is from known emissive content packs (pkvoidplaces, pb_ prefix)
         // Examples: pkvoidplaces/props/pb_propremake_ceilinglightbase_on
@@ -673,6 +773,7 @@ void D3D9TextureTracker::CheckAndApplyCategories(IDirect3DTexture9* pTexture) {
         
         if ((hasOnSuffix && isKnownEmissivePack) || hasLightOn) {
             isEmissive = true;
+            emissiveReason = "Keyword pattern (_on suffix)";
         }
     }
     
@@ -680,6 +781,12 @@ void D3D9TextureTracker::CheckAndApplyCategories(IDirect3DTexture9* pTexture) {
     if (isEmissive) {
         categoryFlags |= CAT_EMISSIVE;
         if (!categoryName) categoryName = "EMISSIVE";
+        
+        // Debug: Log when decals are marked as emissive (should never happen now)
+        if (categoryFlags & CAT_DECAL_STATIC) {
+            Msg("[D3D9] ERROR: Decal '%s' was marked as EMISSIVE (reason: %s) - this should not happen!\n", 
+                m_currentMaterialName.c_str(), emissiveReason.c_str());
+        }
     }
     
     // If nothing to categorize, skip
@@ -779,7 +886,11 @@ int D3D9TextureTracker::RetryPendingCategories() {
             continue;
         }
         
-        // Got a valid hash! Apply categories using the helper function
+        // Got a valid hash! Log it for debugging
+        Msg("[D3D9TextureTracker] RetryPending: Got hash 0x%llX for '%s' (texture 0x%p)\n",
+            hash, pending.materialName.c_str(), pending.texture);
+        
+        // Apply categories using the helper function
         ApplyCategoryToHash(hash, pending.categoryFlags, pending.materialName.c_str());
         
         // Release our reference
@@ -829,6 +940,14 @@ int D3D9TextureTracker::RescanAllMaterials() {
         // Get the material
         IMaterial* mat = materials->FindMaterial(materialName.c_str(), TEXTURE_GROUP_OTHER, false);
         
+        // Skip decals - they should never be emissive
+        bool isDecalMaterial = (lowerName.find("decal") != std::string::npos || 
+                                lowerName.find("overlay") != std::string::npos);
+        
+        if (isDecalMaterial) {
+            continue; // Don't even check decals for emissive
+        }
+        
         // Check for emissive using VMT file fallback
         bool isEmissive = false;
         
@@ -849,6 +968,19 @@ int D3D9TextureTracker::RescanAllMaterials() {
         if (isEmissive) {
             emissiveCount++;
             
+            // Debug: Show which material is being marked (first 10)
+            if (emissiveCount <= 10) {
+                std::string lowerCheck = materialName;
+                std::transform(lowerCheck.begin(), lowerCheck.end(), lowerCheck.begin(), ::tolower);
+                bool isDecal = (lowerCheck.find("decal") != std::string::npos || 
+                               lowerCheck.find("overlay") != std::string::npos);
+                if (isDecal) {
+                    Msg("[D3D9] RescanAllMaterials: DECAL marked as emissive: '%s'\n", materialName.c_str());
+                } else {
+                    Msg("[D3D9] RescanAllMaterials: Emissive material #%d: '%s'\n", emissiveCount, materialName.c_str());
+                }
+            }
+            
             // Get hash for first texture variant
             for (auto* tex : textures) {
                 auto result = g_remix->dxvk_GetTextureHash(tex);
@@ -865,6 +997,30 @@ int D3D9TextureTracker::RescanAllMaterials() {
         emissiveCount, categorizedCount);
     
     return categorizedCount;
+}
+
+std::vector<std::tuple<std::string, void*, uint64_t>> D3D9TextureTracker::DumpAllTextureHashes() const {
+    std::vector<std::tuple<std::string, void*, uint64_t>> result;
+    
+    if (!g_remix) return result;
+    
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    for (const auto& entry : m_textureCache) {
+        const std::string& materialName = entry.first;
+        const std::vector<IDirect3DTexture9*>& textures = entry.second;
+        
+        for (auto* tex : textures) {
+            if (!tex) continue;
+            
+            auto hashResult = g_remix->dxvk_GetTextureHash(tex);
+            uint64_t hash = hashResult ? hashResult.value() : 0;
+            
+            result.push_back(std::make_tuple(materialName, (void*)tex, hash));
+        }
+    }
+    
+    return result;
 }
 
 #endif // _WIN64

@@ -568,6 +568,63 @@ LUA_FUNCTION(RemixMaterial_GetTextureHash) {
     return 2; // Return 2 values
 }
 
+// Lua function: RemixMaterial.GetAllTextureHashes(materialName)
+// Returns ALL texture hashes for a material (handles multiple variants)
+// Returns: table of hash strings
+LUA_FUNCTION(RemixMaterial_GetAllTextureHashes) {
+    if (!LUA->IsType(1, Type::String)) {
+        LUA->ThrowError("Expected string for material name");
+        return 0;
+    }
+    
+    const char* materialName = LUA->GetString(1);
+    
+    if (!g_remix) {
+        LUA->CreateTable(); // Return empty table
+        return 1;
+    }
+    
+    const std::vector<IDirect3DTexture9*>* variants = D3D9TextureTracker::Instance().GetTextureVariantsForMaterial(materialName);
+    
+    if (!variants || variants->empty()) {
+        LUA->CreateTable(); // Return empty table
+        return 1;
+    }
+    
+    // Create result table
+    LUA->CreateTable();
+    int idx = 1;
+    
+    for (size_t i = 0; i < variants->size(); ++i) {
+        IDirect3DTexture9* d3dTexture = (*variants)[i];
+        
+        if (!d3dTexture) continue;
+        
+        ULONG refCount = d3dTexture->AddRef();
+        if (refCount > 1) {
+            d3dTexture->Release();
+            
+            auto result = g_remix->dxvk_GetTextureHash(d3dTexture);
+            if (result) {
+                uint64_t hash = result.value();
+                if (hash != 0) {
+                    char hashStr[32];
+                    sprintf_s(hashStr, "0x%llX", hash);
+                    
+                    LUA->PushNumber(idx);
+                    LUA->PushString(hashStr);
+                    LUA->SetTable(-3);
+                    idx++;
+                }
+            }
+        } else {
+            d3dTexture->Release();
+        }
+    }
+    
+    return 1;
+}
+
 // Lua function: RemixMaterial.FindMaterialByHash(textureHash)
 // Reverse lookup: Returns all material names that match the given texture hash
 // Input: textureHash (number or hex string like "0xABCD1234")
@@ -889,6 +946,52 @@ LUA_FUNCTION(RemixMaterial_RescanAllMaterials) {
     return 1;
 }
 
+// Lua function: RemixMaterial.DumpAllTextureHashes()
+// Returns a table of all tracked textures with their current hashes
+// Format: { { material = "name", texture = "0xPTR", hash = "0xHASH" }, ... }
+LUA_FUNCTION(RemixMaterial_DumpAllTextureHashes) {
+    auto& tracker = D3D9TextureTracker::Instance();
+    auto dump = tracker.DumpAllTextureHashes();
+    
+    // Create Lua table
+    LUA->CreateTable();
+    int idx = 1;
+    
+    for (const auto& entry : dump) {
+        const std::string& materialName = std::get<0>(entry);
+        void* texturePtr = std::get<1>(entry);
+        uint64_t hash = std::get<2>(entry);
+        
+        LUA->PushNumber(idx);
+        LUA->CreateTable();
+        
+        LUA->PushString("material");
+        LUA->PushString(materialName.c_str());
+        LUA->SetTable(-3);
+        
+        LUA->PushString("texture");
+        char ptrStr[32];
+        sprintf_s(ptrStr, "0x%p", texturePtr);
+        LUA->PushString(ptrStr);
+        LUA->SetTable(-3);
+        
+        LUA->PushString("hash");
+        if (hash != 0) {
+            char hashStr[32];
+            sprintf_s(hashStr, "0x%llX", hash);
+            LUA->PushString(hashStr);
+        } else {
+            LUA->PushString("0x0");
+        }
+        LUA->SetTable(-3);
+        
+        LUA->SetTable(-3);
+        idx++;
+    }
+    
+    return 1;
+}
+
 // Lua function: RemixMaterial.FindTexturesByName(searchName)
 LUA_FUNCTION(RemixMaterial_FindTexturesByName) {
     if (!LUA->IsType(1, Type::String)) {
@@ -953,6 +1056,9 @@ void MaterialManager::InitializeLuaBindings() {
     m_lua->PushCFunction(RemixMaterial_GetTextureHash);
     m_lua->SetField(-2, "GetTextureHash");
     
+    m_lua->PushCFunction(RemixMaterial_GetAllTextureHashes);
+    m_lua->SetField(-2, "GetAllTextureHashes");
+    
     m_lua->PushCFunction(RemixMaterial_FindMaterialByHash);
     m_lua->SetField(-2, "FindMaterialByHash");
     
@@ -988,6 +1094,9 @@ void MaterialManager::InitializeLuaBindings() {
     
     m_lua->PushCFunction(RemixMaterial_RescanAllMaterials);
     m_lua->SetField(-2, "RescanAllMaterials");
+    
+    m_lua->PushCFunction(RemixMaterial_DumpAllTextureHashes);
+    m_lua->SetField(-2, "DumpAllTextureHashes");
     
     // Set the table as a global field
     m_lua->SetField(-2, "RemixMaterial");

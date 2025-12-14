@@ -78,6 +78,10 @@ public:
     
     // Get count of pending textures
     size_t GetPendingCount() const { return m_pendingCategories.size(); }
+    
+    // Dump all tracked textures with their hashes (for debugging)
+    // Returns vector of (materialName, texturePtr, hash) tuples
+    std::vector<std::tuple<std::string, void*, uint64_t>> DumpAllTextureHashes() const;
 
 private:
     // Pending categorization entry

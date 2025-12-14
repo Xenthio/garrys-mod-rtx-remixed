@@ -107,45 +107,97 @@ function RemixCategoryManager.IsMaterialEmissive(materialName)
         return true
     end
     
-    -- Method 1: Check raw KeyValues for $selfillum
-    local keyValues = mat:GetKeyValues()
-    if keyValues then
-        for k, v in pairs(keyValues) do
-            local lowerKey = k:lower()
-            if lowerKey == "$selfillum" then
-                local val = tonumber(v)
-                if val and val >= 1 then
-                    hasSelfillum = true
+    -- Raw VMT File Parse
+    local vmtPath = "materials/" .. materialName
+    if not string.EndsWith(vmtPath, ".vmt") then
+        vmtPath = vmtPath .. ".vmt"
+    end
+    
+    local vmtParsedSuccessfully = false
+    local content = file.Read(vmtPath, "GAME")
+    if content then
+        vmtParsedSuccessfully = true
+        local lines = string.Explode("\n", content)
+        local foundSelfillumActive = false
+        local foundSelfillumCommented = false
+        
+        for _, line in ipairs(lines) do
+            local lowerLine = line:lower()
+            local trimmedLine = string.Trim(line)  -- Trim original line, not lowercased (for better comment detection)
+            local trimmedLowerLine = trimmedLine:lower()
+            
+            -- Check if line has $selfillum
+            if lowerLine:find('%$selfillum') then
+                -- Check if it's commented out (check for // at start after trimming whitespace)
+                if string.StartsWith(trimmedLine, "//") or trimmedLine:find("^%s*//") then
+                    foundSelfillumCommented = true
+                -- Check if it's active and set to 1
+                elseif trimmedLowerLine:find('["\']?%$selfillum["\']?%s+["\']?1["\']?') then
+                    foundSelfillumActive = true
                 end
             end
-            -- Check for $selfillummask
-            if lowerKey == "$selfillummask" then
-                hasMask = true
+            
+            -- Check for $selfillummask (only if not commented)
+            if not (string.StartsWith(trimmedLine, "//") or trimmedLine:find("^%s*//")) then
+                if lowerLine:find('%$selfillummask') then
+                    hasMask = true
+                end
+            end
+        end
+        
+        -- If we found $selfillum in the file (commented or not), use that as truth
+        if foundSelfillumCommented or foundSelfillumActive then
+            hasSelfillum = foundSelfillumActive  -- Only true if uncommented
+            -- Debug output
+            if foundSelfillumCommented and not foundSelfillumActive then
+                -- Material has ONLY commented $selfillum - should NOT be emissive
             end
         end
     end
+    
+    -- Only check other methods if VMT file parse didn't find $selfillum parameter at all
+    -- (This handles materials where the parameter might be set programmatically or in other ways)
+    if not vmtParsedSuccessfully or (not hasSelfillum and content and not content:lower():find('%$selfillum')) then
+        -- Method 1: Check raw KeyValues for $selfillum
+        local keyValues = mat:GetKeyValues()
+        if keyValues then
+            for k, v in pairs(keyValues) do
+                local lowerKey = k:lower()
+                if lowerKey == "$selfillum" then
+                    local val = tonumber(v)
+                    if val and val >= 1 then
+                        hasSelfillum = true
+                    end
+                end
+                -- Check for $selfillummask
+                if lowerKey == "$selfillummask" then
+                    hasMask = true
+                end
+            end
+        end
 
-    -- Method 2: Check standard GetInt (compiled params)
-    if not hasSelfillum then
-        local selfillum = mat:GetInt("$selfillum")
-        if selfillum and selfillum == 1 then
-            hasSelfillum = true
+        -- Method 2: Check standard GetInt (compiled params)
+        if not hasSelfillum then
+            local selfillum = mat:GetInt("$selfillum")
+            if selfillum and selfillum == 1 then
+                hasSelfillum = true
+            end
         end
-    end
-    
-    -- Method 3: Check GetFloat (sometimes stored as float)
-    if not hasSelfillum then
-        local selfillumFloat = mat:GetFloat("$selfillum")
-        if selfillumFloat and selfillumFloat >= 1 then
-            hasSelfillum = true
+        
+        -- Method 3: Check GetFloat (sometimes stored as float)
+        if not hasSelfillum then
+            local selfillumFloat = mat:GetFloat("$selfillum")
+            if selfillumFloat and selfillumFloat >= 1 then
+                hasSelfillum = true
+            end
         end
-    end
-    
-    -- Method 4: Check for $selfillummask texture
-    if not hasMask then
-        local mask = mat:GetTexture("$selfillummask")
-        if mask and not mask:IsError() then
-            hasMask = true
+        
+        -- Method 4: Check for $selfillummask texture
+        if not hasMask then
+            local mask = mat:GetTexture("$selfillummask")
+            if mask and not mask:IsError() then
+                hasMask = true
+            end
         end
     end
     
@@ -158,35 +210,6 @@ function RemixCategoryManager.IsMaterialEmissive(materialName)
     -- Method 6: Check for $illumposition (volumetric lights/sprites - doesn't need mask)
     if mat:GetVector("$illumposition") then
         return true
-    end
-
-    -- Method 7: Raw VMT File Parse
-    local vmtPath = "materials/" .. materialName
-    if not string.EndsWith(vmtPath, ".vmt") then
-        vmtPath = vmtPath .. ".vmt"
-    end
-    
-    local content = file.Read(vmtPath, "GAME")
-    if content then
-        local lines = string.Explode("\n", content)
-        
-        for _, line in ipairs(lines) do
-            local lowerLine = line:lower()
-            local trimmedLine = string.Trim(lowerLine)
-            
-            -- Skip commented lines
-            if not string.StartsWith(trimmedLine, "//") then
-                -- Check for $selfillum set to 1
-                if lowerLine:find('["\']?%$selfillum["\']?%s+["\']?1["\']?') then
-                    hasSelfillum = true
-                end
-                
-                -- Check for $selfillummask
-                if lowerLine:find('%$selfillummask') then
-                    hasMask = true
-                end
-            end
-        end
     end
     
     -- If $selfillum is found, check if mask is required
@@ -583,37 +606,77 @@ end
     @return boolean - Success (immediate if cached, false if needs tracking)
 ]]--
 function RemixCategoryManager.SetMaterialCategory(materialName, categoryFlags, callback)
-    local hashStr, hashNum = RemixCategoryManager.GetMaterialHash(materialName)
-    if hashStr then
-        -- Hash already available
-        MsgC(Color(0, 255, 150), string.format("[RemixCategoryManager] Setting category 0x%X for material '%s' (hash %s)\n", 
-            categoryFlags, materialName, hashStr))
-        
-        local success = RemixCategoryManager.SetHashCategory(hashStr, categoryFlags)
-        if callback then callback(success, hashStr) end
-        return success
-    else
-        -- Hash not available yet - track and retry after rendering
-        -- MsgC(Color(255, 200, 100), "[RemixCategoryManager] Tracking material for hash: " .. materialName .. "\n")
-        RemixMaterial.TrackMaterial(materialName)
-        
-        -- Wait for material to be rendered and hash to be available
-        timer.Simple(0.15, function()
-            local hashStr2, hashNum2 = RemixCategoryManager.GetMaterialHash(materialName)
-            if hashStr2 then
-                MsgC(Color(0, 255, 150), string.format("[RemixCategoryManager] Setting category 0x%X for material '%s' (hash %s)\n", 
-                    categoryFlags, materialName, hashStr2))
-                
-                local success = RemixCategoryManager.SetHashCategory(hashStr2, categoryFlags)
-                if callback then callback(success, hashStr2) end
-            else
-                MsgC(Color(255, 150, 0), "[RemixCategoryManager] Warning: Could not get hash for material after tracking: " .. materialName .. "\n")
-                if callback then callback(false, nil) end
-            end
-        end)
-        
-        return false -- Not immediate
+    -- Try both the base material name and the _stage1 variant (for displacement materials)
+    local materialsToTry = {materialName}
+    if not string.match(materialName, "_stage1$") then
+        table.insert(materialsToTry, materialName .. "_stage1")
     end
+    
+    local foundAny = false
+    local categorizedHashes = {}
+    
+    for _, tryName in ipairs(materialsToTry) do
+        -- Get ALL hashes for this material (there can be multiple texture variants)
+        local allHashes = RemixMaterial.GetAllTextureHashes and RemixMaterial.GetAllTextureHashes(tryName)
+        
+        if allHashes and #allHashes > 0 then
+            for _, hashStr in ipairs(allHashes) do
+                -- Skip if we've already categorized this hash
+                if not categorizedHashes[hashStr] then
+                    categorizedHashes[hashStr] = true
+                    
+                    -- Hash already available
+                    MsgC(Color(0, 255, 150), string.format("[RemixCategoryManager] Setting category 0x%X for material '%s' (hash %s)\n", 
+                        categoryFlags, tryName, hashStr))
+                    
+                    local success = RemixCategoryManager.SetHashCategory(hashStr, categoryFlags)
+                    if callback then callback(success, hashStr) end
+                    foundAny = true
+                end
+            end
+        end
+    end
+    
+    if foundAny then
+        return true
+    end
+    
+    -- Hash not available yet - track and retry after rendering
+    -- MsgC(Color(255, 200, 100), "[RemixCategoryManager] Tracking material for hash: " .. materialName .. "\n")
+    RemixMaterial.TrackMaterial(materialName)
+    
+    -- Wait longer for displacement materials to be rendered (they need Stage 1 textures)
+    timer.Simple(0.5, function()
+        local foundDelayed = false
+        local delayedHashes = {}
+        
+        for _, tryName in ipairs(materialsToTry) do
+            -- Try to get all hashes again
+            local allHashes = RemixMaterial.GetAllTextureHashes and RemixMaterial.GetAllTextureHashes(tryName)
+            
+            if allHashes and #allHashes > 0 then
+                for _, hashStr in ipairs(allHashes) do
+                    if not delayedHashes[hashStr] then
+                        delayedHashes[hashStr] = true
+                        
+                        MsgC(Color(0, 255, 150), string.format("[RemixCategoryManager] Setting category 0x%X for material '%s' (hash %s)\n", 
+                            categoryFlags, tryName, hashStr))
+                        
+                        local success = RemixCategoryManager.SetHashCategory(hashStr, categoryFlags)
+                        if callback then callback(success, hashStr) end
+                        foundDelayed = true
+                    end
+                end
+            end
+        end
+        
+        if not foundDelayed then
+            -- MsgC(Color(255, 150, 0), "[RemixCategoryManager] Warning: Could not get hash for material after tracking: " .. materialName .. "\n")
+            if callback then callback(false, nil) end
+        end
+    end)
+    
+    return false -- Not immediate
 end
 
 --[[
@@ -726,56 +789,47 @@ function RemixCategoryManager.MarkWorldTextures(categoryFlags)
                                     dispFaceCount, tostring(ok_mat), tostring(material)))
                             end
                             if ok_mat and material then
-                                -- Displacement materials often have two base textures ($basetexture and $basetexture2)
-                                -- We need to extract and categorize both
-                                local texturesToAdd = {}
+                                -- Get the ACTUAL material name being rendered by the engine
+                                -- This is what gets tracked by D3D9 (e.g., "maps/.../blend_blacktop_01_wvt_patch")
+                                local matName = material:GetName()
                                 
-                                -- Try to get $basetexture
-                                local baseTex = material:GetTexture("$basetexture")
-                                if baseTex and baseTex.GetName then
-                                    local texName = baseTex:GetName()
-                                    if texName and texName ~= "" then
-                                        table.insert(texturesToAdd, texName)
-                                    end
-                                end
-                                
-                                -- Try to get $basetexture2
-                                local baseTex2 = material:GetTexture("$basetexture2")
-                                if baseTex2 and baseTex2.GetName then
-                                    local texName2 = baseTex2:GetName()
-                                    if texName2 and texName2 ~= "" then
-                                        table.insert(texturesToAdd, texName2)
-                                    end
-                                end
-                                
-                                if dispFaceCount <= 3 then
-                                    MsgC(Color(255, 255, 0), string.format("[RemixCategoryManager] Displacement textures: %s\n", 
-                                        table.concat(texturesToAdd, ", ")))
-                                end
-                                
-                                -- Force-track and add all found textures
-                                for _, texName in ipairs(texturesToAdd) do
-                                    if not seenDisplacements[texName] then
-                                        seenDisplacements[texName] = true
-                                        dispCount = dispCount + 1
+                                if matName and matName ~= "" and not seenDisplacements[matName] then
+                                    seenDisplacements[matName] = true
+                                    dispCount = dispCount + 1
+                                    
+                                    -- Normalize material name
+                                    local normalizedMatName = matName
+                                    normalizedMatName = string.gsub(normalizedMatName, "^materials/", "")
+                                    normalizedMatName = string.gsub(normalizedMatName, "%.vmt$", "")
+                                    
+                                    if dispFaceCount <= 3 then
+                                        MsgC(Color(255, 255, 0), string.format("[RemixCategoryManager] Displacement material: '%s'\n", normalizedMatName))
                                         
-                                        -- Force the texture to be tracked by D3D9
-                                        local trackedMatName = RemixCategoryManager.ForceTrackTexture(texName)
-                                        
-                                        if trackedMatName then
-                                            -- Check if not already in main texture list
-                                            local found = false
-                                            for _, existingTex in ipairs(textures) do
-                                                if existingTex == trackedMatName then
-                                                    found = true
-                                                    break
-                                                end
-                                            end
-                                            
-                                            if not found then
-                                                table.insert(textures, trackedMatName)
-                                            end
+                                        -- Also show the base textures for debug
+                                        local baseTex = material:GetTexture("$basetexture")
+                                        local baseTex2 = material:GetTexture("$basetexture2")
+                                        if baseTex and baseTex.GetName then
+                                            MsgC(Color(200, 200, 200), string.format("    $basetexture: %s\n", baseTex:GetName()))
                                         end
+                                        if baseTex2 and baseTex2.GetName then
+                                            MsgC(Color(200, 200, 200), string.format("    $basetexture2: %s\n", baseTex2:GetName()))
+                                        end
+                                    end
+                                    
+                                    -- Track the material (it will be tracked automatically when rendered, but this ensures it's in our list)
+                                    RemixMaterial.TrackMaterial(normalizedMatName)
+                                    
+                                    -- Check if not already in main texture list
+                                    local found = false
+                                    for _, existingTex in ipairs(textures) do
+                                        if existingTex == normalizedMatName then
+                                            found = true
+                                            break
+                                        end
+                                    end
+                                    
+                                    if not found then
+                                        table.insert(textures, normalizedMatName)
                                     end
                                 end
                             end
@@ -944,7 +998,8 @@ function RemixCategoryManager.SmartMarkWorldTextures()
                             -- Get material from this displacement face
                             local ok_mat, material = pcall(function() return face:GetMaterial() end)
                             if ok_mat and material then
-                                -- Get the actual material name being rendered
+                                -- Get the ACTUAL material name being rendered by the engine
+                                -- This is what gets tracked by D3D9 (e.g., "maps/.../blend_blacktop_01_wvt_patch")
                                 local matName = material:GetName()
                                 
                                 if matName and matName ~= "" and not displacementTextures[matName] then
@@ -963,7 +1018,7 @@ function RemixCategoryManager.SmartMarkWorldTextures()
                                     if dispCount <= 5 then
                                         MsgC(Color(200, 200, 255), string.format("[RemixCategoryManager] Displacement #%d: material='%s'\n", dispCount, normalizedMatName))
                                         
-                                        -- Also show the base textures
+                                        -- Also show the base textures for debug
                                         local baseTex = material:GetTexture("$basetexture")
                                         local baseTex2 = material:GetTexture("$basetexture2")
                                         if baseTex and baseTex.GetName then
@@ -973,32 +1028,9 @@ function RemixCategoryManager.SmartMarkWorldTextures()
                                             MsgC(Color(200, 200, 200), string.format("    $basetexture2: %s\n", baseTex2:GetName()))
                                         end
                                     end
-                                end
-                                
-                                -- ALSO track individual texture names for reference
-                                -- (these might be used in other contexts)
-                                local baseTex = material:GetTexture("$basetexture")
-                                if baseTex and baseTex.GetName then
-                                    local texName = baseTex:GetName()
-                                    if texName and texName ~= "" then
-                                        local normTex = string.gsub(texName, "^materials/", "")
-                                        normTex = string.gsub(normTex, "%.vmt$", "")
-                                        normTex = string.gsub(normTex, "\\", "/")
-                                        displacementTextures[normTex] = true
-                                        displacementTextures[string.lower(normTex)] = true
-                                    end
-                                end
-                                
-                                local baseTex2 = material:GetTexture("$basetexture2")
-                                if baseTex2 and baseTex2.GetName then
-                                    local texName2 = baseTex2:GetName()
-                                    if texName2 and texName2 ~= "" then
-                                        local normTex2 = string.gsub(texName2, "^materials/", "")
-                                        normTex2 = string.gsub(normTex2, "%.vmt$", "")
-                                        normTex2 = string.gsub(normTex2, "\\", "/")
-                                        displacementTextures[normTex2] = true
-                                        displacementTextures[string.lower(normTex2)] = true
-                                    end
+                                    
+                                    -- Track the material (will be auto-tracked when rendered)
+                                    RemixMaterial.TrackMaterial(normalizedMatName)
                                 end
                             end
                         end
@@ -1506,6 +1538,53 @@ concommand.Add("remix_check_emissive", function(ply, cmd, args)
 end, nil, "Check if a material has $selfillum enabled")
 
 --[[
+    Console command to debug emissive detection
+]]--
+concommand.Add("remix_debug_emissive", function(ply, cmd, args)
+    if not args[1] then
+        MsgC(Color(255, 200, 100), "Usage: remix_debug_emissive <material_name>\n")
+        MsgC(Color(255, 200, 100), "Example: remix_debug_emissive decals/decalstain005a\n")
+        return
+    end
+    
+    local materialName = args[1]
+    MsgC(Color(100, 200, 255), string.format("[Emissive Debug] Checking: %s\n", materialName))
+    
+    local mat = Material(materialName)
+    if not mat or mat:IsError() then
+        MsgC(Color(255, 100, 100), "  ✗ Material is invalid or error\n")
+        return
+    end
+    
+    local reasons = {}
+    
+    -- Check Shader
+    local shader = mat:GetShader()
+    MsgC(Color(200, 200, 200), string.format("  Shader: %s\n", tostring(shader)))
+    if shader and shader:lower() == "unlitgeneric" then
+        table.insert(reasons, "UnlitGeneric shader")
+    end
+    
+    -- Check GetInt
+    local selfillumInt = mat:GetInt("$selfillum")
+    MsgC(Color(200, 200, 200), string.format("  GetInt($selfillum): %s\n", tostring(selfillumInt)))
+    if selfillumInt and selfillumInt == 1 then
+        table.insert(reasons, "GetInt($selfillum) = 1")
+    end
+    
+    -- Show what IsMaterialEmissive returns
+    local luaResult = RemixCategoryManager.IsMaterialEmissive(materialName)
+    MsgC(Color(200, 200, 200), string.format("\n  IsMaterialEmissive() returns: %s\n", tostring(luaResult)))
+    
+    if #reasons > 0 then
+        MsgC(Color(255, 150, 100), "  Reasons detected:\n")
+        for _, reason in ipairs(reasons) do
+            MsgC(Color(255, 150, 100), string.format("    - %s\n", reason))
+        end
+    end
+end, nil, "Debug why a material is being marked as emissive")
+
+--[[
     Console command to check if a material is a decal
 ]]--
 concommand.Add("remix_check_decal", function(ply, cmd, args)
@@ -1720,6 +1799,22 @@ hook.Add("HUDPaint", "RemixCategoryManager_AutoInit", function()
         -- Also scan tracked materials for dynamic things (particles, weapons)
         RemixCategoryManager.CategorizeAllTrackedMaterials()
         
+        -- Schedule a second pass after more rendering has happened
+        -- This catches displacement materials that need to be rendered first
+        timer.Simple(3, function()
+            MsgC(Color(100, 200, 255), "[RemixCategoryManager] Running second categorization pass...\n")
+            RemixCategoryManager.SmartMarkWorldTextures()
+            RemixCategoryManager.CategorizeAllTrackedMaterials()
+            
+            -- Final pass after even more time
+            timer.Simple(5, function()
+                MsgC(Color(100, 200, 255), "[RemixCategoryManager] Running final categorization pass...\n")
+                RemixCategoryManager.SmartMarkWorldTextures()
+                RemixCategoryManager.CategorizeAllTrackedMaterials()
+                MsgC(Color(100, 255, 100), "[RemixCategoryManager] Auto-categorization complete!\n")
+            end)
+        end)
+        
         -- Note: Pending categorization retry is now handled automatically by the C++ module
         -- during rendering (no Lua timer needed)
     end)
@@ -1754,6 +1849,161 @@ concommand.Add("remix_rescan_materials", function()
     MsgC(Color(100, 255, 100), string.format("[RemixCategoryManager] Categorized %d materials\n", count))
 end, nil, "Rescan all cached materials and apply categories (emissive, etc.)")
 
+-- Console command: remix_dump_all_hashes
+-- Console command: remix_dump_all_hashes
+concommand.Add("remix_dump_all_hashes", function(ply, cmd, args)
+    if not RemixMaterial or not RemixMaterial.DumpAllTextureHashes then
+        MsgC(Color(255, 100, 100), "[RemixCategoryManager] RemixMaterial.DumpAllTextureHashes not available\n")
+        return
+    end
+    
+    local searchHash = args[1]
+    if searchHash then
+        searchHash = string.upper(searchHash):gsub("^0X", "")
+        MsgC(Color(100, 200, 255), string.format("[RemixCategoryManager] Searching for hash containing: %s\n", searchHash))
+    else
+        MsgC(Color(100, 200, 255), "[RemixCategoryManager] Dumping all tracked texture hashes...\n")
+    end
+    
+    local dump = RemixMaterial.DumpAllTextureHashes()
+    local found = 0
+    local total = 0
+    
+    for _, entry in ipairs(dump) do
+        total = total + 1
+        local shouldPrint = not searchHash
+        
+        if searchHash then
+            local hashUpper = string.upper(entry.hash):gsub("^0X", "")
+            if hashUpper:find(searchHash, 1, true) then
+                shouldPrint = true
+                found = found + 1
+            end
+        end
+        
+        if shouldPrint then
+            if entry.hash == "0x0" then
+                MsgC(Color(255, 150, 100), string.format("  [%4d] %-60s | texture=%s | hash=%s (PENDING)\n", 
+                    total, entry.material, entry.texture, entry.hash))
+            else
+                MsgC(Color(200, 200, 200), string.format("  [%4d] %-60s | texture=%s | hash=%s\n", 
+                    total, entry.material, entry.texture, entry.hash))
+            end
+        end
+    end
+    
+    if searchHash then
+        if found > 0 then
+            MsgC(Color(100, 255, 100), string.format("[RemixCategoryManager] Found %d/%d materials with hash containing '%s'\n", found, total, searchHash))
+        else
+            MsgC(Color(255, 100, 100), string.format("[RemixCategoryManager] No materials found with hash containing '%s' (total: %d)\n", searchHash, total))
+        end
+    else
+        MsgC(Color(100, 255, 100), string.format("[RemixCategoryManager] Total tracked textures: %d\n", total))
+    end
+end, nil, "Dump all tracked textures with their hashes (optional: remix_dump_all_hashes <partial_hash>)")
+
+-- Console command: remix_check_shared_hash
+concommand.Add("remix_check_shared_hash", function(ply, cmd, args)
+    if not args[1] then
+        MsgC(Color(255, 200, 100), "Usage: remix_check_shared_hash <hash>\n")
+        MsgC(Color(255, 200, 100), "Example: remix_check_shared_hash F0F66D57DE6A8885\n")
+        return
+    end
+    
+    local hash = args[1]
+    local materials = RemixMaterial.FindMaterialByHash(hash)
+    
+    if not materials or #materials == 0 then
+        MsgC(Color(255, 100, 100), string.format("No materials found with hash %s\n", hash))
+        return
+    end
+    
+    MsgC(Color(100, 200, 255), string.format("[Hash Check] Found %d material(s) sharing hash %s\n", #materials, hash))
+    MsgC(Color(200, 200, 200), "[Hash Check] Checking base textures...\n\n")
+    
+    local baseTextures = {}
+    local errorCount = 0
+    
+    for i, matName in ipairs(materials) do
+        local mat = Material(matName)
+        if mat and not mat:IsError() then
+            -- Get $basetexture parameter
+            local baseTex = mat:GetTexture("$basetexture")
+            if baseTex and not baseTex:IsError() then
+                local texName = baseTex:GetName()
+                baseTextures[texName] = (baseTextures[texName] or 0) + 1
+                
+                if i <= 5 then  -- Show first 5
+                    MsgC(Color(200, 200, 200), string.format("  %2d. %-50s -> %s\n", i, matName, texName))
+                end
+            else
+                MsgC(Color(255, 150, 100), string.format("  %2d. %-50s -> ERROR TEXTURE\n", i, matName))
+                errorCount = errorCount + 1
+            end
+        else
+            MsgC(Color(255, 100, 100), string.format("  %2d. %-50s -> ERROR MATERIAL\n", i, matName))
+            errorCount = errorCount + 1
+        end
+    end
+    
+    if #materials > 5 then
+        MsgC(Color(200, 200, 200), string.format("  ... and %d more\n", #materials - 5))
+    end
+    
+    -- Summary
+    MsgC(Color(100, 200, 255), "\n[Hash Check] Summary:\n")
+    MsgC(Color(200, 200, 200), string.format("  Total materials: %d\n", #materials))
+    MsgC(Color(200, 200, 200), string.format("  Error materials: %d\n", errorCount))
+    MsgC(Color(200, 200, 200), string.format("  Unique base textures: %d\n", table.Count(baseTextures)))
+    
+    if table.Count(baseTextures) > 0 then
+        MsgC(Color(200, 200, 200), "\n  Base textures used:\n")
+        for texName, count in pairs(baseTextures) do
+            MsgC(Color(200, 200, 200), string.format("    - %s (used by %d material%s)\n", 
+                texName, count, count > 1 and "s" or ""))
+        end
+    end
+    
+    if table.Count(baseTextures) == 1 then
+        MsgC(Color(100, 255, 100), "\n✓ All materials share the same base texture (LEGITIMATE)\n")
+    elseif errorCount == #materials then
+        MsgC(Color(255, 100, 100), "\n✗ All materials are errors (PLACEHOLDER/ERROR TEXTURE)\n")
+    elseif table.Count(baseTextures) > 1 then
+        MsgC(Color(255, 200, 100), "\n⚠ Materials use different base textures but same hash (TEXTURE ATLAS or UV VARIANTS)\n")
+    end
+end, nil, "Check why multiple materials share the same hash")
+
+-- Console command: remix_test_displacement_categorization
+concommand.Add("remix_test_disp_cat", function(ply, cmd, args)
+    local matName = args[1] or "concrete/blend_blacktop_01"
+    
+    MsgC(Color(100, 200, 255), string.format("[Test] Testing categorization for: %s\n", matName))
+    
+    -- Try base material
+    local hash1, hash1Str = RemixCategoryManager.GetMaterialHash(matName)
+    if hash1 and hash1 ~= 0 then
+        MsgC(Color(100, 255, 100), string.format("  Base material '%s': hash=%s\n", matName, hash1Str))
+    else
+        MsgC(Color(255, 150, 100), string.format("  Base material '%s': NO HASH\n", matName))
+    end
+    
+    -- Try _stage1 variant
+    local matNameStage1 = matName .. "_stage1"
+    local hash2, hash2Str = RemixCategoryManager.GetMaterialHash(matNameStage1)
+    if hash2 and hash2 ~= 0 then
+        MsgC(Color(100, 255, 100), string.format("  Stage1 material '%s': hash=%s\n", matNameStage1, hash2Str))
+    else
+        MsgC(Color(255, 150, 100), string.format("  Stage1 material '%s': NO HASH\n", matNameStage1))
+    end
+    
+    -- Now try to categorize
+    MsgC(Color(100, 200, 255), string.format("[Test] Attempting to categorize...\n"))
+    RemixCategoryManager.SetMaterialCategory(matName, RemixCategoryManager.CATEGORY.DECAL_STATIC)
+end, nil, "Test displacement categorization (usage: remix_test_disp_cat <material_name>)")
+
+-- Console command: remix_rescan_materials
+
 MsgC(Color(100, 255, 100), "[RemixCategoryManager] Loaded successfully!\n")
 MsgC(Color(200, 200, 200), "[RemixCategoryManager] Commands:\n")
 MsgC(Color(200, 200, 200), "  remix_mark_world_textures    - Mark all world textures with DECAL_STATIC\n")
@@ -1761,6 +2011,8 @@ MsgC(Color(200, 200, 200), "  remix_smart_mark_world       - Intelligently categ
 MsgC(Color(200, 200, 200), "  remix_categorize_tracked     - Categorize all currently rendered materials (Particles, Effects)\n")
 MsgC(Color(200, 200, 200), "  remix_rescan_materials       - Rescan all cached materials for emissive (C++ VMT parsing)\n")
 MsgC(Color(200, 200, 200), "  remix_retry_pending          - Retry categorizing pending textures (hash=0)\n")
+MsgC(Color(200, 200, 200), "  remix_dump_all_hashes        - Dump all tracked textures with hashes (use <hash> to search)\n")
+MsgC(Color(200, 200, 200), "  remix_check_shared_hash      - Check why multiple materials share the same hash\n")
 MsgC(Color(200, 200, 200), "  remix_clear_categories       - Clear all category mappings\n")
 MsgC(Color(200, 200, 200), "  remix_find_texture_hash      - Search for texture by name\n")
 MsgC(Color(200, 200, 200), "  remix_set_material_category  - Set category for a material\n")
