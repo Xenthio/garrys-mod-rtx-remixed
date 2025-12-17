@@ -530,50 +530,70 @@ static bool CheckVMTForSelfillum(const std::string& materialName, bool debug = f
     
     if (debug) Msg("[D3D9] CheckVMT: Read %d bytes from '%s'\n", bytesRead, vmtPath.c_str());
     
-    // Convert to lowercase for case-insensitive search
-    std::transform(content.begin(), content.end(), content.begin(), ::tolower);
-    
-    // Look for $selfillum followed by 1
-    // Patterns: "$selfillum" "1", "$selfillum" 1, $selfillum 1
-    // IMPORTANT: Must check for word boundary to avoid matching $selfillumtint or $selfillummask
-    size_t pos = 0;
-    bool foundSelfillum = false;
-    
-    while ((pos = content.find("$selfillum", pos)) != std::string::npos) {
-        // Check if it's followed by whitespace, quote, or end of string (not 'tint', 'mask', etc.)
-        size_t endPos = pos + 10; // length of "$selfillum"
-        if (endPos >= content.size() || 
-            content[endPos] == ' ' || content[endPos] == '\t' || 
-            content[endPos] == '"' || content[endPos] == '\'' ||
-            content[endPos] == '\r' || content[endPos] == '\n') {
-            foundSelfillum = true;
-            pos = endPos;
-            break;
+    // Parse line by line to handle comments properly
+    // Split content into lines
+    std::vector<std::string> lines;
+    size_t lineStart = 0;
+    for (size_t i = 0; i <= content.size(); ++i) {
+        if (i == content.size() || content[i] == '\n' || content[i] == '\r') {
+            if (i > lineStart) {
+                lines.push_back(content.substr(lineStart, i - lineStart));
+            }
+            lineStart = i + 1;
         }
-        pos++; // Move forward and keep searching
     }
     
-    if (!foundSelfillum) {
-        if (debug) Msg("[D3D9] CheckVMT: '$selfillum' not found in file\n");
-        return false;
+    // Look for $selfillum followed by 1, excluding commented lines
+    for (const auto& line : lines) {
+        std::string lowerLine = line;
+        std::transform(lowerLine.begin(), lowerLine.end(), lowerLine.begin(), ::tolower);
+        
+        // Skip empty lines
+        if (lowerLine.empty()) continue;
+        
+        // Skip leading whitespace to check for comments
+        size_t firstChar = lowerLine.find_first_not_of(" \t");
+        if (firstChar == std::string::npos) continue;
+        
+        // Skip commented lines
+        if (firstChar + 1 < lowerLine.size() && 
+            lowerLine[firstChar] == '/' && lowerLine[firstChar + 1] == '/') {
+            continue;
+        }
+        
+        // Look for $selfillum with word boundary
+        size_t pos = 0;
+        while ((pos = lowerLine.find("$selfillum", pos)) != std::string::npos) {
+            // Check if it's followed by whitespace, quote, or end of string (not 'tint', 'mask', etc.)
+            size_t endPos = pos + 10; // length of "$selfillum"
+            if (endPos >= lowerLine.size() || 
+                lowerLine[endPos] == ' ' || lowerLine[endPos] == '\t' || 
+                lowerLine[endPos] == '"' || lowerLine[endPos] == '\'' ||
+                lowerLine[endPos] == '\r' || lowerLine[endPos] == '\n') {
+                
+                // Found $selfillum, now check if value is 1
+                pos = endPos;
+                
+                // Skip whitespace/quotes
+                while (pos < lowerLine.size() && 
+                       (lowerLine[pos] == ' ' || lowerLine[pos] == '\t' || 
+                        lowerLine[pos] == '"' || lowerLine[pos] == '\'')) {
+                    pos++;
+                }
+                
+                // Check if next character is '1'
+                if (pos < lowerLine.size() && lowerLine[pos] == '1') {
+                    if (debug) Msg("[D3D9] CheckVMT: Found active '$selfillum 1' on line: %s\n", line.c_str());
+                    return true;
+                }
+                
+                break; // Found $selfillum but not set to 1
+            }
+            pos++; // Move forward and keep searching
+        }
     }
     
-    if (debug) Msg("[D3D9] CheckVMT: Found '$selfillum' at position %zu\n", pos - 10);
-    
-    // Skip past any whitespace/quotes
-    while (pos < content.size() && (content[pos] == ' ' || content[pos] == '\t' || 
-           content[pos] == '"' || content[pos] == '\'')) {
-        pos++;
-    }
-    
-    // Check if next character is '1'
-    if (pos < content.size() && content[pos] == '1') {
-        if (debug) Msg("[D3D9] CheckVMT: Found '$selfillum' = 1!\n");
-        return true;
-    }
-    
-    if (debug) Msg("[D3D9] CheckVMT: '$selfillum' found but value is not '1' (char at %zu = '%c')\n", 
-                   pos, pos < content.size() ? content[pos] : '?');
+    if (debug) Msg("[D3D9] CheckVMT: '$selfillum 1' not found (or commented out)\n");
     return false;
 }
 
@@ -662,14 +682,19 @@ void D3D9TextureTracker::CheckAndApplyCategories(IDirect3DTexture9* pTexture) {
     }
     
     // === PRIORITY 5: DECALS (map overlays, bullet holes, blood) ===
-    else if (lowerName.find("decals/") == 0 ||
+    // IMPORTANT: Exclude light materials (they should be emissive, not decals)
+    else if ((lowerName.find("decals/") == 0 ||
              lowerName.find("/decals/") != std::string::npos ||
              lowerName.find("overlay") != std::string::npos ||
              lowerName.find("bulleth") != std::string::npos ||
              lowerName.find("_blood") != std::string::npos ||
              lowerName.find("blood_") != std::string::npos ||
              lowerName.find("/blood") != std::string::npos ||
-             lowerName.find("scorch") != std::string::npos) {
+             lowerName.find("scorch") != std::string::npos) &&
+             // Exclude light materials
+             lowerName.find("light") == std::string::npos &&
+             lowerName.find("/lights/") == std::string::npos &&
+             lowerName.find("lights/") != 0) {
         categoryFlags = CAT_DECAL_STATIC;
         categoryName = "DECAL";
     }
@@ -814,6 +839,13 @@ void D3D9TextureTracker::CheckAndApplyCategories(IDirect3DTexture9* pTexture) {
         return;
     }
     
+    // Check if this hash has already been categorized
+    uint32_t existingFlags = 0;
+    if (GetHashCategoryFlags(hash, &existingFlags) && existingFlags != 0) {
+        // Already categorized, don't re-categorize
+        return;
+    }
+    
     // Apply the category
     ApplyCategoryToHash(hash, categoryFlags, m_currentMaterialName.c_str());
 }
@@ -823,6 +855,7 @@ void D3D9TextureTracker::ApplyCategoryToHash(uint64_t hash, uint32_t categoryFla
     if (!g_remix || hash == 0 || categoryFlags == 0) return;
     
     // Category flag constants (same as in CheckAndApplyCategories)
+    constexpr uint32_t CAT_WORLD_UI       = 0x1;       // UNUSED - do not apply
     constexpr uint32_t CAT_SKY            = 0x4;
     constexpr uint32_t CAT_IGNORE         = 0x8;
     constexpr uint32_t CAT_PARTICLE       = 0x400;
@@ -830,10 +863,17 @@ void D3D9TextureTracker::ApplyCategoryToHash(uint64_t hash, uint32_t categoryFla
     constexpr uint32_t CAT_ANIMATED_WATER = 0x40000;
     constexpr uint32_t CAT_EMISSIVE       = 0x1000000;
     
+    // Strip WORLD_UI flag if present - it should never be applied
+    if (categoryFlags & CAT_WORLD_UI) {
+        Msg("[D3D9] WARNING: Removing WORLD_UI flag from '%s' (flags: 0x%X)\n", materialName, categoryFlags);
+        categoryFlags &= ~CAT_WORLD_UI;  // Remove the WORLD_UI bit
+    }
+    
     char hashStr[32];
     sprintf_s(hashStr, "0x%llX", hash);
     
     // Map category flags to Remix API texture lists
+    // NOTE: WORLD_UI is intentionally omitted - we don't use it
     if (categoryFlags & CAT_SKY) {
         g_remix->AddTextureHash("rtx.skyBoxTextures", hashStr);
         Msg("[D3D9] Categorized SKY: '%s' -> %s\n", materialName, hashStr);
@@ -859,7 +899,7 @@ void D3D9TextureTracker::ApplyCategoryToHash(uint64_t hash, uint32_t categoryFla
         Msg("[D3D9] Categorized EMISSIVE: '%s' -> %s\n", materialName, hashStr);
     }
     
-    // Update local tracking
+    // Update local tracking (without WORLD_UI bit)
     uint32_t currentFlags = 0;
     GetHashCategoryFlags(hash, &currentFlags);
     SetHashCategoryFlags(hash, currentFlags | categoryFlags);

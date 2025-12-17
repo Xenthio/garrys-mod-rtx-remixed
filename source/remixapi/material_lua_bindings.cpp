@@ -748,14 +748,14 @@ LUA_FUNCTION(RemixMaterial_GetCachedMaterials) {
 static std::vector<const char*> GetRemixCategoryOptions(uint32_t categoryFlags) {
     std::vector<const char*> options;
     
-    // Based on remixapi_InstanceCategoryBit enum  
-    if (categoryFlags & (1 << 12)) options.push_back("rtx.decalTextures");  // DECAL_STATIC
+    // Based on remixapi_InstanceCategoryBit enum and our Lua constants
+    // NOTE: We intentionally skip bit 0 (WORLD_UI) and bit 1 (WORLD_MATTE) - not used
+    if (categoryFlags & (1 << 2))  options.push_back("rtx.skyBoxTextures");  // SKY
+    if (categoryFlags & (1 << 3))  options.push_back("rtx.ignoreTextures");  // IGNORE
     if (categoryFlags & (1 << 9))  options.push_back("rtx.hideInstanceTextures");  // HIDDEN
     if (categoryFlags & (1 << 10)) options.push_back("rtx.particleTextures");  // PARTICLE
     if (categoryFlags & (1 << 11)) options.push_back("rtx.beamTextures");  // BEAM
-    if (categoryFlags & (1 << 2))  options.push_back("rtx.worldSpaceUiTextures");  // WORLD_UI
-    if (categoryFlags & (1 << 3))  options.push_back("rtx.worldSpaceUiBackgroundTextures");  // WORLD_UI_BACKGROUND
-    if (categoryFlags & (1 << 4))  options.push_back("rtx.ignoreTextures");  // IGNORE
+    if (categoryFlags & (1 << 12)) options.push_back("rtx.decalTextures");  // DECAL_STATIC
     if (categoryFlags & (1 << 17)) options.push_back("rtx.terrainTextures");  // TERRAIN
     if (categoryFlags & (1 << 18)) options.push_back("rtx.animatedWaterTextures");  // ANIMATED_WATER
     if (categoryFlags & (1 << 19)) options.push_back("rtx.playerModelTextures");  // THIRD_PERSON_PLAYER_MODEL

@@ -1214,14 +1214,9 @@ function RemixCategoryManager.SmartMarkWorldTextures()
                 -- Determine category based on texture properties and source
                 local category = nil
                 
-                -- Sky textures (check first, highest priority for exclusion)
-                if string.find(lowerName, "sky") or string.find(lowerName, "skybox") then
-                    category = RemixCategoryManager.PRESET.SKY
-                    stats.sky = stats.sky + 1
-                
-                -- Emissive/Self-illuminated materials (check VMT parameter $selfillum)
+                -- Emissive/Self-illuminated materials (check first for priority)
                 -- This is more reliable than keyword matching
-                elseif RemixCategoryManager.IsMaterialEmissive(materialName) then
+                if RemixCategoryManager.IsMaterialEmissive(materialName) then
                     category = RemixCategoryManager.PRESET.EMISSIVE
                     stats.emissive = stats.emissive + 1
                 
