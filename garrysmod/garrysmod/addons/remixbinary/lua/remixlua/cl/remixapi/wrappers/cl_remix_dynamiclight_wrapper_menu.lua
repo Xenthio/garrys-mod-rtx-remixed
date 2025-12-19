@@ -13,8 +13,5 @@ hook.Add("PopulateToolMenu", "RTXDynamicLightWrapper_Menu", function()
         
         local brightnessSlider = panel:NumSlider("Brightness Scale", "rtx_dynamiclight_wrapper_brightness_scale", 1, 200, 0)
         if brightnessSlider then brightnessSlider:SetDecimals(0) end
-        
-        local radiusSlider = panel:NumSlider("Radius Scale", "rtx_dynamiclight_wrapper_radius_scale", 0.01, 1.0, 2)
-        if radiusSlider then radiusSlider:SetDecimals(3) end
     end)
 end)

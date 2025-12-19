@@ -4,8 +4,7 @@ if not CLIENT then return end
 -- Configuration
 local cv_enabled = CreateClientConVar("rtx_projectedtexture_wrapper_enabled", "1", true, false, "Enable RTX wrapping for ProjectedTexture() calls")
 local cv_debug = CreateClientConVar("rtx_projectedtexture_wrapper_debug", "0", true, false, "Debug logging for projected texture wrapper")
-local cv_brightness_scale = CreateClientConVar("rtx_projectedtexture_wrapper_brightness_scale", "10", true, false, "Brightness scaling for projected textures")
-local cv_radius_scale = CreateClientConVar("rtx_projectedtexture_wrapper_radius_scale", "0.005", true, false, "Radius scaling for projected textures")
+local cv_brightness_scale = CreateClientConVar("rtx_projectedtexture_wrapper_brightness_scale", "500", true, false, "Brightness scaling for projected textures")
 local cv_skip_change_detection = CreateClientConVar("rtx_projectedtexture_wrapper_skip_change_detection", "1", true, false, "Skip change detection and update every frame (lowest latency)")
 local cv_offset_x = CreateClientConVar("rtx_projectedtexture_wrapper_offset_x", "50", true, false, "Position offset X in local space (forward/back relative to entity)")
 local cv_offset_y = CreateClientConVar("rtx_projectedtexture_wrapper_offset_y", "0", true, false, "Position offset Y in local space (left/right relative to entity)")
@@ -61,7 +60,7 @@ local function UpdateRTXFromProjectedTexture(projTex, textureId)
     
     -- Apply scaling
     local brightnessScale = cv_brightness_scale:GetFloat()
-    local radiusScale = cv_radius_scale:GetFloat()
+    local radiusScale = 0.001
     
     -- Calculate radiance
     local scale = (brightness * brightnessScale) / 100.0
@@ -295,7 +294,7 @@ concommand.Add("rtx_projectedtexture_force_clear_all", function()
 end, nil, "Force clear ALL projected texture lights (debug)")
 
 concommand.Add("rtx_projectedtexture_reset_offsets", function()
-    RunConsoleCommand("rtx_projectedtexture_wrapper_offset_x", "50")
+    RunConsoleCommand("rtx_projectedtexture_wrapper_offset_x", "15")
     RunConsoleCommand("rtx_projectedtexture_wrapper_offset_y", "0")
     RunConsoleCommand("rtx_projectedtexture_wrapper_offset_z", "0")
     print("[RTX ProjectedTexture] Reset position offsets to 0, 0, 0")

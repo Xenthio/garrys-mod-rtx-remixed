@@ -159,9 +159,10 @@ local function GetEntityLightProps(ent)
             props.coneSoftness = ent:GetConeSoftness()
         end
         
-        -- Apply brightness scaling for non-gmod_light entities
-        props.brightness = props.brightness * cv_brightness_scale:GetFloat()
     end
+    
+    -- Apply brightness scaling to all entities
+    props.brightness = props.brightness * cv_brightness_scale:GetFloat()
     
     -- Apply radius power curve to control growth rate
     local radiusPower = cv_radius_power:GetFloat()
@@ -462,7 +463,7 @@ hook.Add("OnEntityCreated", "RTXLightWrapper_EntityCreated", function(ent)
 end)
 
 -- Hook: Think - Update lights periodically
-hook.Add("Think", "RTXLightWrapper_UpdateLights", function()
+hook.Add("PreRender", "RTXLightWrapper_UpdateLights", function()
     UpdateWrappedLights()
 end)
 

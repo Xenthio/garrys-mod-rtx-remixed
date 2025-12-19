@@ -14,9 +14,10 @@ hook.Add( "PopulateToolMenu", "RTXOptionsClient_BaseOptions", function()
         panel:CheckBox( "Pseudoweapon Enabled", "rtx_pseudoweapon" )
         panel:ControlHelp( "Similar to above, but for the weapon you're holding." )
 
-        panel:AddControl("Header", {Description = "Render Options:"})
-        panel:CheckBox("Show Render Debug HUD", "rtx_render_debug")
-        panel:CheckBox("2D Skybox", "rtx_sky2d_enable")
+        panel:Help("Map Fixes")
+        panel:ControlHelp("Fixes broken geometry rendering for current map, can lower FPS.")
+        panel:Button("Enable Map Fixes", "rtx_mf_enable_current_map")
+        panel:Button("Disable Map Fixes", "rtx_mf_disable_current_map")
     end )
 end )
 
@@ -24,21 +25,37 @@ hook.Add( "PopulateToolMenu", "RTXOptionsClient_Culling", function()
     spawnmenu.AddToolMenuOption( "Utilities", "RTX Remix", "RTX_Client_Culling", "#Culling", "", "", function( panel )
         panel:ClearControls()
         
-        panel:AddControl("Header", {Description = "Rendering Options:"})
-        panel:CheckBox("Use SPR for Static Props", "rtx_spr_enable")
-        panel:ControlHelp("Disables engine rendering of static props and replaces it with a lua-based renderer. Massive performance boost on dense maps.")
+        local sprCheckbox = panel:CheckBox("Use SPR for Static Props", "rtx_spr_enable")
+        panel:ControlHelp("Disables engine rendering of static props and replaces it with a lua-based renderer. Potentially large performance boost on dense maps.")
         panel:ControlHelp("")
         panel:ControlHelp("This breaks remix mesh replacements for engine rendered static props.")
 
-        panel:CheckBox("Use Mesh Combining", "rtx_spr_mesh_combining")
-        panel:ControlHelp("Combines props into single meshes per material to reduce draw calls. This can improve performance on dense maps.")
-        panel:ControlHelp("Requires a map reload to take effect.")
-        
-        panel:CheckBox("Use PVS Culling", "rtx_spr_use_pvs")
+        local pvsDebugCheckbox = panel:CheckBox("Show SPR PVS Debug HUD", "rtx_render_debug")
+
+        local pvsCheckbox = panel:CheckBox("Use PVS Culling", "rtx_spr_use_pvs")
         panel:ControlHelp("Enables Potentially Visible Set culling for static prop renderer. Improves performance but may cause some props to cull incorrectly.")
-        panel:NumSlider("PVS Safety Distance", "rtx_spr_pvs_safety_distance", 0, 8192, 0)
+        
+        local pvsSlider = panel:NumSlider("PVS Safety Distance", "rtx_spr_pvs_safety_distance", 0, 8192, 0)
         panel:ControlHelp("Distance within which PVS culling is disabled (prevents close-range culling bugs).")
         panel:ControlHelp("Saves value per map")
+        
+        -- Update PVS controls based on SPR enabled state
+        local function UpdatePVSControls()
+            local sprEnabled = GetConVar("rtx_spr_enable"):GetBool()
+            if pvsCheckbox then pvsCheckbox:SetEnabled(sprEnabled) end
+            if pvsSlider then pvsSlider:SetEnabled(sprEnabled) end
+            if pvsDebugCheckbox then pvsDebugCheckbox:SetEnabled(sprEnabled) end
+        end
+        
+        -- Set initial state
+        UpdatePVSControls()
+        
+        -- Update when SPR checkbox changes
+        if sprCheckbox then
+            sprCheckbox.OnChange = function(self, value)
+                UpdatePVSControls()
+            end
+        end
     end )
 end )
 
