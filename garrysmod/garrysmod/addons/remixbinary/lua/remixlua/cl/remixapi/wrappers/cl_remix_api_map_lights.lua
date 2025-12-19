@@ -28,6 +28,9 @@ local creation_batch_size = CreateClientConVar("rtx_api_map_lights_batch_size", 
 local creation_batch_delay = CreateClientConVar("rtx_api_map_lights_batch_delay", "0.0", true, false, "Delay between batches in seconds")
 local pos_jitter = CreateClientConVar("rtx_api_map_lights_position_jitter", "1", true, false, "Add a small random offset to light positions to prevent conflicts")
 local pos_jitter_amount = CreateClientConVar("rtx_api_map_lights_position_jitter_amount", "0.1", true, false, "Amount of random position offset")
+
+-- Trace mask constants (use GMod globals if available, otherwise define them)
+local TRACE_MASK_SOLID = MASK_SOLID or 0x200400B -- CONTENTS_SOLID | CONTENTS_MOVEABLE | CONTENTS_WINDOW | CONTENTS_MONSTER | CONTENTS_GRATE
 local rect_rotation_x = CreateClientConVar("rtx_api_map_lights_rect_rotation_x", "0", true, false, "X rotation offset for rectangle and disk lights")
 local rect_rotation_y = CreateClientConVar("rtx_api_map_lights_rect_rotation_y", "0", true, false, "Y rotation offset for rectangle and disk lights")
 local rect_rotation_z = CreateClientConVar("rtx_api_map_lights_rect_rotation_z", "0", true, false, "Z rotation offset for rectangle and disk lights")
@@ -734,33 +737,253 @@ local function validateAndClampPosition(pos, classname)
 end
 
 -- Check if a position is inside solid geometry and try to move it to a valid position
-local function validatePositionAgainstGeometry(pos, classname)
-    if not NikNaks or not NikNaks.CurrentMap then return pos end
+-- If lightDir is provided (for spotlights), prefer moving in that direction
+local function validatePositionAgainstGeometry(pos, classname, lightDir)
+    local isInSolid = false
+    local checkMethod = "none"
     
-    local bsp = NikNaks.CurrentMap
-    
-    -- Check if NikNaks supports point contents checking
-    if not bsp.PointContents then
-        DebugPrint("NikNaks doesn't support PointContents - skipping geometry check")
-        return pos
+    -- Method 1: Check BSP geometry using NikNaks
+    if NikNaks and NikNaks.CurrentMap and NikNaks.CurrentMap.PointContents then
+        local contents = NikNaks.CurrentMap:PointContents(pos)
+        local CONTENTS_SOLID = 1
+        if contents and bit.band(contents, CONTENTS_SOLID) ~= 0 then
+            isInSolid = true
+            checkMethod = "BSP"
+        end
     end
     
-    -- Check if the position is inside solid geometry
-    local contents = bsp:PointContents(pos)
+    -- Method 2: Check for collision with world + static props using hull trace
+    -- TraceHull is better at detecting if we're inside geometry
+    if not isInSolid then
+        local hullSize = 4 -- Small hull to detect tight spaces
+        local trace = util.TraceHull({
+            start = pos,
+            endpos = pos, -- Zero-length trace to check current position
+            mins = Vector(-hullSize, -hullSize, -hullSize),
+            maxs = Vector(hullSize, hullSize, hullSize),
+            mask = TRACE_MASK_SOLID, -- Check everything solid (world + props)
+            -- No filter - we want to detect ALL solid geometry including props
+        })
+        
+        if debug_mode:GetBool() then
+            local hitEnt = "nil"
+            if trace.Entity and IsValid(trace.Entity) then
+                hitEnt = trace.Entity:GetClass()
+            elseif trace.Entity then
+                hitEnt = "world"
+            end
+            DebugPrint(string.format("Hull trace at (%.1f,%.1f,%.1f): StartSolid=%s AllSolid=%s Hit=%s HitEnt=%s", 
+                pos.x, pos.y, pos.z, tostring(trace.StartSolid), tostring(trace.AllSolid), tostring(trace.Hit), hitEnt))
+        end
+        
+        if trace.StartSolid or trace.AllSolid then
+            isInSolid = true
+            checkMethod = "trace_hull"
+        end
+    end
     
-    -- CONTENTS_SOLID = 1 in Source engine
-    local CONTENTS_SOLID = 1
-    local isInSolid = (contents and bit.band(contents, CONTENTS_SOLID) ~= 0)
+    -- Method 3: Check if light is inside a prop_static bounding box
+    -- This catches non-solid props (like lamp fixtures) that don't have collision
+    if not isInSolid and NikNaks and NikNaks.CurrentMap then
+        local bsp = NikNaks.CurrentMap
+        
+        -- Get static props from BSP using NikNaks API
+        if bsp.GetStaticProps then
+            local props = bsp:GetStaticProps()
+            local propCount = #props
+            local nearbyProps = 0
+            
+            for _, prop in pairs(props) do
+                -- StaticProp has Origin (capital O) and PropType fields
+                local propOrigin = prop.Origin
+                local propModel = prop.PropType
+                
+                if propOrigin and propModel then
+                    -- Check if prop is nearby (within 100 units) before doing expensive checks
+                    local dist = pos:Distance(propOrigin)
+                    if dist < 100 then
+                        nearbyProps = nearbyProps + 1
+                        
+                        -- Get model bounds using NikNaks StaticProp:GetModelBounds() method
+                        -- This automatically includes scale
+                        local mins, maxs = prop:GetModelBounds()
+                        
+                        -- Fallback if GetModelBounds fails
+                        if not mins or not maxs then
+                            mins = Vector(-32, -32, -32)
+                            maxs = Vector(32, 32, 32)
+                        end
+                        
+                        -- Transform bounds to world space
+                        local worldMins = propOrigin + mins
+                        local worldMaxs = propOrigin + maxs
+                        
+                        if debug_mode:GetBool() then
+                            DebugPrint(string.format("Checking prop at distance %.1f: %s", dist, propModel))
+                            DebugPrint(string.format("  Light: (%.1f,%.1f,%.1f), Prop: (%.1f,%.1f,%.1f)", 
+                                pos.x, pos.y, pos.z, propOrigin.x, propOrigin.y, propOrigin.z))
+                            DebugPrint(string.format("  BBox: mins=(%.1f,%.1f,%.1f) maxs=(%.1f,%.1f,%.1f)",
+                                worldMins.x, worldMins.y, worldMins.z, worldMaxs.x, worldMaxs.y, worldMaxs.z))
+                        end
+                        
+                        -- Check if light is inside bounding box
+                        if pos.x >= worldMins.x and pos.x <= worldMaxs.x and
+                           pos.y >= worldMins.y and pos.y <= worldMaxs.y and
+                           pos.z >= worldMins.z and pos.z <= worldMaxs.z then
+                            isInSolid = true
+                            checkMethod = "inside_prop_bbox"
+                            if debug_mode:GetBool() then
+                                DebugPrint(string.format(">>> Light IS inside this prop!"))
+                            end
+                            break
+                        end
+                    end
+                end
+            end
+            
+            if debug_mode:GetBool() then
+                DebugPrint(string.format("Prop check: found %d total props, %d nearby", propCount, nearbyProps))
+            end
+        else
+            if debug_mode:GetBool() then
+                DebugPrint("Prop check: NikNaks doesn't support GetStaticProps()")
+            end
+        end
+    end
+    
+    -- Method 4: Check if there's geometry very close in all directions (enclosed space)
+    if not isInSolid then
+        local checkDist = 8
+        local hitCount = 0
+        local directions = {
+            Vector(1, 0, 0), Vector(-1, 0, 0),
+            Vector(0, 1, 0), Vector(0, -1, 0),
+            Vector(0, 0, 1), Vector(0, 0, -1),
+        }
+        
+        for _, dir in ipairs(directions) do
+            local trace = util.TraceLine({
+                start = pos,
+                endpos = pos + dir * checkDist,
+                mask = TRACE_MASK_SOLID, -- Check all solid geometry
+            })
+            
+            if trace.Hit and trace.Fraction < 1.0 then
+                hitCount = hitCount + 1
+            end
+        end
+        
+        -- If we hit geometry in most/all directions, we're likely enclosed
+        if hitCount >= 5 then
+            isInSolid = true
+            checkMethod = "enclosed"
+            if debug_mode:GetBool() then
+                DebugPrint(string.format("Light at (%.1f,%.1f,%.1f) detected as enclosed (%d/6 directions blocked)", 
+                    pos.x, pos.y, pos.z, hitCount))
+            end
+        end
+    end
     
     if not isInSolid then
         -- Position is valid, no adjustment needed
         return pos
     end
     
-    print(string.format("[Light2RTX] WARNING: %s at (%.1f, %.1f, %.1f) is inside solid geometry!", 
-        classname or "light", pos.x, pos.y, pos.z))
+    print(string.format("[Light2RTX] WARNING: %s at (%.1f, %.1f, %.1f) is inside solid geometry! (detected via %s)", 
+        classname or "light", pos.x, pos.y, pos.z, checkMethod))
     
     -- Try to find a valid position by tracing in multiple directions
+    -- Use shorter distances for spotlights (keep them close to fixture)
+    local testDistances = lightDir and { 8, 16, 32, 64, 96 } or { 32, 64, 128, 256 }
+    
+    -- If we have a light direction (spotlight), try ALL distances in that direction first
+    if lightDir and lightDir:Length() > 0 then
+        local dir = lightDir:GetNormalized()
+        for _, dist in ipairs(testDistances) do
+            local testPos = pos + (dir * dist)
+            
+            -- Check both BSP and props at test position using same logic as detection
+            local isValid = true
+            
+            -- Check BSP if available
+            if NikNaks and NikNaks.CurrentMap and NikNaks.CurrentMap.PointContents then
+                local testContents = NikNaks.CurrentMap:PointContents(testPos)
+                local CONTENTS_SOLID = 1
+                if testContents and bit.band(testContents, CONTENTS_SOLID) ~= 0 then
+                    isValid = false
+                end
+            end
+            
+            -- Check via hull trace
+            if isValid then
+                local hullSize = 4
+                local trace = util.TraceHull({
+                    start = testPos,
+                    endpos = testPos,
+                    mins = Vector(-hullSize, -hullSize, -hullSize),
+                    maxs = Vector(hullSize, hullSize, hullSize),
+                    mask = TRACE_MASK_SOLID,
+                })
+                if trace.StartSolid or trace.AllSolid then
+                    isValid = false
+                end
+            end
+            
+            -- Check if still inside a prop bounding box
+            if isValid and NikNaks and NikNaks.CurrentMap then
+                local bsp = NikNaks.CurrentMap
+                if bsp.GetStaticProps then
+                    local props = bsp:GetStaticProps()
+                    for _, prop in pairs(props) do
+                        local propOrigin = prop.Origin
+                        local propModel = prop.PropType
+                        if propOrigin and propModel then
+                            local propDist = testPos:Distance(propOrigin)
+                            if propDist < 150 then
+                                local mins, maxs = prop:GetModelBounds()
+                                if not mins or not maxs then
+                                    mins = Vector(-32, -32, -32)
+                                    maxs = Vector(32, 32, 32)
+                                end
+                                local worldMins = propOrigin + mins
+                                local worldMaxs = propOrigin + maxs
+                                
+                                if testPos.x >= worldMins.x and testPos.x <= worldMaxs.x and
+                                   testPos.y >= worldMins.y and testPos.y <= worldMaxs.y and
+                                   testPos.z >= worldMins.z and testPos.z <= worldMaxs.z then
+                                    isValid = false
+                                    break
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+            
+            -- CRITICAL: Check if path from stuck position to candidate is clear
+            -- This prevents pushing lights through walls to the other side
+            if isValid then
+                local pathTrace = util.TraceLine({
+                    start = pos,
+                    endpos = testPos,
+                    mask = TRACE_MASK_SOLID,
+                })
+                -- If we hit something before reaching the destination, path is blocked
+                if pathTrace.Hit and pathTrace.Fraction < 0.99 then
+                    isValid = false
+                end
+            end
+            
+            if isValid then
+                -- Found valid position in light direction!
+                print(string.format("[Light2RTX] Moved %s to valid position (%.1f, %.1f, %.1f) - %d units in light direction", 
+                    classname or "light", testPos.x, testPos.y, testPos.z, dist))
+                return testPos
+            end
+        end
+    end
+    
+    -- Fallback: try standard directions if light direction didn't work
     local testDirections = {
         Vector(0, 0, 1),    -- Up
         Vector(0, 0, -1),   -- Down
@@ -774,15 +997,109 @@ local function validatePositionAgainstGeometry(pos, classname)
         Vector(-1, -1, 0):GetNormalized(),
     }
     
-    local testDistances = { 32, 64, 128, 256 }
-    
     -- Try each direction at various distances
     for _, dist in ipairs(testDistances) do
         for _, dir in ipairs(testDirections) do
             local testPos = pos + (dir * dist)
-            local testContents = bsp:PointContents(testPos)
             
-            if testContents and bit.band(testContents, CONTENTS_SOLID) == 0 then
+            -- Check both BSP and props at test position using same logic as detection
+            local isValid = true
+            
+            -- Check BSP if available
+            if NikNaks and NikNaks.CurrentMap and NikNaks.CurrentMap.PointContents then
+                local testContents = NikNaks.CurrentMap:PointContents(testPos)
+                local CONTENTS_SOLID = 1
+                if testContents and bit.band(testContents, CONTENTS_SOLID) ~= 0 then
+                    isValid = false
+                end
+            end
+            
+            -- Check via hull trace
+            if isValid then
+                local hullSize = 4
+                local trace = util.TraceHull({
+                    start = testPos,
+                    endpos = testPos,
+                    mins = Vector(-hullSize, -hullSize, -hullSize),
+                    maxs = Vector(hullSize, hullSize, hullSize),
+                    mask = TRACE_MASK_SOLID, -- Check all solid geometry
+                })
+                if trace.StartSolid or trace.AllSolid then
+                    isValid = false
+                end
+            end
+            
+            -- Check if still inside a prop bounding box
+            if isValid and NikNaks and NikNaks.CurrentMap then
+                local bsp = NikNaks.CurrentMap
+                if bsp.GetStaticProps then
+                    local props = bsp:GetStaticProps()
+                    for _, prop in pairs(props) do
+                        local propOrigin = prop.Origin
+                        local propModel = prop.PropType
+                        if propOrigin and propModel then
+                            local dist = testPos:Distance(propOrigin)
+                            if dist < 100 then
+                                local mins, maxs = prop:GetModelBounds()
+                                if not mins or not maxs then
+                                    mins = Vector(-32, -32, -32)
+                                    maxs = Vector(32, 32, 32)
+                                end
+                                local worldMins = propOrigin + mins
+                                local worldMaxs = propOrigin + maxs
+                                
+                                -- Check if test position is inside this prop's bbox
+                                if testPos.x >= worldMins.x and testPos.x <= worldMaxs.x and
+                                   testPos.y >= worldMins.y and testPos.y <= worldMaxs.y and
+                                   testPos.z >= worldMins.z and testPos.z <= worldMaxs.z then
+                                    isValid = false
+                                    break
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+            
+            -- CRITICAL: Check if path from stuck position to candidate is clear
+            -- This prevents pushing lights through walls to the other side
+            if isValid then
+                local pathTrace = util.TraceLine({
+                    start = pos,
+                    endpos = testPos,
+                    mask = TRACE_MASK_SOLID,
+                })
+                -- If we hit something before reaching the destination, path is blocked
+                if pathTrace.Hit and pathTrace.Fraction < 0.99 then
+                    isValid = false
+                end
+            end
+            
+            -- Check if enclosed (surrounded by geometry)
+            if isValid then
+                local checkDist = 8
+                local hitCount = 0
+                local checkDirs = {
+                    Vector(1,0,0), Vector(-1,0,0),
+                    Vector(0,1,0), Vector(0,-1,0),
+                    Vector(0,0,1), Vector(0,0,-1),
+                }
+                for _, d in ipairs(checkDirs) do
+                    local tr = util.TraceLine({
+                        start = testPos,
+                        endpos = testPos + d * checkDist,
+                        mask = TRACE_MASK_SOLID, -- Check all solid geometry
+                    })
+                    if tr.Hit and tr.Fraction < 1.0 then
+                        hitCount = hitCount + 1
+                    end
+                end
+                if hitCount >= 5 then
+                    isValid = false
+                end
+            end
+            
+            if isValid then
                 -- Found a valid position!
                 print(string.format("[Light2RTX] Moved %s to valid position (%.1f, %.1f, %.1f) - %d units %s", 
                     classname or "light", testPos.x, testPos.y, testPos.z, dist, 
@@ -840,9 +1157,6 @@ local function findLightsInBSP()
                 -- Validate and clamp position to map bounds
                 pos = validateAndClampPosition(pos, ent.classname)
                 
-                -- Check if position is inside solid geometry and try to fix it
-                pos = validatePositionAgainstGeometry(pos, ent.classname)
-                
                 local color, brightness, size, lightType, lightProps = getLightProperties(ent)
                 
                 -- Derive direction for spotlights from target or angles when available
@@ -877,9 +1191,17 @@ local function findLightsInBSP()
                 end
                 end
                 
+                -- Check if position is inside solid geometry and try to fix it
+                -- Pass light direction for spotlights so they move in the right direction
+                local lightDir = (ent.classname == "light_spot" or ent.classname == "env_projectedtexture") and lightProps.direction or nil
+                pos = validatePositionAgainstGeometry(pos, ent.classname, lightDir)
+                
                 -- Check if light should start disabled (spawnflags bit 1 = "Initially dark")
                 local spawnflags = tonumber(ent.spawnflags or ent._spawnflags or 0) or 0
                 local initiallyDark = (bit.band(spawnflags, 1) == 1)
+                
+                -- Read lightstyle/appearance pattern (style field)
+                local style = ent.style or ent._style
                 
                 table.insert(lights, {
                     pos = pos,
@@ -891,7 +1213,8 @@ local function findLightsInBSP()
                     lightProps = lightProps,
                     angles = lightProps.angles, -- Store angles if available
                     targetname = ent.targetname or ent._targetname,
-                    initiallyDark = initiallyDark
+                    initiallyDark = initiallyDark,
+                    style = style
                 })
                 
                 DebugPrint(string.format("Found light: %s (RTX Type: %d) at %.2f,%.2f,%.2f - Color: %d,%d,%d - Brightness: %.1f - Size: %.1f%s", 
@@ -1005,6 +1328,11 @@ local function createRemixLight(pos, color, brightness, size, lightType, lightPr
     
     local intensity = (appliedBrightness / 255.0) * baseScale * typeBrightnessMult * brightBoost
     
+    -- Force intensity to 0 if light should start disabled
+    if initiallyDark then
+        intensity = 0.0
+    end
+    
     local base = {
         hash = tonumber(util.CRC(string.format("maplight_%s", posKey))) or entityId,
         radiance = { 
@@ -1055,10 +1383,16 @@ local function createRemixLight(pos, color, brightness, size, lightType, lightPr
         -- If size is 0 or very small, use default
         if baseRadius < 0.1 then baseRadius = 5 end
         local rmult = (kind == "spot") and (spot_radius_mult:GetFloat() or 1.0) or (point_radius_mult:GetFloat() or 1.0)
+        local smult = (kind == "spot") and (spot_size_mult:GetFloat() or 1.0) or (point_size_mult:GetFloat() or 1.0)
         local vmult = (kind == "spot") and (spot_volumetric_mult:GetFloat() or 1.0) or (point_volumetric_mult:GetFloat() or 1.0)
+        
+        -- Apply size multiplier to radius, then clamp like updateEntryRuntime does
+        local radiusWithSizeMult = baseRadius * smult
+        radiusWithSizeMult = math.Clamp(radiusWithSizeMult, min_size:GetFloat(), max_size:GetFloat())
+        
         local sphere = {
             position = { x = pos.x, y = pos.y, z = pos.z },
-            radius = baseRadius * rmult,
+            radius = radiusWithSizeMult * rmult,
             volumetricRadianceScale = vmult,
         }
         if lightProps and lightProps.shapingEnabled then
@@ -1224,12 +1558,27 @@ local function batchCreateRTXLights()
                     if entry.kind and lightsByKind[entry.kind] then
                         lightsByKind[entry.kind][entry.id] = true
                     end
-                    if entry.targetname and entry.targetname ~= "" then
-                        local lname = string.lower(entry.targetname)
+                    
+                    -- Assign targetname for pattern support
+                    local targetname = entry.targetname
+                    if (not targetname or targetname == "") and light.style then
+                        -- Create synthetic targetname for unnamed lights with patterns
+                        targetname = string.format("_rtx_light_%d", entry.id)
+                        entry.targetname = targetname
+                    end
+                    
+                    if targetname and targetname ~= "" then
+                        local lname = string.lower(targetname)
                         lightsByName[lname] = lightsByName[lname] or {}
                         lightsByName[lname][entry.id] = true
                     end
                     lightsCreated = lightsCreated + 1
+                    
+                    -- Start lightstyle pattern animation if specified
+                    if light.style and targetname and targetname ~= "" then
+                        Light2RTX.StartPattern(targetname, light.style)
+                        DebugPrint(string.format("Started pattern %s for light '%s' (id=%d)", tostring(light.style), targetname, entry.id))
+                    end
                     
                     -- Last light in batch
                     if i == #batch then
@@ -1928,6 +2277,12 @@ function Light2RTX.GetEntriesByClassname(classname)
         end
     end
     return result
+end
+
+-- Forward pattern control to the animator (will be available when animator loads)
+function Light2RTX.StartPattern(name, style)
+    -- Defer to hook - the animator will handle this
+    hook.Run("RTXMapLight_StartPattern", name, style)
 end
 
 print("[Light2RTX] Loaded! Use 'rtx_api_map_lights_process' to convert map lights to RTX lights")
