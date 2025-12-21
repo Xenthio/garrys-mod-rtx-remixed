@@ -26,6 +26,7 @@ local OriginalDynamicLight = DynamicLight
 -- Create or update RTX light from dynamic light properties
 local function UpdateRTXFromDynamicLight(lightId, dlight)
     if not cv_enabled:GetBool() then return end
+    if GetConVar("rtx_lightupdater"):GetBool() then return end
     if not istable(RemixLight) then return end
     if not dlight then return end
     

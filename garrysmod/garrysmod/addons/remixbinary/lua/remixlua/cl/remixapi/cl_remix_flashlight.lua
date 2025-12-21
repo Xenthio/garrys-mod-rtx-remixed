@@ -290,8 +290,8 @@ local function ToggleFlashlight()
     LocalPlayer():EmitSound("items/flashlight1.wav", 50, 100, 1, CHAN_ITEM)
 end
 
--- RenderScene hook for low-latency updates (runs every frame during rendering)
-hook.Add("Think", "RTXFlashlight_Update", function(origin, angles, fov)
+-- RenderScene hook for low-latency updates
+hook.Add("PreRender", "RTXFlashlight_Update", function(origin, angles, fov)
     -- Update cached settings periodically
     UpdateCachedSettings()
     
@@ -478,6 +478,21 @@ hook.Add("PopulateToolMenu", "RTXFlashlight_Menu", function()
         panel:NumSlider("Forward Offset", "rtx_flashlight_offset_forward", -100, 100, 0)
         panel:NumSlider("Right Offset", "rtx_flashlight_offset_right", -100, 100, 0)
         panel:NumSlider("Up Offset", "rtx_flashlight_offset_up", -100, 100, 0)
+
+        local btnReset = panel:Button("Reset", "")
+        btnReset.DoClick = function()
+            RunConsoleCommand("rtx_flashlight_brightness", "1000")
+            RunConsoleCommand("rtx_flashlight_radius", "20")
+            RunConsoleCommand("rtx_flashlight_cone_angle", "25")
+            RunConsoleCommand("rtx_flashlight_cone_softness", "0.45")
+            RunConsoleCommand("rtx_flashlight_color_r", "255")
+            RunConsoleCommand("rtx_flashlight_color_g", "255")
+            RunConsoleCommand("rtx_flashlight_color_b", "255")
+            RunConsoleCommand("rtx_flashlight_offset_forward", "-5")
+            RunConsoleCommand("rtx_flashlight_offset_right", "0")
+            RunConsoleCommand("rtx_flashlight_offset_up", "0")
+            RunConsoleCommand("rtx_flashlight_volumetric", "0.0")
+        end
     end)
 end)
 

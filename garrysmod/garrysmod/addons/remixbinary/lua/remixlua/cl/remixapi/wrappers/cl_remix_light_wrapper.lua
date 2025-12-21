@@ -35,6 +35,7 @@ end
 
 -- Extract light properties from entity
 local function GetEntityLightProps(ent)
+    if GetConVar("rtx_lightupdater"):GetBool() then return nil end -- Disabled when lightupdaters are enabled
     if not IsValid(ent) then return nil end
     
     local classname = ent:GetClass()

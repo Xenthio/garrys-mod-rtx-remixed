@@ -14,16 +14,23 @@ hook.Add( "PopulateToolMenu", "RTXOptionsClient_BaseOptions", function()
         panel:CheckBox( "Pseudoweapon Enabled", "rtx_pseudoweapon" )
         panel:ControlHelp( "Similar to above, but for the weapon you're holding." )
 
+        panel:CheckBox( "Fix Skybox Leaking", "rtx_sbr_enable" )
+        panel:ControlHelp( "Hides geometry behind the skybox to prevent it from leaking through, doesn't allow light_enviornment entities to pass through though." )
+        panel:ControlHelp( "Also breaks HDRIs.")
+
+        panel:CheckBox( "Disable Remix API Lights", "rtx_lightupdater" )
+        panel:ControlHelp( "Enables lightupdaters, which will make Remix use the detected d3d9 lights from the game instead of API lights." )
+
         panel:Help("Map Fixes")
-        panel:ControlHelp("Fixes broken geometry rendering for current map, can lower FPS.")
+        panel:ControlHelp("Fixes broken geometry rendering for the current map, can lower FPS.")
         panel:Button("Enable Map Fixes", "rtx_mf_enable_current_map")
         panel:Button("Disable Map Fixes", "rtx_mf_disable_current_map")
     end )
 end )
 
-hook.Add( "PopulateToolMenu", "RTXOptionsClient_Culling", function()
-    spawnmenu.AddToolMenuOption( "Utilities", "RTX Remix", "RTX_Client_Culling", "#Culling", "", "", function( panel )
-        panel:ClearControls()
+hook.Add( "PopulateToolMenu", "RTXOptionsClient_Performance", function()
+    spawnmenu.AddToolMenuOption( "Utilities", "RTX Remix", "RTX_Client_Performance", "#Performance", "", "", function( panel )
+        panel:ClearControls()   
         
         local sprCheckbox = panel:CheckBox("Use SPR for Static Props", "rtx_spr_enable")
         panel:ControlHelp("Disables engine rendering of static props and replaces it with a lua-based renderer. Potentially large performance boost on dense maps.")
@@ -102,3 +109,112 @@ cvars.AddChangeCallback("r_3dsky", function(_, _, newValue)
         Show3DSkyWarning()
     end
 end)
+
+-- Function to apply lightupdater state to Remix variables
+-- @param processImmediately: if true, manually process/clear lights (for user toggle). If false, just set autospawn (for map load)
+local function ApplyLightupdaterState(processImmediately)
+    if not RemixConfig or not RemixConfig.SetConfigVariable then
+        -- Remix not ready yet
+        return
+    end
+    
+    local enabled = GetConVar("rtx_lightupdater"):GetBool()
+    -- When lightupdater is enabled, we want Remix to NOT ignore game lights
+    -- When disabled, we want Remix to ignore them (since we'll use API lights instead)
+    local ignoreValue = enabled and "False" or "True"
+    
+    RemixConfig.SetConfigVariable("rtx.ignoreGamePointLights", ignoreValue)
+    RemixConfig.SetConfigVariable("rtx.ignoreGameSpotLights", ignoreValue)
+    RemixConfig.SetConfigVariable("rtx.ignoreGameDirectionalLights", ignoreValue)
+    
+    if enabled then
+        -- Lightupdater ON: disable API lights autospawn
+        RunConsoleCommand("rtx_api_map_lights_autospawn", "0")
+        if processImmediately then
+            -- Only clear existing lights when user manually toggles
+            RunConsoleCommand("rtx_api_map_lights_clear")
+            print("[RTX Settings] Lightupdater enabled - Using D3D9 game lights, cleared API lights")
+        end
+    else
+        -- Lightupdater OFF: enable API lights autospawn
+        RunConsoleCommand("rtx_api_map_lights_autospawn", "1")
+        if processImmediately then
+            -- Only manually process when user toggles (autospawn will handle it on map load)
+            RunConsoleCommand("rtx_api_map_lights_process")
+            print("[RTX Settings] Lightupdater disabled - Using API lights, processing map lights")
+        end
+    end
+end
+
+cvars.AddChangeCallback("rtx_lightupdater", function(_, _, newValue)
+    -- User manually changed the setting, process immediately
+    ApplyLightupdaterState(true)
+end)
+
+-- Apply lightupdater state on map load to ensure Remix variables are set correctly
+-- Don't process immediately - let the autospawn system handle it
+hook.Add("InitPostEntity", "RTX_ApplyLightupdaterState", function()
+    timer.Simple(0.5, function() -- Small delay to ensure RemixConfig is ready
+        ApplyLightupdaterState(false)
+    end)
+end)
+
+-- Auto-Categorization Settings
+hook.Add( "PopulateToolMenu", "RTXOptionsClient_AutoCategorization", function()
+    spawnmenu.AddToolMenuOption( "Utilities", "RTX Remix", "RTX_Client_AutoCategorization", "#Auto-Categorization", "", "", function( panel )
+        panel:ClearControls()
+
+        -- Master toggle
+        local masterCheckbox = panel:CheckBox("Enable Auto-Categorization", "remix_auto_categorize")
+        panel:ControlHelp("Automatically categorizes textures for RTX Remix.")
+        
+        -- Delay slider
+        local delaySlider = panel:NumSlider("Delay (seconds)", "remix_auto_categorize_delay", 0, 10, 1)
+        panel:ControlHelp("How long to wait after map load before scanning (allows BSP data to load).")
+
+        -- World geometry toggle
+        local worldCheckbox = panel:CheckBox("World Geometry", "remix_auto_categorize_world")
+        panel:ControlHelp("Categorizes walls, floors, and ceilings from BSP as Decals for proper blending.")
+        
+        -- Particles toggle
+        local particlesCheckbox = panel:CheckBox("Particles", "remix_auto_categorize_particles")
+        panel:ControlHelp("Categorizes particle effects (smoke, fire, sparks, etc) as Particles.")
+        
+        -- Decals toggle
+        local decalsCheckbox = panel:CheckBox("Overlay Decals", "remix_auto_categorize_decals")
+        panel:ControlHelp("Categorizes materials with $decal parameter (posters, graffiti, bullet holes, etc) as Decals.")
+        
+        -- Emissive toggle
+        local emissiveCheckbox = panel:CheckBox("Legacy Emissive", "remix_auto_categorize_emissive")
+        panel:ControlHelp("Categorizes materials with $selfillum parameter as Legacy Emissive.")
+        panel:ControlHelp("This can incorrectly categorized some materials due to them using the $selfillum parameter incorrectly.")
+        
+        panel:Help("Manual Controls")
+        -- Manual trigger button
+        local scanButton = panel:Button("Scan Now")
+        scanButton.DoClick = function()
+            RunConsoleCommand("remix_smart_mark_world", "force")
+        end
+        panel:ControlHelp("Manually parse BSP and categorize world textures, decals, and emissive materials.")
+        
+        -- Update sub-controls based on master toggle
+        local function UpdateControls()
+            local enabled = GetConVar("remix_auto_categorize"):GetBool()
+            if delaySlider then delaySlider:SetEnabled(enabled) end
+            if worldCheckbox then worldCheckbox:SetEnabled(enabled) end
+            if particlesCheckbox then particlesCheckbox:SetEnabled(enabled) end
+            if decalsCheckbox then decalsCheckbox:SetEnabled(enabled) end
+            if emissiveCheckbox then emissiveCheckbox:SetEnabled(enabled) end
+        end
+        
+        -- Set initial state
+        UpdateControls()
+        
+        -- Update when master checkbox changes
+        if masterCheckbox then
+            masterCheckbox.OnChange = function(self, value)
+                UpdateControls()
+            end
+        end
+    end )
+end )

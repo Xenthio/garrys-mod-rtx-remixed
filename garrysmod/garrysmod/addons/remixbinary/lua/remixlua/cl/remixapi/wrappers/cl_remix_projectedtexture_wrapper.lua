@@ -30,6 +30,7 @@ local OriginalProjectedTexture = ProjectedTexture
 -- Create or update RTX light from projected texture properties
 local function UpdateRTXFromProjectedTexture(projTex, textureId)
     if not cv_enabled:GetBool() then return end
+    if GetConVar("rtx_lightupdater"):GetBool() then return end
     if not istable(RemixLight) then return end
     if not projTex then return end
     
