@@ -526,7 +526,4 @@ end
 -- Add ConVar change callbacks for real-time updates
 cvars.AddChangeCallback("rtx_flashlight_color_r", SendColorUpdate, "rtx_flashlight_color_update")
 cvars.AddChangeCallback("rtx_flashlight_color_g", SendColorUpdate, "rtx_flashlight_color_update")
-cvars.AddChangeCallback("rtx_flashlight_color_b", SendColorUpdate, "rtx_flashlight_color_update")
-
-print("[RTX Flashlight] Loaded! Press 'F' (your flashlight key) to toggle the RTX flashlight")
-print("[RTX Flashlight] Or bind manually: bind f rtx_flashlight_toggle")
+cvars.AddChangeCallback("rtx_flashlight_color_b", SendColorUpdate, "rtx_flashlight_color_update")   

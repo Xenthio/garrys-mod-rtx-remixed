@@ -33,7 +33,7 @@ local function CreatePseudoplayer()
         
         -- Trigger auto-categorization after a short delay
         timer.Simple(3, function()
-            RunConsoleCommand("remix_categorize_pseudoplayer")
+            RunConsoleCommand("rtx_categorize_pseudoplayer")
         end)
     else
         DebugPrint("[gmRTX] - Failed to create pseudoplayer")
@@ -61,7 +61,7 @@ local function CreatePseudoweapon()
         
         -- Trigger auto-categorization after a short delay
         timer.Simple(3, function()
-            RunConsoleCommand("remix_categorize_pseudoweapon")
+            RunConsoleCommand("rtx_categorize_pseudoweapon")
         end)
     else
         DebugPrint("[gmRTX] - Failed to create pseudoweapon")

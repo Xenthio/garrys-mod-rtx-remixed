@@ -327,10 +327,3 @@ concommand.Add("rtx_categorize_pseudoweapon", function()
     processedMaterials = {} -- Clear cache to reprocess
     CategorizePseudoweaponMaterials(true) -- Force categorization (will clear old hashes automatically)
 end, nil, "Manually categorize pseudoweapon materials as Player Model textures")
-
-MsgC(Color(150, 200, 255), string.format("[%s] Loaded.\n", MODULE_NAME))
-MsgC(Color(200, 200, 200), string.format("[%s] Player auto-categorization: %s\n", 
-    MODULE_NAME, GetConVar("rtx_auto_categorize_pseudoplayer"):GetBool() and "ENABLED" or "DISABLED"))
-MsgC(Color(200, 200, 200), string.format("[%s] Weapon auto-categorization: %s\n", 
-    MODULE_NAME, GetConVar("rtx_auto_categorize_pseudoweapon"):GetBool() and "ENABLED" or "DISABLED"))
-MsgC(Color(200, 200, 200), string.format("[%s] Use 'remix_categorize_pseudoplayer' and 'remix_categorize_pseudoweapon' to manually categorize\n", MODULE_NAME))

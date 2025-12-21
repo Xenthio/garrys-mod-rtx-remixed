@@ -1,6 +1,6 @@
 local brightness_multiplier = CreateClientConVar("rtx_api_map_lights_brightness", "1.0", true, false, "Brightness multiplier for converted lights")
 local min_size = CreateClientConVar("rtx_api_map_lights_min_size", "0", true, false, "Minimum size for RTX lights")
-local max_size = CreateClientConVar("rtx_api_map_lights_max_size", "9", true, false, "Maximum size for RTX lights")
+local max_size = CreateClientConVar("rtx_api_map_lights_max_size", "4", true, false, "Maximum size for RTX lights")
 local visual_mode = CreateClientConVar("rtx_api_map_lights_visual", "0", true, false, "Show visible models for lights")
 local debug_mode = CreateClientConVar("rtx_api_map_lights_debug", "0", true, false, "Enable debug messages")
 local env_max_brightness = CreateClientConVar("rtx_api_map_lights_env_max_brightness", "3", true, false, "Max brightness (0-100 scale) for directional lights; 0 disables clamping")

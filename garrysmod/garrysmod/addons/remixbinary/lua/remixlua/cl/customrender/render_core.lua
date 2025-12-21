@@ -1217,48 +1217,6 @@ do
         allocTracking.frameStart = collectgarbage("count")
         print("[ALLOC] Allocation tracking counters cleared.")
     end)
-    
-    -- Add GC mode toggle (defined before debug status command)
-    local gcMode = CreateClientConVar("rtx_gc_mode", "incremental", true, false, "GC mode: incremental, step, manual, or auto")
-    
-    -- Debug status command
-    concommand.Add("rtx_debug_status", function()
-        print("=== RTX Render Core Debug Status ===")
-        print(string.format("Debug Profiling: %s", debugEnabled:GetBool() and "ENABLED" or "DISABLED"))
-        print(string.format("Allocation Tracking: %s", allocTracking.enabled and "ENABLED" or "DISABLED"))
-        print(string.format("GC Mode: %s", gcMode:GetString()))
-        print(string.format("Current Memory: %.2f MB", collectgarbage("count") / 1024))
-        print(string.format("GC Cycles Tracked: %d", gcCycleCount))
-        print("")
-        print("Commands:")
-        print("  rtx_debug_profiling 1  - Enable debug overhead")
-        print("  rtx_debug_profiling 0  - Disable debug overhead (production)")
-        print("  rtx_gc_mode <mode>     - Set GC mode (incremental/step/manual/auto)")
-    end)
-    
-    local lastGCMode = ""
-    hook.Add("Think", "RemixGCTuning", function()
-        local mode = gcMode:GetString()
-        if mode ~= lastGCMode then
-            lastGCMode = mode
-            if mode == "incremental" then
-                collectgarbage("setpause", 100)  -- Start GC at 100% memory (more aggressive)
-                collectgarbage("setstepmul", 300)  -- Run GC faster
-                print("[GC] Mode: Incremental (pause=100, stepmul=300)")
-            elseif mode == "step" then
-                collectgarbage("setpause", 100)  -- More aggressive
-                collectgarbage("setstepmul", 500)  -- Very aggressive
-                print("[GC] Mode: Step (pause=100, stepmul=500)")
-            elseif mode == "manual" then
-                collectgarbage("stop")  -- Disable automatic GC
-                print("[GC] Mode: Manual (automatic GC disabled, manual steps only)")
-            else
-                collectgarbage("setpause", 200)  -- Lua default
-                collectgarbage("setstepmul", 200)  -- Lua default
-                print("[GC] Mode: Auto (pause=200, stepmul=200)")
-            end
-        end
-    end)
 
     -- Centralized flush hooks: begin frame on PreDrawOpaque, flush on PostDraw* passes
     RemixRenderCore.Register("PreDrawOpaqueRenderables", "RemixFrame-Begin", { fn = function(bDrawingDepth, bDrawingSkybox)
