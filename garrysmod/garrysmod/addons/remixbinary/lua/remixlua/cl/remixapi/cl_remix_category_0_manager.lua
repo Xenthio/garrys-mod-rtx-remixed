@@ -18,7 +18,11 @@ RemixCategoryManager = RemixCategoryManager or {}
 
 -- ConVars for configuration
 CreateClientConVar("remix_auto_categorize", "1", true, false, "Automatically categorize world textures when a map loads (1 = enabled, 0 = disabled)")
-CreateClientConVar("remix_auto_categorize_delay", "5", true, false, "Delay in seconds before auto-categorization runs (default: 5)")
+CreateClientConVar("remix_auto_categorize_delay", "3", true, false, "Delay in seconds before auto-categorization runs (default: 3)")
+CreateClientConVar("remix_auto_categorize_world", "1", true, false, "Auto-categorize world geometry from BSP as decals (1 = enabled, 0 = disabled)")
+CreateClientConVar("remix_auto_categorize_particles", "1", true, false, "Auto-categorize particle effects (1 = enabled, 0 = disabled)")
+CreateClientConVar("remix_auto_categorize_decals", "1", true, false, "Auto-categorize overlay decals with $decal parameter (1 = enabled, 0 = disabled)")
+CreateClientConVar("remix_auto_categorize_emissive", "0", true, false, "Auto-categorize legacy emissive materials (1 = enabled, 0 = disabled)")
 CreateClientConVar("remix_require_emissive_mask", "1", true, false, "Require $selfillummask or alpha channel for emissive materials (1 = strict, 0 = allow any $selfillum)")
 
 -- Remix Instance Category Flags
@@ -452,6 +456,10 @@ function RemixCategoryManager.CategorizeAllTrackedMaterials()
         newly_categorized = 0
     }
     
+    -- Check which categories are enabled
+    local enableDecals = GetConVar("remix_auto_categorize_decals"):GetBool()
+    local enableEmissive = GetConVar("remix_auto_categorize_emissive"):GetBool()
+    
     for _, matName in ipairs(materials) do
         local lowerName = matName:lower()
         
@@ -459,13 +467,9 @@ function RemixCategoryManager.CategorizeAllTrackedMaterials()
             processedTextures[lowerName] = true
             local category = nil
             
-            -- Check for particles first
-            if RemixCategoryManager.IsMaterialParticle(matName) then
-                category = RemixCategoryManager.CATEGORY.PARTICLE
-                stats.particles = stats.particles + 1
             
             -- Check for decals (important - catches map overlay decals!)
-            elseif RemixCategoryManager.IsMaterialDecal(matName) then
+            if enableDecals and RemixCategoryManager.IsMaterialDecal(matName) then
                 category = RemixCategoryManager.CATEGORY.DECAL_STATIC
                 stats.decals = stats.decals + 1
                 
@@ -475,21 +479,41 @@ function RemixCategoryManager.CategorizeAllTrackedMaterials()
                 end
             
             -- Check for emissive
-            elseif RemixCategoryManager.IsMaterialEmissive(matName) then
+            elseif enableEmissive and RemixCategoryManager.IsMaterialEmissive(matName) then
                 category = RemixCategoryManager.PRESET.EMISSIVE
                 stats.emissive = stats.emissive + 1
             end
             
             if category then
-                if RemixCategoryManager.SetMaterialCategory(matName, category) then
-                    stats.newly_categorized = stats.newly_categorized + 1
+                -- Check if already categorized (by C++ or previous run)
+                local allHashes = RemixMaterial.GetAllTextureHashes and RemixMaterial.GetAllTextureHashes(matName)
+                if allHashes and #allHashes > 0 then
+                    local alreadyCategorized = false
+                    for _, hashStr in ipairs(allHashes) do
+                        local existing = RemixMaterial.GetHashCategory and RemixMaterial.GetHashCategory(hashStr)
+                        if existing and existing ~= 0 then
+                            alreadyCategorized = true
+                            break
+                        end
+                    end
+                    
+                    if not alreadyCategorized then
+                        if RemixCategoryManager.SetMaterialCategory(matName, category) then
+                            stats.newly_categorized = stats.newly_categorized + 1
+                        end
+                    end
+                else
+                    -- No hashes yet, categorize anyway (will retry later)
+                    if RemixCategoryManager.SetMaterialCategory(matName, category) then
+                        stats.newly_categorized = stats.newly_categorized + 1
+                    end
                 end
             end
         end
     end
     
-    MsgC(Color(100, 255, 100), string.format("[RemixCategoryManager] Tracked scan: %d total, %d particles, %d decals, %d emissive found\n",
-        stats.total, stats.particles, stats.decals, stats.emissive))
+    MsgC(Color(100, 255, 100), string.format("[RemixCategoryManager] Tracked scan: %d total, %d decals, %d emissive found (particles/water/sky handled by C++)\n",
+        stats.total, stats.decals, stats.emissive))
         
     return stats
 end
@@ -621,17 +645,24 @@ function RemixCategoryManager.SetMaterialCategory(materialName, categoryFlags, c
         
         if allHashes and #allHashes > 0 then
             for _, hashStr in ipairs(allHashes) do
-                -- Skip if we've already categorized this hash
+                -- Skip if we've already categorized this hash in this call
                 if not categorizedHashes[hashStr] then
-                    categorizedHashes[hashStr] = true
-                    
-                    -- Hash already available
-                    MsgC(Color(0, 255, 150), string.format("[RemixCategoryManager] Setting category 0x%X for material '%s' (hash %s)\n", 
-                        categoryFlags, tryName, hashStr))
-                    
-                    local success = RemixCategoryManager.SetHashCategory(hashStr, categoryFlags)
-                    if callback then callback(success, hashStr) end
-                    foundAny = true
+                    -- Also skip if already categorized by C++ or previous Lua run
+                    local existing = RemixMaterial.GetHashCategory and RemixMaterial.GetHashCategory(hashStr)
+                    if not existing or existing == 0 then
+                        categorizedHashes[hashStr] = true
+                        
+                        -- Hash already available
+                        MsgC(Color(0, 255, 150), string.format("[RemixCategoryManager] Setting category 0x%X for material '%s' (hash %s)\n", 
+                            categoryFlags, tryName, hashStr))
+                        
+                        local success = RemixCategoryManager.SetHashCategory(hashStr, categoryFlags)
+                        if callback then callback(success, hashStr) end
+                        foundAny = true
+                    else
+                        -- Already categorized, skip silently
+                        foundAny = true
+                    end
                 end
             end
         end
@@ -657,14 +688,21 @@ function RemixCategoryManager.SetMaterialCategory(materialName, categoryFlags, c
             if allHashes and #allHashes > 0 then
                 for _, hashStr in ipairs(allHashes) do
                     if not delayedHashes[hashStr] then
-                        delayedHashes[hashStr] = true
-                        
-                        MsgC(Color(0, 255, 150), string.format("[RemixCategoryManager] Setting category 0x%X for material '%s' (hash %s)\n", 
-                            categoryFlags, tryName, hashStr))
-                        
-                        local success = RemixCategoryManager.SetHashCategory(hashStr, categoryFlags)
-                        if callback then callback(success, hashStr) end
-                        foundDelayed = true
+                        -- Check if already categorized by C++ before applying
+                        local existing = RemixMaterial.GetHashCategory and RemixMaterial.GetHashCategory(hashStr)
+                        if not existing or existing == 0 then
+                            delayedHashes[hashStr] = true
+                            
+                            MsgC(Color(0, 255, 150), string.format("[RemixCategoryManager] Setting category 0x%X for material '%s' (hash %s)\n", 
+                                categoryFlags, tryName, hashStr))
+                            
+                            local success = RemixCategoryManager.SetHashCategory(hashStr, categoryFlags)
+                            if callback then callback(success, hashStr) end
+                            foundDelayed = true
+                        else
+                            -- Already categorized, skip silently
+                            foundDelayed = true
+                        end
                     end
                 end
             end
@@ -1767,9 +1805,40 @@ concommand.Add("remix_categorize_tracked", function(ply, cmd, args)
 end, nil, "Categorize all materials currently tracked by the renderer")
 
 
+-- Function to initialize C++ module flags from ConVars
+local function InitializeCppModuleFlags()
+    if not RemixMaterial then return end
+    
+    -- Set master auto-categorization flag
+    if RemixMaterial.SetAutoCategorization then
+        local masterEnabled = GetConVar("remix_auto_categorize"):GetBool()
+        RemixMaterial.SetAutoCategorization(masterEnabled)
+    end
+    
+    -- Set particle categorization flag
+    if RemixMaterial.SetParticleCategorization then
+        local particlesEnabled = GetConVar("remix_auto_categorize_particles"):GetBool()
+        RemixMaterial.SetParticleCategorization(particlesEnabled)
+    end
+    
+    -- Set decal categorization flag
+    if RemixMaterial.SetDecalCategorization then
+        local decalsEnabled = GetConVar("remix_auto_categorize_decals"):GetBool()
+        RemixMaterial.SetDecalCategorization(decalsEnabled)
+    end
+    
+    -- Set emissive categorization flag
+    if RemixMaterial.SetEmissiveCategorization then
+        local emissiveEnabled = GetConVar("remix_auto_categorize_emissive"):GetBool()
+        RemixMaterial.SetEmissiveCategorization(emissiveEnabled)
+    end
+end
+
 -- Auto-initialize on player spawn (client-side)
-hook.Add("HUDPaint", "RemixCategoryManager_AutoInit", function()
-    -- Only run once
+-- NEW APPROACH: Parse BSP once, send world texture list to C++ for real-time categorization
+-- C++ will automatically categorize textures as they render (single-pass, no delays!)
+local function AutoInitFunction()
+    -- Only run once per map load
     hook.Remove("HUDPaint", "RemixCategoryManager_AutoInit")
     
     -- Check if auto-categorization is enabled
@@ -1779,41 +1848,188 @@ hook.Add("HUDPaint", "RemixCategoryManager_AutoInit", function()
         return
     end
     
-    -- Get delay from ConVar (default 5 seconds after player spawns)
+    -- Get delay from ConVar (default 5 seconds to ensure NikNaks is ready)
     local delay = GetConVar("remix_auto_categorize_delay"):GetFloat()
     
-    MsgC(Color(200, 200, 200), string.format("[RemixCategoryManager] Will auto-categorize world textures in %.1f seconds...\n", delay))
+    MsgC(Color(200, 200, 200), string.format("[RemixCategoryManager] Will parse BSP and send world textures to C++ in %.1f seconds...\n", delay))
     
-    -- Wait for world to render and materials to be tracked
+    -- Wait for NikNaks to be ready
     timer.Simple(delay, function()
-        MsgC(Color(100, 200, 255), "[RemixCategoryManager] Auto-marking world textures...\n")
-        MsgC(Color(255, 200, 100), "[RemixCategoryManager] Note: Materials are tracked as they render. More will be categorized as you explore.\n")
-        MsgC(Color(255, 200, 100), "[RemixCategoryManager] Tip: Use 'remix_smart_mark_world' to manually trigger categorization\n")
-        -- Use smart marking by default
-        RemixCategoryManager.SmartMarkWorldTextures()
-        -- Also scan tracked materials for dynamic things (particles, weapons)
-        RemixCategoryManager.CategorizeAllTrackedMaterials()
+        -- Check master toggle first
+        if not GetConVar("remix_auto_categorize"):GetBool() then
+            MsgC(Color(255, 200, 100), "[RemixCategoryManager] Auto-categorization disabled (remix_auto_categorize = 0), skipping initialization\n")
+            return
+        end
         
-        -- Schedule a second pass after more rendering has happened
-        -- This catches displacement materials that need to be rendered first
-        timer.Simple(3, function()
-            MsgC(Color(100, 200, 255), "[RemixCategoryManager] Running second categorization pass...\n")
-            RemixCategoryManager.SmartMarkWorldTextures()
-            RemixCategoryManager.CategorizeAllTrackedMaterials()
+        MsgC(Color(100, 200, 255), "[RemixCategoryManager] Timer fired! Checking NikNaks...\n")
+        
+        if not NikNaks or not NikNaks.CurrentMap then
+            MsgC(Color(255, 100, 100), "[RemixCategoryManager] Error: NikNaks not available!\n")
+            MsgC(Color(255, 100, 100), string.format("  NikNaks = %s, NikNaks.CurrentMap = %s\n", tostring(NikNaks), tostring(NikNaks and NikNaks.CurrentMap)))
+            return
+        end
+        
+        MsgC(Color(100, 200, 255), "[RemixCategoryManager] NikNaks available, getting BSP...\n")
+        
+        local bsp = NikNaks.CurrentMap
+        if not bsp or not bsp.GetTextures then
+            MsgC(Color(255, 100, 100), "[RemixCategoryManager] Error: BSP not loaded!\n")
+            MsgC(Color(255, 100, 100), string.format("  bsp = %s, bsp.GetTextures = %s\n", tostring(bsp), tostring(bsp and bsp.GetTextures)))
+            return
+        end
+        
+        MsgC(Color(100, 200, 255), "[RemixCategoryManager] BSP available, parsing textures...\n")
+        
+        -- Get all world textures from BSP
+        local textures = {}
+        local ok, bspTextures = pcall(function() return bsp:GetTextures() end)
+        
+        if ok and bspTextures then
+            textures = bspTextures
+        else
+            MsgC(Color(255, 200, 100), "[RemixCategoryManager] GetTextures() failed, trying faces...\n")
+            local faces = bsp:GetFaces()
+            if faces then
+                local textureSet = {}
+                for _, face in pairs(faces) do
+                    if face and face.GetMaterial then
+                        local ok2, material = pcall(function() return face:GetMaterial() end)
+                        if ok2 and material and material.GetName then
+                            local matName = material:GetName()
+                            if matName and matName ~= "" then
+                                textureSet[matName] = true
+                            end
+                        end
+                    end
+                end
+                for texName, _ in pairs(textureSet) do
+                    table.insert(textures, texName)
+                end
+            end
+        end
+        
+        -- Get master toggle state (already set by InitPostEntity hook)
+        local masterEnabled = GetConVar("remix_auto_categorize"):GetBool()
+        
+        -- Send to C++ module (if master toggle and world geometry categorization are enabled)
+        if masterEnabled and GetConVar("remix_auto_categorize_world"):GetBool() and RemixMaterial and RemixMaterial.SetWorldTextureList and #textures > 0 then
+            RemixMaterial.SetWorldTextureList(textures)
+            MsgC(Color(100, 255, 100), string.format("[RemixCategoryManager] Sent %d world textures to C++ for real-time categorization\n", #textures))
             
-            -- Final pass after even more time
-            timer.Simple(5, function()
-                MsgC(Color(100, 200, 255), "[RemixCategoryManager] Running final categorization pass...\n")
-                RemixCategoryManager.SmartMarkWorldTextures()
-                RemixCategoryManager.CategorizeAllTrackedMaterials()
-                MsgC(Color(100, 255, 100), "[RemixCategoryManager] Auto-categorization complete!\n")
-            end)
-        end)
+            -- IMPORTANT: Re-check already tracked materials now that we have the world texture list
+            -- This catches materials that rendered BEFORE the timer fired
+            if RemixMaterial.RecheckWorldTextures then
+                MsgC(Color(100, 200, 255), "[RemixCategoryManager] Re-checking already tracked materials against world texture list...\n")
+                local rechecked = RemixMaterial.RecheckWorldTextures()
+                MsgC(Color(100, 255, 100), string.format("[RemixCategoryManager] Re-check complete: %d world materials categorized\n", rechecked))
+            end
+        elseif not masterEnabled then
+            MsgC(Color(255, 200, 100), "[RemixCategoryManager] Auto-categorization disabled (remix_auto_categorize = 0)\n")
+        elseif not GetConVar("remix_auto_categorize_world"):GetBool() then
+            MsgC(Color(255, 200, 100), "[RemixCategoryManager] World geometry categorization disabled (remix_auto_categorize_world = 0)\n")
+        end
         
-        -- Note: Pending categorization retry is now handled automatically by the C++ module
-        -- during rendering (no Lua timer needed)
+        -- Scan for overlay decals and emissive materials (if master toggle and individual categories are enabled)
+        local scanDecals = GetConVar("remix_auto_categorize_decals"):GetBool()
+        local scanEmissive = GetConVar("remix_auto_categorize_emissive"):GetBool()
+        
+        if masterEnabled and (scanDecals or scanEmissive) then
+            MsgC(Color(100, 200, 255), string.format("[RemixCategoryManager] Scanning tracked materials (decals: %s, emissive: %s)...\n", 
+                scanDecals and "enabled" or "disabled", 
+                scanEmissive and "enabled" or "disabled"))
+            RemixCategoryManager.CategorizeAllTrackedMaterials()
+        else
+            if not masterEnabled then
+                MsgC(Color(255, 200, 100), "[RemixCategoryManager] Auto-categorization disabled (remix_auto_categorize = 0)\n")
+            else
+                MsgC(Color(255, 200, 100), "[RemixCategoryManager] Decal and emissive scanning disabled\n")
+            end
+        end
+        
+        MsgC(Color(255, 200, 100), "[RemixCategoryManager] Auto-categorization complete!\n")
+        MsgC(Color(255, 200, 100), "[RemixCategoryManager] Note: New textures will be auto-categorized in real-time as they render!\n")
     end)
+end
+
+-- Initialize C++ flags on every map load
+hook.Add("InitPostEntity", "RemixCategoryManager_InitFlags", function()
+    InitializeCppModuleFlags()
+    MsgC(Color(100, 200, 255), "[RemixCategoryManager] C++ module flags initialized from ConVars\n")
+    
+    -- Re-register the HUDPaint hook for this map load
+    hook.Add("HUDPaint", "RemixCategoryManager_AutoInit", AutoInitFunction)
 end)
+
+-- Console command: remix_mark_decal (manually mark a material as decal by name)
+concommand.Add("remix_mark_decal", function(ply, cmd, args)
+    if #args < 1 then
+        MsgC(Color(255, 100, 100), "Usage: remix_mark_decal <material_name>\n")
+        return
+    end
+    
+    local materialName = args[1]
+    local mat = Material(materialName)
+    
+    if not mat or mat:IsError() then
+        MsgC(Color(255, 100, 100), string.format("[RemixCategoryManager] Error: Material '%s' not found\n", materialName))
+        return
+    end
+    
+    -- Get all hashes for this material
+    if not RemixMaterial or not RemixMaterial.GetHashesForMaterial then
+        MsgC(Color(255, 100, 100), "[RemixCategoryManager] RemixMaterial API not available\n")
+        return
+    end
+    
+    local hashes = RemixMaterial.GetHashesForMaterial(materialName)
+    if not hashes or #hashes == 0 then
+        MsgC(Color(255, 100, 100), string.format("[RemixCategoryManager] No hashes found for '%s'\n", materialName))
+        return
+    end
+    
+    -- Mark all hashes as decal
+    local count = 0
+    for _, hashStr in ipairs(hashes) do
+        if RemixCategoryManager.SetMaterialCategory then
+            RemixCategoryManager.SetMaterialCategory(materialName, RemixCategoryManager.CATEGORY_DECAL, hashStr)
+            count = count + 1
+        end
+    end
+    
+    MsgC(Color(100, 255, 100), string.format("[RemixCategoryManager] Marked %d hash(es) for '%s' as DECAL\n", count, materialName))
+end, nil, "Manually mark a material as decal by name")
+
+-- Console command: remix_send_world_textures (manual trigger for testing)
+concommand.Add("remix_send_world_textures", function()
+    MsgC(Color(100, 200, 255), "[RemixCategoryManager] Manually parsing BSP...\n")
+    
+    if not NikNaks or not NikNaks.CurrentMap then
+        MsgC(Color(255, 100, 100), "[RemixCategoryManager] Error: NikNaks not available!\n")
+        return
+    end
+    
+    local bsp = NikNaks.CurrentMap
+    if not bsp or not bsp.GetTextures then
+        MsgC(Color(255, 100, 100), "[RemixCategoryManager] Error: BSP not loaded!\n")
+        return
+    end
+    
+    local textures = {}
+    local ok, bspTextures = pcall(function() return bsp:GetTextures() end)
+    
+    if ok and bspTextures then
+        textures = bspTextures
+    end
+    
+    MsgC(Color(200, 200, 200), string.format("[RemixCategoryManager] Found %d textures in BSP\n", #textures))
+    
+    if RemixMaterial and RemixMaterial.SetWorldTextureList and #textures > 0 then
+        RemixMaterial.SetWorldTextureList(textures)
+        MsgC(Color(100, 255, 100), "[RemixCategoryManager] Sent to C++ module!\n")
+    else
+        MsgC(Color(255, 100, 100), "[RemixCategoryManager] Error: RemixMaterial.SetWorldTextureList not available or no textures\n")
+    end
+end, nil, "Manually parse BSP and send world textures to C++ for categorization")
 
 -- Console command: remix_retry_pending
 concommand.Add("remix_retry_pending", function()
@@ -1997,30 +2213,77 @@ concommand.Add("remix_test_disp_cat", function(ply, cmd, args)
     RemixCategoryManager.SetMaterialCategory(matName, RemixCategoryManager.CATEGORY.DECAL_STATIC)
 end, nil, "Test displacement categorization (usage: remix_test_disp_cat <material_name>)")
 
--- Console command: remix_rescan_materials
+-- Add ConVar callback to update C++ module when master toggle changes
+cvars.AddChangeCallback("remix_auto_categorize", function(convar, oldValue, newValue)
+    if RemixMaterial and RemixMaterial.SetAutoCategorization then
+        local enabled = tonumber(newValue) == 1
+        RemixMaterial.SetAutoCategorization(enabled)
+        MsgC(Color(100, 200, 255), string.format("[RemixCategoryManager] Auto-categorization %s\n", 
+            enabled and "enabled" or "disabled"))
+        
+        -- If enabling, rescan all tracked materials to catch what was missed
+        if enabled and RemixMaterial.RescanAllMaterials then
+            timer.Simple(0.1, function()
+                MsgC(Color(100, 200, 255), "[RemixCategoryManager] Rescanning all tracked materials...\n")
+                local count = RemixMaterial.RescanAllMaterials()
+                MsgC(Color(100, 255, 100), string.format("[RemixCategoryManager] Rescan complete: %d materials checked\n", count))
+            end)
+        end
+    end
+end, "RemixCategoryManager_MasterToggle")
 
-MsgC(Color(100, 255, 100), "[RemixCategoryManager] Loaded successfully!\n")
-MsgC(Color(200, 200, 200), "[RemixCategoryManager] Commands:\n")
-MsgC(Color(200, 200, 200), "  remix_mark_world_textures    - Mark all world textures with DECAL_STATIC\n")
-MsgC(Color(200, 200, 200), "  remix_smart_mark_world       - Intelligently categorize world textures (BSP + Props)\n")
-MsgC(Color(200, 200, 200), "  remix_categorize_tracked     - Categorize all currently rendered materials (Particles, Effects)\n")
-MsgC(Color(200, 200, 200), "  remix_rescan_materials       - Rescan all cached materials for emissive (C++ VMT parsing)\n")
-MsgC(Color(200, 200, 200), "  remix_retry_pending          - Retry categorizing pending textures (hash=0)\n")
-MsgC(Color(200, 200, 200), "  remix_dump_all_hashes        - Dump all tracked textures with hashes (use <hash> to search)\n")
-MsgC(Color(200, 200, 200), "  remix_check_shared_hash      - Check why multiple materials share the same hash\n")
-MsgC(Color(200, 200, 200), "  remix_clear_categories       - Clear all category mappings\n")
-MsgC(Color(200, 200, 200), "  remix_find_texture_hash      - Search for texture by name\n")
-MsgC(Color(200, 200, 200), "  remix_set_material_category  - Set category for a material\n")
-MsgC(Color(200, 200, 200), "  remix_check_emissive         - Check if material has $selfillum\n")
-MsgC(Color(200, 200, 200), "  remix_check_decal            - Check if material has $decal\n")
-MsgC(Color(200, 200, 200), "  remix_check_world_exclude    - Check if material excluded from world geo ($translucent, no_decal)\n")
-MsgC(Color(200, 200, 200), "[RemixCategoryManager] ConVars:\n")
-MsgC(Color(200, 200, 200), "  remix_auto_categorize (0/1) - Auto-categorize on map load\n")
-MsgC(Color(200, 200, 200), "  remix_auto_categorize_delay (seconds) - Delay before auto-categorization\n")
-MsgC(Color(200, 200, 200), "  remix_require_emissive_mask (0/1) - Require $selfillummask or alpha for emissive\n")
-MsgC(Color(255, 255, 100), "[RemixCategoryManager] DECAL_STATIC applied to: BSP faces, displacements, $decal materials\n")
-MsgC(Color(255, 255, 100), "[RemixCategoryManager] EXCLUDED from world geo: $translucent, $surfaceprop no_decal\n")
-MsgC(Color(255, 255, 100), "[RemixCategoryManager] Emissive validation: %s (prevents fullbright materials)\n", 
-    GetConVar("remix_require_emissive_mask"):GetBool() and "STRICT" or "PERMISSIVE")
+-- Add ConVar callback to update C++ module when particle toggle changes
+cvars.AddChangeCallback("remix_auto_categorize_particles", function(convar, oldValue, newValue)
+    if RemixMaterial and RemixMaterial.SetParticleCategorization then
+        local enabled = tonumber(newValue) == 1
+        RemixMaterial.SetParticleCategorization(enabled)
+        MsgC(Color(100, 200, 255), string.format("[RemixCategoryManager] Particle categorization %s\n", 
+            enabled and "enabled" or "disabled"))
+        
+        -- If enabling and master is enabled, rescan
+        if enabled and GetConVar("remix_auto_categorize"):GetBool() and RemixMaterial.RescanAllMaterials then
+            timer.Simple(0.1, function()
+                local count = RemixMaterial.RescanAllMaterials()
+                MsgC(Color(100, 255, 100), string.format("[RemixCategoryManager] Rescanned %d materials for particles\n", count))
+            end)
+        end
+    end
+end, "RemixCategoryManager_ParticleToggle")
+
+-- Add ConVar callback to update C++ module when decal toggle changes
+cvars.AddChangeCallback("remix_auto_categorize_decals", function(convar, oldValue, newValue)
+    if RemixMaterial and RemixMaterial.SetDecalCategorization then
+        local enabled = tonumber(newValue) == 1
+        RemixMaterial.SetDecalCategorization(enabled)
+        MsgC(Color(100, 200, 255), string.format("[RemixCategoryManager] Decal categorization %s\n", 
+            enabled and "enabled" or "disabled"))
+        
+        -- If enabling and master is enabled, rescan
+        if enabled and GetConVar("remix_auto_categorize"):GetBool() and RemixMaterial.RescanAllMaterials then
+            timer.Simple(0.1, function()
+                local count = RemixMaterial.RescanAllMaterials()
+                MsgC(Color(100, 255, 100), string.format("[RemixCategoryManager] Rescanned %d materials for decals\n", count))
+            end)
+        end
+    end
+end, "RemixCategoryManager_DecalToggle")
+
+-- Add ConVar callback to update C++ module when emissive toggle changes
+cvars.AddChangeCallback("remix_auto_categorize_emissive", function(convar, oldValue, newValue)
+    if RemixMaterial and RemixMaterial.SetEmissiveCategorization then
+        local enabled = tonumber(newValue) == 1
+        RemixMaterial.SetEmissiveCategorization(enabled)
+        MsgC(Color(100, 200, 255), string.format("[RemixCategoryManager] Emissive categorization %s\n", 
+            enabled and "enabled" or "disabled"))
+        
+        -- If enabling and master is enabled, rescan
+        if enabled and GetConVar("remix_auto_categorize"):GetBool() and RemixMaterial.RescanAllMaterials then
+            timer.Simple(0.1, function()
+                local count = RemixMaterial.RescanAllMaterials()
+                MsgC(Color(100, 255, 100), string.format("[RemixCategoryManager] Rescanned %d materials for emissives\n", count))
+            end)
+        end
+    end
+end, "RemixCategoryManager_EmissiveToggle")
 
 return RemixCategoryManager

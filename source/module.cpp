@@ -291,7 +291,7 @@ GMOD_MODULE_CLOSE() {
        ModelLoadHooks::Instance().Shutdown();
        ModelDrawHook::Instance().Shutdown();
 
-#ifdef _WIN64
+#ifdef _WIN64^
         if (g_remix) {
             delete g_remix;
             g_remix = nullptr;

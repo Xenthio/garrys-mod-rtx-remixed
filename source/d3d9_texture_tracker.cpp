@@ -601,6 +601,9 @@ void D3D9TextureTracker::CheckAndApplyCategories(IDirect3DTexture9* pTexture) {
     if (!g_remix) return;
     if (m_currentMaterialName.empty()) return;
     
+    // Check master auto-categorization flag
+    if (!m_enableAutoCategorization) return;
+    
     // Skip internal/engine materials
     if (m_currentMaterialName.find("__") == 0) return; // __fontpage, __error, etc.
     
@@ -645,15 +648,16 @@ void D3D9TextureTracker::CheckAndApplyCategories(IDirect3DTexture9* pTexture) {
     }
     
     // === PRIORITY 3: PARTICLES ===
-    // Check path prefixes
-    else if (lowerName.find("particles/") == 0 || 
-             lowerName.find("particle/") == 0 ||
-             lowerName.find("effects/") == 0 || 
-             lowerName.find("sprites/") == 0 ||
-             lowerName.find("/particles/") != std::string::npos ||
-             lowerName.find("/particle/") != std::string::npos ||
-             lowerName.find("/effects/") != std::string::npos ||
-             lowerName.find("/sprites/") != std::string::npos) {
+    // Check path prefixes (if particle categorization is enabled)
+    else if (m_enableParticleCategorization &&
+             (lowerName.find("particles/") == 0 || 
+              lowerName.find("particle/") == 0 ||
+              lowerName.find("effects/") == 0 || 
+              lowerName.find("sprites/") == 0 ||
+              lowerName.find("/particles/") != std::string::npos ||
+              lowerName.find("/particle/") != std::string::npos ||
+              lowerName.find("/effects/") != std::string::npos ||
+              lowerName.find("/sprites/") != std::string::npos)) {
         categoryFlags = CAT_PARTICLE;
         categoryName = "PARTICLE";
     }
@@ -681,26 +685,63 @@ void D3D9TextureTracker::CheckAndApplyCategories(IDirect3DTexture9* pTexture) {
         }
     }
     
-    // === PRIORITY 5: DECALS (map overlays, bullet holes, blood) ===
-    // IMPORTANT: Exclude light materials (they should be emissive, not decals)
-    else if ((lowerName.find("decals/") == 0 ||
-             lowerName.find("/decals/") != std::string::npos ||
-             lowerName.find("overlay") != std::string::npos ||
-             lowerName.find("bulleth") != std::string::npos ||
-             lowerName.find("_blood") != std::string::npos ||
-             lowerName.find("blood_") != std::string::npos ||
-             lowerName.find("/blood") != std::string::npos ||
-             lowerName.find("scorch") != std::string::npos) &&
+    // === PRIORITY 5: DECALS ===
+    // Enhanced decal detection with three methods (if decal categorization is enabled)
+    if (m_enableDecalCategorization) {
+        bool isDecal = false;
+        
+        // Method 1: Check $decal VMT parameter (most reliable - catches overlay decals!)
+        IMaterial* pCheckMaterial = m_currentMaterial;
+        
+        // If we don't have the material pointer from Bind, try looking it up
+        if (!pCheckMaterial && materials) {
+            // Look up material from the material system
+            pCheckMaterial = materials->FindMaterial(m_currentMaterialName.c_str(), TEXTURE_GROUP_OTHER, false);
+        }
+        
+        if (pCheckMaterial && !pCheckMaterial->IsErrorMaterial()) {
+            bool found = false;
+            IMaterialVar* pDecalVar = pCheckMaterial->FindVar("$decal", &found, false);
+            
+            // ONLY check the pointer if found=true
+            if (found && pDecalVar) {
+                int decalValue = pDecalVar->GetIntValue();
+                if (decalValue == 1) {
+                    isDecal = true;
+                }
+            }
+        }
+        
+        // Method 2: Path-based detection (IMPORTANT: Exclude light materials)
+        if (!isDecal &&
+            ((lowerName.find("decals/") == 0 ||
+              lowerName.find("/decals/") != std::string::npos ||
+              lowerName.find("overlay") != std::string::npos ||
+              lowerName.find("bulleth") != std::string::npos ||
+              lowerName.find("_blood") != std::string::npos ||
+              lowerName.find("blood_") != std::string::npos ||
+              lowerName.find("/blood") != std::string::npos ||
+              lowerName.find("scorch") != std::string::npos) &&
              // Exclude light materials
              lowerName.find("light") == std::string::npos &&
              lowerName.find("/lights/") == std::string::npos &&
-             lowerName.find("lights/") != 0) {
-        categoryFlags = CAT_DECAL_STATIC;
-        categoryName = "DECAL";
+             lowerName.find("lights/") != 0)) {
+            isDecal = true;
+        }
+        
+        // Method 3: Check if in world texture list from BSP
+        if (!isDecal && IsWorldTexture(m_currentMaterialName)) {
+            isDecal = true;
+        }
+        
+        if (isDecal) {
+            categoryFlags = CAT_DECAL_STATIC;
+            categoryName = "DECAL";
+        }
     }
     
-    // If no category matched yet, check shader-based detection
-    if (categoryFlags == 0 && m_currentMaterial) {
+    // If no category matched yet, check shader-based detection (if particle categorization is enabled)
+    if (categoryFlags == 0 && m_currentMaterial && m_enableParticleCategorization) {
         const char* shaderName = m_currentMaterial->GetShaderName();
         if (shaderName) {
             std::string s = shaderName;
@@ -740,77 +781,80 @@ void D3D9TextureTracker::CheckAndApplyCategories(IDirect3DTexture9* pTexture) {
     
     // === EMISSIVE CHECK (can be combined with other categories) ===
     // IMPORTANT: Skip emissive check if this is a decal (decals should never be emissive)
-    bool isDecal = (categoryFlags & CAT_DECAL_STATIC) != 0;
-    
-    bool isEmissive = false;
-    std::string emissiveReason;
-    
-    // Method 1: Check IMaterial::FindVar for $selfillum
-    if (!isDecal && m_currentMaterial) {
-        bool found = false;
-        IMaterialVar* pVar = m_currentMaterial->FindVar("$selfillum", &found, false);
-        if (found && pVar && pVar->GetIntValue() == 1) {
-            isEmissive = true;
-            emissiveReason = "IMaterial::FindVar($selfillum) = 1";
-        }
+    if (m_enableEmissiveCategorization) {
+        // Check if we already marked this as a decal
+        bool isDecal = ((categoryFlags & CAT_DECAL_STATIC) != 0);
         
-        // Method 2: Check $emissive var (vector)
-        if (!isEmissive) {
-            bool foundEmissive = false;
-            IMaterialVar* pEmissiveVar = m_currentMaterial->FindVar("$emissive", &foundEmissive, false);
-            if (foundEmissive && pEmissiveVar) {
-                const float* val = pEmissiveVar->GetVecValue();
-                if (val && (val[0] > 0.0f || val[1] > 0.0f || val[2] > 0.0f)) {
-                    isEmissive = true;
-                    emissiveReason = "$emissive vector";
+        bool isEmissive = false;
+        std::string emissiveReason;
+        
+        // Method 1: Check IMaterial::FindVar for $selfillum
+        if (!isDecal && m_currentMaterial) {
+            bool found = false;
+            IMaterialVar* pVar = m_currentMaterial->FindVar("$selfillum", &found, false);
+            if (found && pVar && pVar->GetIntValue() == 1) {
+                isEmissive = true;
+                emissiveReason = "IMaterial::FindVar($selfillum) = 1";
+            }
+            
+            // Method 2: Check $emissive var (vector)
+            if (!isEmissive) {
+                bool foundEmissive = false;
+                IMaterialVar* pEmissiveVar = m_currentMaterial->FindVar("$emissive", &foundEmissive, false);
+                if (foundEmissive && pEmissiveVar) {
+                    const float* val = pEmissiveVar->GetVecValue();
+                    if (val && (val[0] > 0.0f || val[1] > 0.0f || val[2] > 0.0f)) {
+                        isEmissive = true;
+                        emissiveReason = "$emissive vector";
+                    }
                 }
             }
         }
-    }
     
-    // Method 3: Fallback - read VMT file directly
-    // This catches cases where the engine doesn't expose $selfillum via FindVar
-    // (common with DX7/DX6 shader fallbacks)
-    // SKIP for decals
-    if (!isDecal && !isEmissive) {
-        if (CheckVMTForSelfillum(m_currentMaterialName)) {
-            isEmissive = true;
-            emissiveReason = "VMT file $selfillum";
+        // Method 3: Fallback - read VMT file directly
+        // This catches cases where the engine doesn't expose $selfillum via FindVar
+        // (common with DX7/DX6 shader fallbacks)
+        // SKIP for decals
+        if (!isDecal && !isEmissive) {
+            if (CheckVMTForSelfillum(m_currentMaterialName)) {
+                isEmissive = true;
+                emissiveReason = "VMT file $selfillum";
+            }
         }
-    }
     
-    // Method 4: Keyword-based detection for VTF self-illumination
-    // These materials use VTF-based self-illumination (no VMT parameter)
-    // SKIP for decals
-    if (!isDecal && !isEmissive) {
-        // Pattern 1: Material name contains "_on" (light fixtures, LEDs, screens, etc.)
-        // AND is from known emissive content packs (pkvoidplaces, pb_ prefix)
-        // Examples: pkvoidplaces/props/pb_propremake_ceilinglightbase_on
-        //           pkvoidplaces/props/pb_pmall_prop_led_pink_on
-        bool hasOnSuffix = (lowerName.find("_on") != std::string::npos);
-        bool isKnownEmissivePack = (lowerName.find("pkvoidplaces") != std::string::npos ||
-                                    lowerName.find("/pb_") != std::string::npos ||
-                                    lowerName.find("pb_") == 0);
-        
-        // Pattern 2: Contains "light" + "_on" anywhere (generic light fixtures)
-        bool hasLightOn = (lowerName.find("light") != std::string::npos && 
-                          lowerName.find("_on") != std::string::npos);
-        
-        if ((hasOnSuffix && isKnownEmissivePack) || hasLightOn) {
-            isEmissive = true;
-            emissiveReason = "Keyword pattern (_on suffix)";
+        // Method 4: Keyword-based detection for VTF self-illumination
+        // These materials use VTF-based self-illumination (no VMT parameter)
+        // SKIP for decals
+        if (!isDecal && !isEmissive) {
+            // Pattern 1: Material name contains "_on" (light fixtures, LEDs, screens, etc.)
+            // AND is from known emissive content packs (pkvoidplaces, pb_ prefix)
+            // Examples: pkvoidplaces/props/pb_propremake_ceilinglightbase_on
+            //           pkvoidplaces/props/pb_pmall_prop_led_pink_on
+            bool hasOnSuffix = (lowerName.find("_on") != std::string::npos);
+            bool isKnownEmissivePack = (lowerName.find("pkvoidplaces") != std::string::npos ||
+                                        lowerName.find("/pb_") != std::string::npos ||
+                                        lowerName.find("pb_") == 0);
+            
+            // Pattern 2: Contains "light" + "_on" anywhere (generic light fixtures)
+            bool hasLightOn = (lowerName.find("light") != std::string::npos && 
+                              lowerName.find("_on") != std::string::npos);
+            
+            if ((hasOnSuffix && isKnownEmissivePack) || hasLightOn) {
+                isEmissive = true;
+                emissiveReason = "Keyword pattern (_on suffix)";
+            }
         }
-    }
     
-    // Combine emissive flag
-    if (isEmissive) {
-        categoryFlags |= CAT_EMISSIVE;
-        if (!categoryName) categoryName = "EMISSIVE";
-        
-        // Debug: Log when decals are marked as emissive (should never happen now)
-        if (categoryFlags & CAT_DECAL_STATIC) {
-            Msg("[D3D9] ERROR: Decal '%s' was marked as EMISSIVE (reason: %s) - this should not happen!\n", 
-                m_currentMaterialName.c_str(), emissiveReason.c_str());
+        // Combine emissive flag
+        if (isEmissive) {
+            categoryFlags |= CAT_EMISSIVE;
+            if (!categoryName) categoryName = "EMISSIVE";
+            
+            // Debug: Log when decals are marked as emissive (should never happen now)
+            if (categoryFlags & CAT_DECAL_STATIC) {
+                Msg("[D3D9] ERROR: Decal '%s' was marked as EMISSIVE (reason: %s) - this should not happen!\n", 
+                    m_currentMaterialName.c_str(), emissiveReason.c_str());
+            }
         }
     }
     
@@ -910,8 +954,23 @@ int D3D9TextureTracker::RetryPendingCategories() {
     
     if (m_pendingCategories.empty()) return 0;
     
+    // Check if auto-categorization is enabled
+    if (!m_enableAutoCategorization) {
+        // Clear pending queue and release references since categorization is disabled
+        for (auto& pending : m_pendingCategories) {
+            pending.texture->Release();
+        }
+        m_pendingCategories.clear();
+        return 0;
+    }
+    
     int successCount = 0;
     std::vector<PendingCategory> stillPending;
+    
+    // Category flag constants for filtering
+    constexpr uint32_t CAT_PARTICLE       = 0x400;
+    constexpr uint32_t CAT_DECAL_STATIC   = 0x1000;
+    constexpr uint32_t CAT_EMISSIVE       = 0x1000000;
     
     for (auto& pending : m_pendingCategories) {
         auto result = g_remix->dxvk_GetTextureHash(pending.texture);
@@ -926,12 +985,31 @@ int D3D9TextureTracker::RetryPendingCategories() {
             continue;
         }
         
+        // Filter category flags based on enable settings
+        uint32_t filteredFlags = pending.categoryFlags;
+        
+        if (!m_enableParticleCategorization) {
+            filteredFlags &= ~CAT_PARTICLE;
+        }
+        if (!m_enableDecalCategorization) {
+            filteredFlags &= ~CAT_DECAL_STATIC;
+        }
+        if (!m_enableEmissiveCategorization) {
+            filteredFlags &= ~CAT_EMISSIVE;
+        }
+        
+        // If no categories remain after filtering, skip this material
+        if (filteredFlags == 0) {
+            pending.texture->Release();
+            continue;
+        }
+        
         // Got a valid hash! Log it for debugging
         Msg("[D3D9TextureTracker] RetryPending: Got hash 0x%llX for '%s' (texture 0x%p)\n",
             hash, pending.materialName.c_str(), pending.texture);
         
-        // Apply categories using the helper function
-        ApplyCategoryToHash(hash, pending.categoryFlags, pending.materialName.c_str());
+        // Apply filtered categories using the helper function
+        ApplyCategoryToHash(hash, filteredFlags, pending.materialName.c_str());
         
         // Release our reference
         pending.texture->Release();
@@ -951,6 +1029,12 @@ int D3D9TextureTracker::RetryPendingCategories() {
 int D3D9TextureTracker::RescanAllMaterials() {
     if (!g_remix || !materials) return 0;
     
+    // Check if auto-categorization is enabled
+    if (!m_enableAutoCategorization) {
+        Msg("[D3D9] RescanAllMaterials: Auto-categorization is disabled, skipping rescan\n");
+        return 0;
+    }
+    
     Msg("[D3D9] RescanAllMaterials: Scanning %zu cached materials...\n", m_textureCache.size());
     
     // Category flag constants
@@ -962,6 +1046,8 @@ int D3D9TextureTracker::RescanAllMaterials() {
     constexpr uint32_t CAT_EMISSIVE       = 0x1000000;
     
     int categorizedCount = 0;
+    int particleCount = 0;
+    int decalCount = 0;
     int emissiveCount = 0;
     
     for (const auto& entry : m_textureCache) {
@@ -980,61 +1066,232 @@ int D3D9TextureTracker::RescanAllMaterials() {
         // Get the material
         IMaterial* mat = materials->FindMaterial(materialName.c_str(), TEXTURE_GROUP_OTHER, false);
         
-        // Skip decals - they should never be emissive
-        bool isDecalMaterial = (lowerName.find("decal") != std::string::npos || 
-                                lowerName.find("overlay") != std::string::npos);
+        uint32_t categoryFlags = 0;
         
-        if (isDecalMaterial) {
-            continue; // Don't even check decals for emissive
-        }
-        
-        // Check for emissive using VMT file fallback
-        bool isEmissive = false;
-        
-        // Method 1: IMaterial::FindVar
-        if (mat && !mat->IsErrorMaterial()) {
-            bool found = false;
-            IMaterialVar* pVar = mat->FindVar("$selfillum", &found, false);
-            if (found && pVar && pVar->GetIntValue() == 1) {
-                isEmissive = true;
+        // === CHECK PARTICLES (if enabled) ===
+        if (m_enableParticleCategorization) {
+            // Path-based detection
+            if (lowerName.find("particles/") == 0 || 
+                lowerName.find("particle/") == 0 ||
+                lowerName.find("effects/") == 0 || 
+                lowerName.find("sprites/") == 0 ||
+                lowerName.find("/particles/") != std::string::npos ||
+                lowerName.find("/particle/") != std::string::npos ||
+                lowerName.find("/effects/") != std::string::npos ||
+                lowerName.find("/sprites/") != std::string::npos) {
+                categoryFlags |= CAT_PARTICLE;
+                particleCount++;
+            }
+            // Shader-based detection
+            else if (mat && !mat->IsErrorMaterial()) {
+                const char* shaderName = mat->GetShaderName();
+                if (shaderName) {
+                    std::string s = shaderName;
+                    std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+                    if (s.find("sprite") != std::string::npos ||
+                        s.find("modulate") != std::string::npos ||
+                        s == "cable") {
+                        categoryFlags |= CAT_PARTICLE;
+                        particleCount++;
+                    }
+                }
             }
         }
         
-        // Method 2: VMT file fallback (with debug output for first few)
-        if (!isEmissive) {
-            isEmissive = CheckVMTForSelfillum(materialName, emissiveCount < 3); // Debug first 3
-        }
-        
-        if (isEmissive) {
-            emissiveCount++;
+        // === CHECK DECALS (if enabled) ===
+        if (m_enableDecalCategorization) {
+            bool isDecal = false;
             
-            // Debug: Show which material is being marked (first 10)
-            if (emissiveCount <= 10) {
-                std::string lowerCheck = materialName;
-                std::transform(lowerCheck.begin(), lowerCheck.end(), lowerCheck.begin(), ::tolower);
-                bool isDecal = (lowerCheck.find("decal") != std::string::npos || 
-                               lowerCheck.find("overlay") != std::string::npos);
-                if (isDecal) {
-                    Msg("[D3D9] RescanAllMaterials: DECAL marked as emissive: '%s'\n", materialName.c_str());
-                } else {
-                    Msg("[D3D9] RescanAllMaterials: Emissive material #%d: '%s'\n", emissiveCount, materialName.c_str());
+            // Method 1: Check $decal VMT parameter
+            if (mat && !mat->IsErrorMaterial()) {
+                bool found = false;
+                IMaterialVar* pDecalVar = mat->FindVar("$decal", &found, false);
+                if (found && pDecalVar && pDecalVar->GetIntValue() == 1) {
+                    isDecal = true;
                 }
             }
             
+            // Method 2: Path-based detection
+            if (!isDecal &&
+                ((lowerName.find("decals/") == 0 ||
+                  lowerName.find("/decals/") != std::string::npos ||
+                  lowerName.find("overlay") != std::string::npos ||
+                  lowerName.find("bulleth") != std::string::npos ||
+                  lowerName.find("_blood") != std::string::npos ||
+                  lowerName.find("blood_") != std::string::npos ||
+                  lowerName.find("/blood") != std::string::npos ||
+                  lowerName.find("scorch") != std::string::npos) &&
+                 lowerName.find("light") == std::string::npos &&
+                 lowerName.find("/lights/") == std::string::npos &&
+                 lowerName.find("lights/") != 0)) {
+                isDecal = true;
+            }
+            
+            // Method 3: Check if in world texture list
+            if (!isDecal && IsWorldTexture(materialName)) {
+                isDecal = true;
+            }
+            
+            if (isDecal) {
+                categoryFlags |= CAT_DECAL_STATIC;
+                decalCount++;
+            }
+        }
+        
+        // === CHECK EMISSIVE (if enabled and not a decal) ===
+        if (m_enableEmissiveCategorization && !(categoryFlags & CAT_DECAL_STATIC)) {
+            bool isEmissive = false;
+            
+            // Method 1: IMaterial::FindVar for $selfillum
+            if (mat && !mat->IsErrorMaterial()) {
+                bool found = false;
+                IMaterialVar* pVar = mat->FindVar("$selfillum", &found, false);
+                if (found && pVar && pVar->GetIntValue() == 1) {
+                    isEmissive = true;
+                }
+                
+                // Method 2: Check $emissive var (vector)
+                if (!isEmissive) {
+                    bool foundEmissive = false;
+                    IMaterialVar* pEmissiveVar = mat->FindVar("$emissive", &foundEmissive, false);
+                    if (foundEmissive && pEmissiveVar) {
+                        const float* val = pEmissiveVar->GetVecValue();
+                        if (val && (val[0] > 0.0f || val[1] > 0.0f || val[2] > 0.0f)) {
+                            isEmissive = true;
+                        }
+                    }
+                }
+            }
+            
+            // Method 3: VMT file fallback
+            if (!isEmissive) {
+                isEmissive = CheckVMTForSelfillum(materialName, false);
+            }
+            
+            // Method 4: Keyword-based detection
+            if (!isEmissive) {
+                bool hasOnSuffix = (lowerName.find("_on") != std::string::npos);
+                bool isKnownEmissivePack = (lowerName.find("pkvoidplaces") != std::string::npos ||
+                                            lowerName.find("/pb_") != std::string::npos ||
+                                            lowerName.find("pb_") == 0);
+                bool hasLightOn = (lowerName.find("light") != std::string::npos && 
+                                  lowerName.find("_on") != std::string::npos);
+                
+                if ((hasOnSuffix && isKnownEmissivePack) || hasLightOn) {
+                    isEmissive = true;
+                }
+            }
+            
+            if (isEmissive) {
+                categoryFlags |= CAT_EMISSIVE;
+                emissiveCount++;
+            }
+        }
+        
+        // Apply categories if any were detected
+        if (categoryFlags != 0) {
             // Get hash for first texture variant
             for (auto* tex : textures) {
                 auto result = g_remix->dxvk_GetTextureHash(tex);
                 if (result && result.value() != 0) {
-                    ApplyCategoryToHash(result.value(), CAT_EMISSIVE, materialName.c_str());
+                    ApplyCategoryToHash(result.value(), categoryFlags, materialName.c_str());
                     categorizedCount++;
-                    break; // Only need to categorize once per material
+                    break; // Only need one variant
                 }
             }
         }
     }
     
-    Msg("[D3D9] RescanAllMaterials: Found %d emissive materials, categorized %d\n", 
-        emissiveCount, categorizedCount);
+    Msg("[D3D9] RescanAllMaterials: Done! %d materials categorized (%d particles, %d decals, %d emissive)\n", 
+        categorizedCount, particleCount, decalCount, emissiveCount);
+    
+    return categorizedCount;
+}
+
+int D3D9TextureTracker::RecheckWorldTextures() {
+    if (!g_remix) return 0;
+    
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    if (m_worldTextureNames.empty()) {
+        Msg("[D3D9TextureTracker] RecheckWorldTextures: World texture list is empty\n");
+        return 0;
+    }
+    
+    Msg("[D3D9TextureTracker] RecheckWorldTextures: Checking %zu cached materials against %zu world textures...\n",
+        m_textureCache.size(), m_worldTextureNames.size());
+    
+    constexpr uint32_t CAT_DECAL_STATIC = 0x1000;
+    int categorizedCount = 0;
+    int matchCount = 0;
+    int checkedCount = 0;
+    
+    for (const auto& entry : m_textureCache) {
+        const std::string& materialName = entry.first;
+        const std::vector<IDirect3DTexture9*>& textures = entry.second;
+        
+        if (textures.empty()) continue;
+        
+        // Skip internal materials
+        if (materialName.find("__") == 0 || materialName.find("vgui") == 0) continue;
+        
+        // Normalize material name (inline version to avoid mutex deadlock)
+        std::string lowerName = materialName;
+        std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(),
+            [](unsigned char c){ return std::tolower(c); });
+        
+        // Remove prefixes
+        if (lowerName.find("materials/") == 0) {
+            lowerName = lowerName.substr(10);
+        }
+        if (lowerName.size() > 4 && lowerName.substr(lowerName.size() - 4) == ".vmt") {
+            lowerName = lowerName.substr(0, lowerName.size() - 4);
+        }
+        
+        // IMPORTANT: Remove _stage1 suffix for displacement materials
+        // BSP lists "material_name" but engine tracks "material_name_stage1"
+        if (lowerName.size() > 7 && lowerName.substr(lowerName.size() - 7) == "_stage1") {
+            lowerName = lowerName.substr(0, lowerName.size() - 7);
+        }
+        
+        // Check if this material is in the world texture list
+        bool isWorldTexture = m_worldTextureNames.find(lowerName) != m_worldTextureNames.end();
+        
+        if (!isWorldTexture) continue;
+        
+        matchCount++;
+        
+        // Get hash for ALL texture variants (displacement materials have multiple stages)
+        int variantsCategorized = 0;
+        for (auto* tex : textures) {
+            auto result = g_remix->dxvk_GetTextureHash(tex);
+            if (result && result.value() != 0) {
+                uint64_t hash = result.value();
+                
+                // Check if already categorized
+                uint32_t existingFlags = 0;
+                if (GetHashCategoryFlags(hash, &existingFlags) && existingFlags != 0) {
+                    // Already categorized, skip this variant
+                    continue;
+                }
+                
+                // Apply world geometry category
+                Msg("[D3D9TextureTracker] RecheckWorldTextures: Categorizing '%s' variant %d (hash 0x%llX) as DECAL_STATIC\n",
+                    materialName.c_str(), variantsCategorized + 1, hash);
+                ApplyCategoryToHash(hash, CAT_DECAL_STATIC, materialName.c_str());
+                categorizedCount++;
+                variantsCategorized++;
+            }
+        }
+        
+        if (variantsCategorized > 1) {
+            Msg("[D3D9TextureTracker]   -> Categorized %d texture variants for '%s'\n", 
+                variantsCategorized, materialName.c_str());
+        }
+    }
+    
+    Msg("[D3D9TextureTracker] RecheckWorldTextures: Found %d world texture matches, categorized %d\n",
+        matchCount, categorizedCount);
     
     return categorizedCount;
 }
@@ -1061,6 +1318,135 @@ std::vector<std::tuple<std::string, void*, uint64_t>> D3D9TextureTracker::DumpAl
     }
     
     return result;
+}
+
+// Set world texture names from BSP parsing
+void D3D9TextureTracker::SetWorldTextureNames(const std::vector<std::string>& textureNames) {
+    if (textureNames.empty()) {
+        Warning("[D3D9TextureTracker] SetWorldTextureNames: Empty texture list\n");
+        return;
+    }
+    
+    Msg("[D3D9TextureTracker] SetWorldTextureNames: Processing %zu textures...\n", textureNames.size());
+    
+    try {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        
+        m_worldTextureNames.clear();
+        
+        for (const auto& name : textureNames) {
+            if (name.empty()) continue;
+            
+            // Normalize to lowercase for case-insensitive matching
+            std::string lowerName = name;
+            std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(),
+                [](unsigned char c){ return std::tolower(c); });
+            
+            // Remove common prefixes/suffixes
+            if (lowerName.find("materials/") == 0) {
+                lowerName = lowerName.substr(10); // Remove "materials/"
+            }
+            if (lowerName.size() > 4 && lowerName.substr(lowerName.size() - 4) == ".vmt") {
+                lowerName = lowerName.substr(0, lowerName.size() - 4); // Remove ".vmt"
+            }
+            
+            // IMPORTANT: Remove _stage1 suffix for displacement materials
+            // BSP lists "material_name" but engine tracks "material_name_stage1"
+            if (lowerName.size() > 7 && lowerName.substr(lowerName.size() - 7) == "_stage1") {
+                lowerName = lowerName.substr(0, lowerName.size() - 7);
+            }
+            
+            if (!lowerName.empty()) {
+                m_worldTextureNames.insert(lowerName);
+            }
+        }
+        
+        Msg("[D3D9TextureTracker] Loaded %zu world texture names for categorization\n", m_worldTextureNames.size());
+    } catch (const std::exception& e) {
+        Warning("[D3D9TextureTracker] SetWorldTextureNames: Exception: %s\n", e.what());
+    }
+}
+
+// Clear world texture list
+void D3D9TextureTracker::ClearWorldTextureNames() {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_worldTextureNames.clear();
+    Msg("[D3D9TextureTracker] Cleared world texture list\n");
+}
+
+// Enable or disable automatic particle categorization
+void D3D9TextureTracker::SetParticleCategorization(bool enabled) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_enableParticleCategorization = enabled;
+    Msg("[D3D9TextureTracker] Particle categorization %s\n", enabled ? "enabled" : "disabled");
+}
+
+// Enable or disable automatic decal categorization
+void D3D9TextureTracker::SetDecalCategorization(bool enabled) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_enableDecalCategorization = enabled;
+    Msg("[D3D9TextureTracker] Decal categorization %s\n", enabled ? "enabled" : "disabled");
+}
+
+// Enable or disable automatic emissive categorization
+void D3D9TextureTracker::SetEmissiveCategorization(bool enabled) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_enableEmissiveCategorization = enabled;
+    Msg("[D3D9TextureTracker] Emissive categorization %s\n", enabled ? "enabled" : "disabled");
+}
+
+// Enable or disable ALL automatic categorization (master switch)
+void D3D9TextureTracker::SetAutoCategorization(bool enabled) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_enableAutoCategorization = enabled;
+    
+    // If disabling, clear pending queue to prevent delayed categorization
+    if (!enabled && !m_pendingCategories.empty()) {
+        size_t count = m_pendingCategories.size();
+        for (auto& pending : m_pendingCategories) {
+            pending.texture->Release();
+        }
+        m_pendingCategories.clear();
+        Msg("[D3D9TextureTracker] Cleared %zu pending categorizations\n", count);
+    }
+    
+    Msg("[D3D9TextureTracker] Auto-categorization %s\n", enabled ? "enabled" : "disabled");
+}
+
+// Check if material is a world texture
+bool D3D9TextureTracker::IsWorldTexture(const std::string& materialName) const {
+    if (materialName.empty()) return false;
+    
+    try {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        
+        // Return false if world texture list hasn't been set yet
+        if (m_worldTextureNames.empty()) return false;
+        
+        // Normalize material name
+        std::string lowerName = materialName;
+        std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(),
+            [](unsigned char c){ return std::tolower(c); });
+        
+        // Remove prefixes
+        if (lowerName.find("materials/") == 0) {
+            lowerName = lowerName.substr(10);
+        }
+        if (lowerName.size() > 4 && lowerName.substr(lowerName.size() - 4) == ".vmt") {
+            lowerName = lowerName.substr(0, lowerName.size() - 4);
+        }
+        
+        // IMPORTANT: Remove _stage1 suffix for displacement materials
+        // BSP lists "material_name" but engine tracks "material_name_stage1"
+        if (lowerName.size() > 7 && lowerName.substr(lowerName.size() - 7) == "_stage1") {
+            lowerName = lowerName.substr(0, lowerName.size() - 7);
+        }
+        
+        return m_worldTextureNames.find(lowerName) != m_worldTextureNames.end();
+    } catch (...) {
+        // Silently fail - better than crashing during rendering
+        return false;
+    }
 }
 
 #endif // _WIN64

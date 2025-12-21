@@ -946,6 +946,15 @@ LUA_FUNCTION(RemixMaterial_RescanAllMaterials) {
     return 1;
 }
 
+// Lua function: RemixMaterial.RecheckWorldTextures()
+// Re-checks all cached materials against the world texture list
+// Useful after SetWorldTextureList is called to categorize materials that rendered before the list was loaded
+LUA_FUNCTION(RemixMaterial_RecheckWorldTextures) {
+    int count = D3D9TextureTracker::Instance().RecheckWorldTextures();
+    LUA->PushNumber(count);
+    return 1;
+}
+
 // Lua function: RemixMaterial.DumpAllTextureHashes()
 // Returns a table of all tracked textures with their current hashes
 // Format: { { material = "name", texture = "0xPTR", hash = "0xHASH" }, ... }
@@ -1030,6 +1039,117 @@ LUA_FUNCTION(RemixMaterial_FindTexturesByName) {
     return 1;
 }
 
+// Lua function: RemixMaterial.SetWorldTextureList(textureTable)
+// Accepts a Lua table of texture names from BSP parsing
+// These will be automatically marked as DECAL_STATIC (world geometry) when rendered
+LUA_FUNCTION(RemixMaterial_SetWorldTextureList) {
+    if (!LUA->IsType(1, Type::Table)) {
+        LUA->ThrowError("RemixMaterial.SetWorldTextureList: Expected table of texture names");
+        return 0;
+    }
+    
+    std::vector<std::string> textureNames;
+    textureNames.reserve(1024); // Pre-allocate to avoid reallocations
+    
+    Msg("[RemixMaterial] SetWorldTextureList: Starting table iteration...\n");
+    
+    // Iterate through the Lua table
+    LUA->PushNil(); // First key
+    int count = 0;
+    while (LUA->Next(1) != 0) {
+        // Key is at -2, value is at -1
+        if (LUA->IsType(-1, Type::String)) {
+            const char* textureName = LUA->GetString(-1);
+            if (textureName && textureName[0] != '\0') {
+                textureNames.push_back(textureName);
+                count++;
+            }
+        }
+        LUA->Pop(1); // Explicitly pop 1 value, keep key for next iteration
+    }
+    
+    Msg("[RemixMaterial] SetWorldTextureList: Parsed %d texture names from Lua table\n", count);
+    
+    // Pass to D3D9TextureTracker
+    if (!textureNames.empty()) {
+        D3D9TextureTracker::Instance().SetWorldTextureNames(textureNames);
+        Msg("[RemixMaterial] SetWorldTextureList: Sent to D3D9TextureTracker\n");
+    } else {
+        Warning("[RemixMaterial] SetWorldTextureList: No valid texture names found in table\n");
+    }
+    
+    LUA->PushBool(true);
+    return 1;
+}
+
+// Lua function: RemixMaterial.ClearWorldTextureList()
+// Clears the world texture list (useful for map changes)
+LUA_FUNCTION(RemixMaterial_ClearWorldTextureList) {
+    D3D9TextureTracker::Instance().ClearWorldTextureNames();
+    LUA->PushBool(true);
+    return 1;
+}
+
+// Lua function: RemixMaterial.SetParticleCategorization(enabled)
+// Enable or disable automatic particle categorization
+LUA_FUNCTION(RemixMaterial_SetParticleCategorization) {
+    if (!LUA->IsType(1, Type::Bool)) {
+        LUA->ThrowError("RemixMaterial.SetParticleCategorization: Expected boolean argument");
+        return 0;
+    }
+    
+    bool enabled = LUA->GetBool(1);
+    D3D9TextureTracker::Instance().SetParticleCategorization(enabled);
+    
+    LUA->PushBool(true);
+    return 1;
+}
+
+// Lua function: RemixMaterial.SetDecalCategorization(enabled)
+// Enable or disable automatic decal categorization
+LUA_FUNCTION(RemixMaterial_SetDecalCategorization) {
+    if (!LUA->IsType(1, Type::Bool)) {
+        LUA->ThrowError("RemixMaterial.SetDecalCategorization: Expected boolean argument");
+        return 0;
+    }
+    
+    bool enabled = LUA->GetBool(1);
+    D3D9TextureTracker::Instance().SetDecalCategorization(enabled);
+    
+    LUA->PushBool(true);
+    return 1;
+}
+
+// Lua function: RemixMaterial.SetEmissiveCategorization(enabled)
+// Enable or disable automatic emissive categorization
+LUA_FUNCTION(RemixMaterial_SetEmissiveCategorization) {
+    if (!LUA->IsType(1, Type::Bool)) {
+        LUA->ThrowError("RemixMaterial.SetEmissiveCategorization: Expected boolean argument");
+        return 0;
+    }
+    
+    bool enabled = LUA->GetBool(1);
+    D3D9TextureTracker::Instance().SetEmissiveCategorization(enabled);
+    
+    LUA->PushBool(true);
+    return 1;
+}
+
+// Lua function: RemixMaterial.SetAutoCategorization(enabled)
+// Enable or disable ALL automatic categorization (master switch)
+LUA_FUNCTION(RemixMaterial_SetAutoCategorization) {
+    if (!LUA->IsType(1, Type::Bool)) {
+        LUA->ThrowError("RemixMaterial.SetAutoCategorization: Expected boolean argument");
+        return 0;
+    }
+    
+    bool enabled = LUA->GetBool(1);
+    D3D9TextureTracker::Instance().SetAutoCategorization(enabled);
+    
+    LUA->PushBool(true);
+    return 1;
+}
+
 // Initialize Material Manager Lua bindings
 void MaterialManager::InitializeLuaBindings() {
     if (!m_lua) return;
@@ -1095,13 +1215,34 @@ void MaterialManager::InitializeLuaBindings() {
     m_lua->PushCFunction(RemixMaterial_RescanAllMaterials);
     m_lua->SetField(-2, "RescanAllMaterials");
     
+    m_lua->PushCFunction(RemixMaterial_RecheckWorldTextures);
+    m_lua->SetField(-2, "RecheckWorldTextures");
+    
     m_lua->PushCFunction(RemixMaterial_DumpAllTextureHashes);
     m_lua->SetField(-2, "DumpAllTextureHashes");
     
-    // Set the table as a global field
+    m_lua->PushCFunction(RemixMaterial_SetWorldTextureList);
+    m_lua->SetField(-2, "SetWorldTextureList");
+    
+    m_lua->PushCFunction(RemixMaterial_ClearWorldTextureList);
+    m_lua->SetField(-2, "ClearWorldTextureList");
+    
+    m_lua->PushCFunction(RemixMaterial_SetParticleCategorization);
+    m_lua->SetField(-2, "SetParticleCategorization");
+    
+    m_lua->PushCFunction(RemixMaterial_SetDecalCategorization);
+    m_lua->SetField(-2, "SetDecalCategorization");
+    
+    m_lua->PushCFunction(RemixMaterial_SetEmissiveCategorization);
+    m_lua->SetField(-2, "SetEmissiveCategorization");
+    
+    m_lua->PushCFunction(RemixMaterial_SetAutoCategorization);
+    m_lua->SetField(-2, "SetAutoCategorization");
+    
+    // Set the table as the global "RemixMaterial"
     m_lua->SetField(-2, "RemixMaterial");
     
-    // Pop the global table
+    // Pop global table
     m_lua->Pop();
     
     Msg("[MaterialManager] Lua bindings initialized\n");

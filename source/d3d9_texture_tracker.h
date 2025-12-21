@@ -4,6 +4,7 @@
 
 #include <d3d9.h>
 #include <unordered_map>
+#include <unordered_set>
 #include <string>
 #include <vector>
 #include <mutex>
@@ -37,6 +38,10 @@ public:
     // Re-scan all cached materials and apply categories
     // This is useful after code changes or to catch materials that were cached before detection was added
     int RescanAllMaterials();
+    
+    // Re-check all cached materials for world texture categorization
+    // Useful after SetWorldTextureNames is called to categorize materials that rendered before the list was loaded
+    int RecheckWorldTextures();
     
     // Get the D3D9 texture for a material (returns null if not found)
     IDirect3DTexture9* GetTextureForMaterial(const char* materialName);
@@ -82,6 +87,28 @@ public:
     // Dump all tracked textures with their hashes (for debugging)
     // Returns vector of (materialName, texturePtr, hash) tuples
     std::vector<std::tuple<std::string, void*, uint64_t>> DumpAllTextureHashes() const;
+    
+    // Set the list of world texture names (from BSP parsing)
+    // These will be marked as DECAL_STATIC when rendered
+    void SetWorldTextureNames(const std::vector<std::string>& textureNames);
+    
+    // Clear the world texture list (for map changes)
+    void ClearWorldTextureNames();
+    
+    // Check if a material is in the world texture list
+    bool IsWorldTexture(const std::string& materialName) const;
+    
+    // Enable/disable automatic particle categorization
+    void SetParticleCategorization(bool enabled);
+    
+    // Enable/disable automatic decal categorization
+    void SetDecalCategorization(bool enabled);
+    
+    // Enable/disable automatic emissive categorization
+    void SetEmissiveCategorization(bool enabled);
+    
+    // Enable/disable ALL automatic categorization (master switch)
+    void SetAutoCategorization(bool enabled);
 
 private:
     // Pending categorization entry
@@ -137,6 +164,15 @@ private:
     
     // Pending categorizations (textures that returned hash=0)
     std::vector<PendingCategory> m_pendingCategories;
+    
+    // World texture names from BSP (for DECAL_STATIC marking)
+    std::unordered_set<std::string> m_worldTextureNames;
+    
+    // Category enable flags
+    bool m_enableAutoCategorization = true;     // Master switch
+    bool m_enableParticleCategorization = true;
+    bool m_enableDecalCategorization = true;
+    bool m_enableEmissiveCategorization = true;
     
     // Track whether we're initialized
     bool m_bInitialized = false;
