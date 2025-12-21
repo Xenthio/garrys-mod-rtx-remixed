@@ -109,6 +109,9 @@ public:
     
     // Enable/disable ALL automatic categorization (master switch)
     void SetAutoCategorization(bool enabled);
+    
+    // Enable/disable debug output
+    void SetDebugOutput(bool enabled);
 
 private:
     // Pending categorization entry
@@ -173,6 +176,9 @@ private:
     bool m_enableParticleCategorization = true;
     bool m_enableDecalCategorization = true;
     bool m_enableEmissiveCategorization = true;
+    
+    // Debug output flag
+    bool m_enableDebugOutput = false;
     
     // Track whether we're initialized
     bool m_bInitialized = false;

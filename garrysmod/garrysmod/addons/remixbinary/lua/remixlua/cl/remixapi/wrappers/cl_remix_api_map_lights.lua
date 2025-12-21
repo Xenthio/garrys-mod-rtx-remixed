@@ -12,7 +12,7 @@ local point_radius_mult = CreateClientConVar("rtx_api_map_lights_point_radius_mu
 local spot_radius_mult = CreateClientConVar("rtx_api_map_lights_spot_radius_mult", "1.5", true, false, "Radius multiplier for spot lights")
 local env_angular_mult = CreateClientConVar("rtx_api_map_lights_env_angular_mult", "1.0", true, false, "Angular diameter multiplier for directional lights")
 
-local point_brightness_mult = CreateClientConVar("rtx_api_map_lights_point_brightness_mult", "2.0", true, false, "Brightness multiplier for point lights")
+local point_brightness_mult = CreateClientConVar("rtx_api_map_lights_point_brightness_mult", "1.0", true, false, "Brightness multiplier for point lights")
 local spot_brightness_mult = CreateClientConVar("rtx_api_map_lights_spot_brightness_mult", "1.0", true, false, "Brightness multiplier for spot lights")
 local env_brightness_mult = CreateClientConVar("rtx_api_map_lights_env_brightness_mult", "1.0", true, false, "Brightness multiplier for directional lights")
 

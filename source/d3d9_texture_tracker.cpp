@@ -295,11 +295,13 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
             
             if (lowerName.find("blend_") != std::string::npos || 
                 lowerName.find("_wvt_patch") != std::string::npos) {
-                static int dispSetTexCount = 0;
-                dispSetTexCount++;
-                if (dispSetTexCount <= 20) {
-                    Msg("[D3D9TextureTracker] SetTexture(Stage=%d, 0x%p) for displacement '%s'\n", 
-                        Stage, pTexture, tracker.m_currentMaterialName.c_str());
+                if (tracker.m_enableDebugOutput) {
+                    static int dispSetTexCount = 0;
+                    dispSetTexCount++;
+                    if (dispSetTexCount <= 20) {
+                        Msg("[D3D9TextureTracker] SetTexture(Stage=%d, 0x%p) for displacement '%s'\n", 
+                            Stage, pTexture, tracker.m_currentMaterialName.c_str());
+                    }
                 }
             }
         }
@@ -347,9 +349,11 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                         p2DTexture->AddRef();
                         textures.push_back(p2DTexture);
                         // Re-enable logging for debugging texture capture issues
-                        Msg("[D3D9TextureTracker] NEW texture variant #%zu: 0x%p for '%s'%s (hash: 0x%llX)\n", 
-                            textures.size(), p2DTexture, tracker.m_currentMaterialName.c_str(), 
-                            Stage == 1 ? " [STAGE1]" : "", hash);
+                        if (tracker.m_enableDebugOutput) {
+                            Msg("[D3D9TextureTracker] NEW texture variant #%zu: 0x%p for '%s'%s (hash: 0x%llX)\n", 
+                                textures.size(), p2DTexture, tracker.m_currentMaterialName.c_str(), 
+                                Stage == 1 ? " [STAGE1]" : "", hash);
+                        }
                             
                         // Apply automatic categorization logic (Particles, Emissive)
                         // Only for Stage 0 to avoid double-categorization
@@ -359,19 +363,21 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                     }
                 } else {
                     // DEBUG: Log textures that are set without a material name
-                    // This helps diagnose why some hashes aren't being tracked
-                    static int unmatchedCount = 0;
-                    unmatchedCount++;
-                    if (unmatchedCount % 1000 == 0) {
-                        Msg("[D3D9TextureTracker] WARNING: %d textures set without material name (0x%p)\n", 
-                            unmatchedCount, p2DTexture);
-                    }
-                    
-                    // Try to get the hash and log it for debugging
-                    if (g_remix && unmatchedCount % 1000 == 0) {
-                        auto result = g_remix->dxvk_GetTextureHash(p2DTexture);
-                        if (result && result.value() != 0) {
-                            Msg("[D3D9TextureTracker] Untracked texture hash: 0x%llX\n", result.value());
+                    if (tracker.m_enableDebugOutput) {
+                        // DEBUG: Log unmatched textures occasionally
+                        static int unmatchedCount = 0;
+                        unmatchedCount++;
+                        if (unmatchedCount % 1000 == 0) {
+                            Msg("[D3D9TextureTracker] WARNING: %d textures set without material name (0x%p)\n", 
+                                unmatchedCount, p2DTexture);
+                        }
+                        
+                        // Try to get hash for debugging
+                        if (g_remix && unmatchedCount % 1000 == 0) {
+                            auto result = g_remix->dxvk_GetTextureHash(p2DTexture);
+                            if (result && result.value() != 0) {
+                                Msg("[D3D9TextureTracker] Untracked texture hash: 0x%llX\n", result.value());
+                            }
                         }
                     }
                 }
@@ -412,10 +418,12 @@ void D3D9TextureTracker::Hook_Bind(IMatRenderContext* pContext, IMaterial* pMate
             // Log if it's a displacement blend material
             if (lowerName.find("blend_") != std::string::npos || 
                 lowerName.find("_wvt_patch") != std::string::npos) {
-                static int dispBindCount = 0;
-                dispBindCount++;
-                if (dispBindCount <= 10) {
-                    Msg("[D3D9TextureTracker] Bind() called for displacement: '%s'\n", name);
+                if (tracker.m_enableDebugOutput) {
+                    static int dispBindCount = 0;
+                    dispBindCount++;
+                    if (dispBindCount <= 10) {
+                        Msg("[D3D9TextureTracker] Bind() called for displacement: '%s'\n", name);
+                    }
                 }
             }
         }
@@ -429,21 +437,27 @@ void D3D9TextureTracker::Hook_Bind(IMatRenderContext* pContext, IMaterial* pMate
 // Hash-to-Category mapping implementation
 void D3D9TextureTracker::SetHashCategoryFlags(uint64_t textureHash, uint32_t categoryFlags) {
     m_hashToCategoryFlags[textureHash] = categoryFlags;
-    Msg("[D3D9TextureTracker] Set category flags 0x%X for hash 0x%llX\n", categoryFlags, textureHash);
+    if (m_enableDebugOutput) {
+        Msg("[D3D9TextureTracker] Set category flags 0x%X for hash 0x%llX\n", categoryFlags, textureHash);
+    }
 }
 
 void D3D9TextureTracker::RemoveHashCategoryFlags(uint64_t textureHash) {
     auto it = m_hashToCategoryFlags.find(textureHash);
     if (it != m_hashToCategoryFlags.end()) {
         m_hashToCategoryFlags.erase(it);
-        Msg("[D3D9TextureTracker] Removed category mapping for hash 0x%llX\n", textureHash);
+        if (m_enableDebugOutput) {
+            Msg("[D3D9TextureTracker] Removed category mapping for hash 0x%llX\n", textureHash);
+        }
     }
 }
 
 void D3D9TextureTracker::ClearHashCategoryMappings() {
     size_t count = m_hashToCategoryFlags.size();
     m_hashToCategoryFlags.clear();
-    Msg("[D3D9TextureTracker] Cleared %zu hash-to-category mappings\n", count);
+    if (m_enableDebugOutput) {
+        Msg("[D3D9TextureTracker] Cleared %zu hash-to-category mappings\n", count);
+    }
 }
 
 bool D3D9TextureTracker::GetHashCategoryFlags(uint64_t textureHash, uint32_t* outCategoryFlags) const {
@@ -920,27 +934,39 @@ void D3D9TextureTracker::ApplyCategoryToHash(uint64_t hash, uint32_t categoryFla
     // NOTE: WORLD_UI is intentionally omitted - we don't use it
     if (categoryFlags & CAT_SKY) {
         g_remix->AddTextureHash("rtx.skyBoxTextures", hashStr);
-        Msg("[D3D9] Categorized SKY: '%s' -> %s\n", materialName, hashStr);
+        if (m_enableDebugOutput) {
+            Msg("[D3D9] Categorized SKY: '%s' -> %s\n", materialName, hashStr);
+        }
     }
     if (categoryFlags & CAT_IGNORE) {
         g_remix->AddTextureHash("rtx.ignoreTextures", hashStr);
-        Msg("[D3D9] Categorized IGNORE: '%s' -> %s\n", materialName, hashStr);
+        if (m_enableDebugOutput) {
+            Msg("[D3D9] Categorized IGNORE: '%s' -> %s\n", materialName, hashStr);
+        }
     }
     if (categoryFlags & CAT_PARTICLE) {
         g_remix->AddTextureHash("rtx.particleTextures", hashStr);
-        Msg("[D3D9] Categorized PARTICLE: '%s' -> %s\n", materialName, hashStr);
+        if (m_enableDebugOutput) {
+            Msg("[D3D9] Categorized PARTICLE: '%s' -> %s\n", materialName, hashStr);
+        }
     }
     if (categoryFlags & CAT_DECAL_STATIC) {
         g_remix->AddTextureHash("rtx.decalTextures", hashStr);
-        Msg("[D3D9] Categorized DECAL: '%s' -> %s\n", materialName, hashStr);
+        if (m_enableDebugOutput) {
+            Msg("[D3D9] Categorized DECAL: '%s' -> %s\n", materialName, hashStr);
+        }
     }
     if (categoryFlags & CAT_ANIMATED_WATER) {
         g_remix->AddTextureHash("rtx.animatedWaterTextures", hashStr);
-        Msg("[D3D9] Categorized WATER: '%s' -> %s\n", materialName, hashStr);
+        if (m_enableDebugOutput) {
+            Msg("[D3D9] Categorized WATER: '%s' -> %s\n", materialName, hashStr);
+        }
     }
     if (categoryFlags & CAT_EMISSIVE) {
         g_remix->AddTextureHash("rtx.legacyEmissiveTextures", hashStr);
-        Msg("[D3D9] Categorized EMISSIVE: '%s' -> %s\n", materialName, hashStr);
+        if (m_enableDebugOutput) {
+            Msg("[D3D9] Categorized EMISSIVE: '%s' -> %s\n", materialName, hashStr);
+        }
     }
     
     // Update local tracking (without WORLD_UI bit)
@@ -1005,8 +1031,10 @@ int D3D9TextureTracker::RetryPendingCategories() {
         }
         
         // Got a valid hash! Log it for debugging
-        Msg("[D3D9TextureTracker] RetryPending: Got hash 0x%llX for '%s' (texture 0x%p)\n",
-            hash, pending.materialName.c_str(), pending.texture);
+        if (m_enableDebugOutput) {
+            Msg("[D3D9TextureTracker] RetryPending: Got hash 0x%llX for '%s' (texture 0x%p)\n",
+                hash, pending.materialName.c_str(), pending.texture);
+        }
         
         // Apply filtered categories using the helper function
         ApplyCategoryToHash(hash, filteredFlags, pending.materialName.c_str());
@@ -1018,7 +1046,7 @@ int D3D9TextureTracker::RetryPendingCategories() {
     
     m_pendingCategories = std::move(stillPending);
     
-    if (successCount > 0) {
+    if (successCount > 0 && m_enableDebugOutput) {
         Msg("[D3D9] RetryPendingCategories: %d categorized, %zu still pending\n", 
             successCount, m_pendingCategories.size());
     }
@@ -1276,15 +1304,17 @@ int D3D9TextureTracker::RecheckWorldTextures() {
                 }
                 
                 // Apply world geometry category
-                Msg("[D3D9TextureTracker] RecheckWorldTextures: Categorizing '%s' variant %d (hash 0x%llX) as DECAL_STATIC\n",
-                    materialName.c_str(), variantsCategorized + 1, hash);
+                if (m_enableDebugOutput) {
+                    Msg("[D3D9TextureTracker] RecheckWorldTextures: Categorizing '%s' variant %d (hash 0x%llX) as DECAL_STATIC\n",
+                        materialName.c_str(), variantsCategorized + 1, hash);
+                }
                 ApplyCategoryToHash(hash, CAT_DECAL_STATIC, materialName.c_str());
                 categorizedCount++;
                 variantsCategorized++;
             }
         }
         
-        if (variantsCategorized > 1) {
+        if (m_enableDebugOutput && variantsCategorized > 1) {
             Msg("[D3D9TextureTracker]   -> Categorized %d texture variants for '%s'\n", 
                 variantsCategorized, materialName.c_str());
         }
@@ -1411,6 +1441,13 @@ void D3D9TextureTracker::SetAutoCategorization(bool enabled) {
     }
     
     Msg("[D3D9TextureTracker] Auto-categorization %s\n", enabled ? "enabled" : "disabled");
+}
+
+// Enable or disable debug output
+void D3D9TextureTracker::SetDebugOutput(bool enabled) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_enableDebugOutput = enabled;
+    Msg("[D3D9TextureTracker] Debug output %s\n", enabled ? "enabled" : "disabled");
 }
 
 // Check if material is a world texture

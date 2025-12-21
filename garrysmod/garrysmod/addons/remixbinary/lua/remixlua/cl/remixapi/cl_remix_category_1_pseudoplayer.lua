@@ -13,9 +13,9 @@ end
 local MODULE_NAME = "RemixPseudoplayerCategory"
 
 -- ConVar to enable/disable auto-categorization
-CreateClientConVar("remix_auto_categorize_pseudoplayer", "1", true, false, 
+CreateClientConVar("rtx_auto_categorize_pseudoplayer", "1", true, false, 
     "Automatically categorize pseudoplayer materials as Player Model (1 = enabled, 0 = disabled)")
-CreateClientConVar("remix_auto_categorize_pseudoweapon", "1", true, false, 
+CreateClientConVar("rtx_auto_categorize_pseudoweapon", "1", true, false, 
     "Automatically categorize pseudoweapon materials as Player Model (1 = enabled, 0 = disabled)")
 
 -- Track which materials we've already processed
@@ -54,7 +54,7 @@ end
     @param force boolean - If true, categorize even if ConVar is disabled
 ]]--
 local function CategorizePseudoplayerMaterials(force)
-    if not force and not GetConVar("remix_auto_categorize_pseudoplayer"):GetBool() then
+    if not force and not GetConVar("rtx_auto_categorize_pseudoplayer"):GetBool() then
         return
     end
     
@@ -157,7 +157,7 @@ end
     @param force boolean - If true, categorize even if ConVar is disabled
 ]]--
 local function CategorizePseudoweaponMaterials(force)
-    if not force and not GetConVar("remix_auto_categorize_pseudoweapon"):GetBool() then
+    if not force and not GetConVar("rtx_auto_categorize_pseudoweapon"):GetBool() then
         return
     end
     
@@ -264,7 +264,7 @@ timer.Create(MODULE_NAME .. "_ModelChangeDetector", 0.5, 0, function()
     end
     
     -- Check for player model changes
-    if GetConVar("remix_auto_categorize_pseudoplayer"):GetBool() then
+    if GetConVar("rtx_auto_categorize_pseudoplayer"):GetBool() then
         local currentModel = ply:GetModel()
         if currentModel ~= lastPlayerModel and lastPlayerModel ~= "" then
             -- Model changed! Wait a moment for pseudoplayer to update, then categorize
@@ -280,7 +280,7 @@ timer.Create(MODULE_NAME .. "_ModelChangeDetector", 0.5, 0, function()
     end
     
     -- Check for weapon changes
-    if GetConVar("remix_auto_categorize_pseudoweapon"):GetBool() then
+    if GetConVar("rtx_auto_categorize_pseudoweapon"):GetBool() then
         local weapon = ply:GetActiveWeapon()
         if IsValid(weapon) then
             local currentWeapon = weapon:GetClass()
@@ -309,7 +309,7 @@ timer.Create(MODULE_NAME .. "_ModelChangeDetector", 0.5, 0, function()
 end)
 
 -- Console command for manual player categorization
-concommand.Add("remix_categorize_pseudoplayer", function()
+concommand.Add("rtx_categorize_pseudoplayer", function()
     -- Clear the D3D9 texture cache to remove old texture variants
     MsgC(Color(200, 200, 255), "[RemixPseudoplayerCategory] Clearing D3D9 texture cache...\n")
     RemixMaterial.ClearTextureCache()
@@ -319,7 +319,7 @@ concommand.Add("remix_categorize_pseudoplayer", function()
 end, nil, "Manually categorize pseudoplayer materials as Player Model textures")
 
 -- Console command for manual weapon categorization
-concommand.Add("remix_categorize_pseudoweapon", function()
+concommand.Add("rtx_categorize_pseudoweapon", function()
     -- Clear the D3D9 texture cache to remove old texture variants
     MsgC(Color(200, 200, 255), "[RemixPseudoplayerCategory] Clearing D3D9 texture cache...\n")
     RemixMaterial.ClearTextureCache()
@@ -330,7 +330,7 @@ end, nil, "Manually categorize pseudoweapon materials as Player Model textures")
 
 MsgC(Color(150, 200, 255), string.format("[%s] Loaded.\n", MODULE_NAME))
 MsgC(Color(200, 200, 200), string.format("[%s] Player auto-categorization: %s\n", 
-    MODULE_NAME, GetConVar("remix_auto_categorize_pseudoplayer"):GetBool() and "ENABLED" or "DISABLED"))
+    MODULE_NAME, GetConVar("rtx_auto_categorize_pseudoplayer"):GetBool() and "ENABLED" or "DISABLED"))
 MsgC(Color(200, 200, 200), string.format("[%s] Weapon auto-categorization: %s\n", 
-    MODULE_NAME, GetConVar("remix_auto_categorize_pseudoweapon"):GetBool() and "ENABLED" or "DISABLED"))
+    MODULE_NAME, GetConVar("rtx_auto_categorize_pseudoweapon"):GetBool() and "ENABLED" or "DISABLED"))
 MsgC(Color(200, 200, 200), string.format("[%s] Use 'remix_categorize_pseudoplayer' and 'remix_categorize_pseudoweapon' to manually categorize\n", MODULE_NAME))

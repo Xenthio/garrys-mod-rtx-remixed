@@ -1150,6 +1150,21 @@ LUA_FUNCTION(RemixMaterial_SetAutoCategorization) {
     return 1;
 }
 
+// Lua function: RemixMaterial.SetDebugOutput(enabled)
+// Enable or disable debug output for categorization
+LUA_FUNCTION(RemixMaterial_SetDebugOutput) {
+    if (!LUA->IsType(1, Type::Bool)) {
+        LUA->ThrowError("RemixMaterial.SetDebugOutput: Expected boolean argument");
+        return 0;
+    }
+    
+    bool enabled = LUA->GetBool(1);
+    D3D9TextureTracker::Instance().SetDebugOutput(enabled);
+    
+    LUA->PushBool(true);
+    return 1;
+}
+
 // Initialize Material Manager Lua bindings
 void MaterialManager::InitializeLuaBindings() {
     if (!m_lua) return;
@@ -1238,6 +1253,9 @@ void MaterialManager::InitializeLuaBindings() {
     
     m_lua->PushCFunction(RemixMaterial_SetAutoCategorization);
     m_lua->SetField(-2, "SetAutoCategorization");
+    
+    m_lua->PushCFunction(RemixMaterial_SetDebugOutput);
+    m_lua->SetField(-2, "SetDebugOutput");
     
     // Set the table as the global "RemixMaterial"
     m_lua->SetField(-2, "RemixMaterial");

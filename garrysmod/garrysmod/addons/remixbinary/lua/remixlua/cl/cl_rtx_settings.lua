@@ -165,41 +165,46 @@ hook.Add( "PopulateToolMenu", "RTXOptionsClient_AutoCategorization", function()
         panel:ClearControls()
 
         -- Master toggle
-        local masterCheckbox = panel:CheckBox("Enable Auto-Categorization", "remix_auto_categorize")
+        local masterCheckbox = panel:CheckBox("Enable Auto-Categorization", "rtx_auto_categorize")
         panel:ControlHelp("Automatically categorizes textures for RTX Remix.")
         
         -- Delay slider
-        local delaySlider = panel:NumSlider("Delay (seconds)", "remix_auto_categorize_delay", 0, 10, 1)
+        local delaySlider = panel:NumSlider("Delay (seconds)", "rtx_auto_categorize_delay", 0, 10, 1)
         panel:ControlHelp("How long to wait after map load before scanning (allows BSP data to load).")
 
         -- World geometry toggle
-        local worldCheckbox = panel:CheckBox("World Geometry", "remix_auto_categorize_world")
+        local worldCheckbox = panel:CheckBox("World Geometry", "rtx_auto_categorize_world")
         panel:ControlHelp("Categorizes walls, floors, and ceilings from BSP as Decals for proper blending.")
         
         -- Particles toggle
-        local particlesCheckbox = panel:CheckBox("Particles", "remix_auto_categorize_particles")
+        local particlesCheckbox = panel:CheckBox("Particles", "rtx_auto_categorize_particles")
         panel:ControlHelp("Categorizes particle effects (smoke, fire, sparks, etc) as Particles.")
         
         -- Decals toggle
-        local decalsCheckbox = panel:CheckBox("Overlay Decals", "remix_auto_categorize_decals")
+        local decalsCheckbox = panel:CheckBox("Overlay Decals", "rtx_auto_categorize_decals")
         panel:ControlHelp("Categorizes materials with $decal parameter (posters, graffiti, bullet holes, etc) as Decals.")
         
         -- Emissive toggle
-        local emissiveCheckbox = panel:CheckBox("Legacy Emissive", "remix_auto_categorize_emissive")
+        local emissiveCheckbox = panel:CheckBox("Legacy Emissive", "rtx_auto_categorize_emissive")
         panel:ControlHelp("Categorizes materials with $selfillum parameter as Legacy Emissive.")
         panel:ControlHelp("This can incorrectly categorized some materials due to them using the $selfillum parameter incorrectly.")
+        
+        panel:Help("Debug Options")
+        -- Debug output toggle
+        panel:CheckBox("Debug Output", "rtx_debug_categorization")
+        panel:ControlHelp("Shows debug messages in console for categorization activity (useful for troubleshooting).")
         
         panel:Help("Manual Controls")
         -- Manual trigger button
         local scanButton = panel:Button("Scan Now")
         scanButton.DoClick = function()
-            RunConsoleCommand("remix_smart_mark_world", "force")
+            RunConsoleCommand("rtx_smart_mark_world", "force")
         end
         panel:ControlHelp("Manually parse BSP and categorize world textures, decals, and emissive materials.")
         
         -- Update sub-controls based on master toggle
         local function UpdateControls()
-            local enabled = GetConVar("remix_auto_categorize"):GetBool()
+            local enabled = GetConVar("rtx_auto_categorize"):GetBool()
             if delaySlider then delaySlider:SetEnabled(enabled) end
             if worldCheckbox then worldCheckbox:SetEnabled(enabled) end
             if particlesCheckbox then particlesCheckbox:SetEnabled(enabled) end
