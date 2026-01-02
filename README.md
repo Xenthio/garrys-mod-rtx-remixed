@@ -27,7 +27,7 @@ Multiplayer works best when the server/host has this addon and the cvar `sv_allo
 You can join servers without the addon but you ***will*** experience visual issues.
 
 ## Support
-### [Incompatible Addons](https://github.com/Xenthio/garrys-mod-rtx-remixed/wiki/Incompatible-Addons)
+### [Problematic Addons](https://github.com/Xenthio/garrys-mod-rtx-remixed/wiki/Incompatible-Addons)
 ### [Known issues](https://github.com/Xenthio/garrys-mod-rtx-remixed/wiki/Known-Issues)
 
 ## Recommended Resources
