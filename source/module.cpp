@@ -239,7 +239,7 @@ GMOD_MODULE_OPEN() {
 
         ModelRenderHooks::Instance().Initialize();
         ModelLoadHooks::Instance().Initialize();
-        ModelDrawHook::Instance().Initialize();
+        //ModelDrawHook::Instance().Initialize();
 
         // Register Lua functions
         LUA->PushSpecial(GarrysMod::Lua::SPECIAL_GLOB); 
@@ -253,9 +253,9 @@ GMOD_MODULE_OPEN() {
         LUA->PushCFunction(GetForceStaticLighting_Lua);
         LUA->SetField(-2, "GetForceStaticLighting");
 
-        Msg("[gmRTX - Binary Module] Registering SetModelDrawHookEnabled Lua function...\n");
-        LUA->PushCFunction(SetModelDrawHookEnabled_Lua);
-        LUA->SetField(-2, "SetModelDrawHookEnabled");
+        //Msg("[gmRTX - Binary Module] Registering SetModelDrawHookEnabled Lua function...\n");
+        //LUA->PushCFunction(SetModelDrawHookEnabled_Lua);
+        //LUA->SetField(-2, "SetModelDrawHookEnabled");
 
         // Only register Remix-related Lua functions in 64-bit builds
         #ifdef _WIN64
@@ -289,7 +289,7 @@ GMOD_MODULE_CLOSE() {
 
        ModelRenderHooks::Instance().Shutdown();
        ModelLoadHooks::Instance().Shutdown();
-       ModelDrawHook::Instance().Shutdown();
+       //ModelDrawHook::Instance().Shutdown();
 
 #ifdef _WIN64^
         if (g_remix) {
