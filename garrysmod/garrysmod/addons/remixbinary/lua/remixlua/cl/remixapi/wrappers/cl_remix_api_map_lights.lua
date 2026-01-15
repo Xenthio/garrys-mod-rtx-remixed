@@ -1,3 +1,5 @@
+if not (BRANCH == "x86-64" or BRANCH == "chromium") then return end
+
 local brightness_multiplier = CreateClientConVar("rtx_api_map_lights_brightness", "1.0", true, false, "Brightness multiplier for converted lights")
 local min_size = CreateClientConVar("rtx_api_map_lights_min_size", "0", true, false, "Minimum size for RTX lights")
 local max_size = CreateClientConVar("rtx_api_map_lights_max_size", "4", true, false, "Maximum size for RTX lights")

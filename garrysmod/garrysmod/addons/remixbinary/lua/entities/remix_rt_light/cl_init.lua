@@ -1,3 +1,4 @@
+if not (BRANCH == "x86-64" or BRANCH == "chromium") then return end
 include("shared.lua")
 
 -- Optional queue include to throttle RemixLight operations

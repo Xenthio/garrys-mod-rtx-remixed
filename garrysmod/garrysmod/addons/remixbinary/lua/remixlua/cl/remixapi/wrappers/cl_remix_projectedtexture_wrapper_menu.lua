@@ -1,4 +1,5 @@
 -- Tool Menu for RTX ProjectedTexture Wrapper
+if not (BRANCH == "x86-64" or BRANCH == "chromium") then return end
 if not CLIENT then return end
 
 hook.Add("PopulateToolMenu", "RTXProjectedTextureWrapper_Menu", function()

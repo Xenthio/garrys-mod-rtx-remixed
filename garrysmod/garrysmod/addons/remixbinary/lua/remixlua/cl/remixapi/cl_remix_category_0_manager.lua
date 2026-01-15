@@ -1,3 +1,4 @@
+if not (BRANCH == "x86-64" or BRANCH == "chromium") then return end
 --[[
     RTX Remix Category Manager
     
@@ -10,8 +11,7 @@
 ]]--
 
 if not RemixMaterial then
-    Error("[RemixCategoryManager] RemixMaterial API not available!\n")
-    return
+    return -- Silently skip if API not available
 end
 
 RemixCategoryManager = RemixCategoryManager or {}

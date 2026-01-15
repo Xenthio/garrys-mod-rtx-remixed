@@ -1,3 +1,4 @@
+if not (BRANCH == "x86-64" or BRANCH == "chromium") then return end
 --[[
     RTX Remix Pseudoplayer Material Auto-Categorization
     
@@ -6,8 +7,7 @@
 ]]--
 
 if not RemixMaterial or not RemixCategoryManager then
-    Error("[RemixPseudoplayerCategory] RemixMaterial or RemixCategoryManager not available!\n")
-    return
+    return -- Silently skip if API not available
 end
 
 local MODULE_NAME = "RemixPseudoplayerCategory"

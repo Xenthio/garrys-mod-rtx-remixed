@@ -1,3 +1,4 @@
+if not (BRANCH == "x86-64" or BRANCH == "chromium") then return end
 -- Console commands to quickly verify Remix API lights in-game
 
 local function vec(x, y, z) return { x = x, y = y, z = z } end

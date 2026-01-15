@@ -1,3 +1,4 @@
+if not (BRANCH == "x86-64" or BRANCH == "chromium") then return end
 if not CLIENT then return end
 
 local cvar_debug_hud = CreateClientConVar("rtx_debug_hud", "0", true, false, "Enable RTX Remix texture hash debug HUD")

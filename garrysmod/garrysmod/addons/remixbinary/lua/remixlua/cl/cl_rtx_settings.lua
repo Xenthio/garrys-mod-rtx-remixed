@@ -5,6 +5,12 @@ local CONVARS = {
     SHOW_3DSKY_WARNING = CreateClientConVar("rtx_show_3dsky_warning", "1", true, false, "Show warning when enabling r_3dsky")
 }
 
+-- Force enable lightupdaters on 32-bit (API lights not available)
+local is32Bit = not (BRANCH == "x86-64" or BRANCH == "chromium")
+if is32Bit then
+    RunConsoleCommand("rtx_lightupdater", "1")
+end
+
 hook.Add( "PopulateToolMenu", "RTXOptionsClient_BaseOptions", function()
     spawnmenu.AddToolMenuOption( "Utilities", "RTX Remix", "RTX_Client_BaseOptions", "#Base Options", "", "", function( panel )
         panel:ClearControls()
@@ -18,8 +24,13 @@ hook.Add( "PopulateToolMenu", "RTXOptionsClient_BaseOptions", function()
         panel:ControlHelp( "Hides geometry behind the skybox to prevent it from leaking through, doesn't allow light_enviornment entities to pass through though." )
         panel:ControlHelp( "Also breaks HDRIs.")
 
-        panel:CheckBox( "Disable Remix API Lights", "rtx_lightupdater" )
-        panel:ControlHelp( "Enables lightupdaters, which will make Remix use the detected d3d9 lights from the game instead of API lights." )
+        -- Only show lightupdater option on 64-bit (32-bit must use lightupdaters)
+        local is64Bit = (BRANCH == "x86-64" or BRANCH == "chromium")
+        if is64Bit then
+            panel:CheckBox( "Disable Remix API Lights", "rtx_lightupdater" )
+            panel:ControlHelp( "Enables lightupdaters, which will make Remix use the detected d3d9 lights from the game instead of API lights." )
+        else
+        end
 
         panel:Help("Map Fixes")
         panel:ControlHelp("Fixes broken geometry rendering for the current map, can lower FPS.")
@@ -159,67 +170,69 @@ hook.Add("InitPostEntity", "RTX_ApplyLightupdaterState", function()
     end)
 end)
 
--- Auto-Categorization Settings
-hook.Add( "PopulateToolMenu", "RTXOptionsClient_AutoCategorization", function()
-    spawnmenu.AddToolMenuOption( "Utilities", "RTX Remix", "RTX_Client_AutoCategorization", "#Auto-Categorization", "", "", function( panel )
-        panel:ClearControls()
+-- Auto-Categorization Settings (Only show for 64-bit client)
+if BRANCH == "x86-64" or BRANCH == "chromium" then
+    hook.Add( "PopulateToolMenu", "RTXOptionsClient_AutoCategorization", function()
+        spawnmenu.AddToolMenuOption( "Utilities", "RTX Remix", "RTX_Client_AutoCategorization", "#Auto-Categorization", "", "", function( panel )
+            panel:ClearControls()
 
-        -- Master toggle
-        local masterCheckbox = panel:CheckBox("Enable Auto-Categorization", "rtx_auto_categorize")
-        panel:ControlHelp("Automatically categorizes textures for RTX Remix.")
-        
-        -- Delay slider
-        local delaySlider = panel:NumSlider("Delay (seconds)", "rtx_auto_categorize_delay", 0, 10, 1)
-        panel:ControlHelp("How long to wait after map load before scanning (allows BSP data to load).")
+            -- Master toggle
+            local masterCheckbox = panel:CheckBox("Enable Auto-Categorization", "rtx_auto_categorize")
+            panel:ControlHelp("Automatically categorizes textures for RTX Remix.")
+            
+            -- Delay slider
+            local delaySlider = panel:NumSlider("Delay (seconds)", "rtx_auto_categorize_delay", 0, 10, 1)
+            panel:ControlHelp("How long to wait after map load before scanning (allows BSP data to load).")
 
-        -- World geometry toggle
-        local worldCheckbox = panel:CheckBox("World Geometry", "rtx_auto_categorize_world")
-        panel:ControlHelp("Categorizes walls, floors, and ceilings from BSP as Decals for proper blending.")
-        
-        -- Particles toggle
-        local particlesCheckbox = panel:CheckBox("Particles", "rtx_auto_categorize_particles")
-        panel:ControlHelp("Categorizes particle effects (smoke, fire, sparks, etc) as Particles.")
-        
-        -- Decals toggle
-        local decalsCheckbox = panel:CheckBox("Overlay Decals", "rtx_auto_categorize_decals")
-        panel:ControlHelp("Categorizes materials with $decal parameter (posters, graffiti, bullet holes, etc) as Decals.")
-        
-        -- Emissive toggle
-        local emissiveCheckbox = panel:CheckBox("Legacy Emissive", "rtx_auto_categorize_emissive")
-        panel:ControlHelp("Categorizes materials with $selfillum parameter as Legacy Emissive.")
-        panel:ControlHelp("This can incorrectly categorized some materials due to them using the $selfillum parameter incorrectly.")
-        
-        panel:Help("Debug Options")
-        -- Debug output toggle
-        panel:CheckBox("Debug Output", "rtx_debug_categorization")
-        panel:ControlHelp("Shows debug messages in console for categorization activity (useful for troubleshooting).")
-        
-        panel:Help("Manual Controls")
-        -- Manual trigger button
-        local scanButton = panel:Button("Scan Now")
-        scanButton.DoClick = function()
-            RunConsoleCommand("rtx_smart_mark_world", "force")
-        end
-        panel:ControlHelp("Manually parse BSP and categorize world textures, decals, and emissive materials.")
-        
-        -- Update sub-controls based on master toggle
-        local function UpdateControls()
-            local enabled = GetConVar("rtx_auto_categorize"):GetBool()
-            if delaySlider then delaySlider:SetEnabled(enabled) end
-            if worldCheckbox then worldCheckbox:SetEnabled(enabled) end
-            if particlesCheckbox then particlesCheckbox:SetEnabled(enabled) end
-            if decalsCheckbox then decalsCheckbox:SetEnabled(enabled) end
-            if emissiveCheckbox then emissiveCheckbox:SetEnabled(enabled) end
-        end
-        
-        -- Set initial state
-        UpdateControls()
-        
-        -- Update when master checkbox changes
-        if masterCheckbox then
-            masterCheckbox.OnChange = function(self, value)
-                UpdateControls()
+            -- World geometry toggle
+            local worldCheckbox = panel:CheckBox("World Geometry", "rtx_auto_categorize_world")
+            panel:ControlHelp("Categorizes walls, floors, and ceilings from BSP as Decals for proper blending.")
+            
+            -- Particles toggle
+            local particlesCheckbox = panel:CheckBox("Particles", "rtx_auto_categorize_particles")
+            panel:ControlHelp("Categorizes particle effects (smoke, fire, sparks, etc) as Particles.")
+            
+            -- Decals toggle
+            local decalsCheckbox = panel:CheckBox("Overlay Decals", "rtx_auto_categorize_decals")
+            panel:ControlHelp("Categorizes materials with $decal parameter (posters, graffiti, bullet holes, etc) as Decals.")
+            
+            -- Emissive toggle
+            local emissiveCheckbox = panel:CheckBox("Legacy Emissive", "rtx_auto_categorize_emissive")
+            panel:ControlHelp("Categorizes materials with $selfillum parameter as Legacy Emissive.")
+            panel:ControlHelp("This can incorrectly categorized some materials due to them using the $selfillum parameter incorrectly.")
+            
+            panel:Help("Debug Options")
+            -- Debug output toggle
+            panel:CheckBox("Debug Output", "rtx_debug_categorization")
+            panel:ControlHelp("Shows debug messages in console for categorization activity (useful for troubleshooting).")
+            
+            panel:Help("Manual Controls")
+            -- Manual trigger button
+            local scanButton = panel:Button("Scan Now")
+            scanButton.DoClick = function()
+                RunConsoleCommand("rtx_smart_mark_world", "force")
             end
-        end
+            panel:ControlHelp("Manually parse BSP and categorize world textures, decals, and emissive materials.")
+            
+            -- Update sub-controls based on master toggle
+            local function UpdateControls()
+                local enabled = GetConVar("rtx_auto_categorize"):GetBool()
+                if delaySlider then delaySlider:SetEnabled(enabled) end
+                if worldCheckbox then worldCheckbox:SetEnabled(enabled) end
+                if particlesCheckbox then particlesCheckbox:SetEnabled(enabled) end
+                if decalsCheckbox then decalsCheckbox:SetEnabled(enabled) end
+                if emissiveCheckbox then emissiveCheckbox:SetEnabled(enabled) end
+            end
+            
+            -- Set initial state
+            UpdateControls()
+            
+            -- Update when master checkbox changes
+            if masterCheckbox then
+                masterCheckbox.OnChange = function(self, value)
+                    UpdateControls()
+                end
+            end
+        end )
     end )
-end )
+end

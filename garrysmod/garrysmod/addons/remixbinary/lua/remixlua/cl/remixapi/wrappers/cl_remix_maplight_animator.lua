@@ -1,3 +1,4 @@
+if not (BRANCH == "x86-64" or BRANCH == "chromium") then return end
 if not CLIENT then return end
 
 local cv_enable = CreateClientConVar("rtx_maplight_anim", "1", true, false, "Enable client map light animator")

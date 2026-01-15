@@ -1,3 +1,4 @@
+if not (BRANCH == "x86-64" or BRANCH == "chromium") then return end
 --[[
     Physgun Color Sync for RTX Remix
     

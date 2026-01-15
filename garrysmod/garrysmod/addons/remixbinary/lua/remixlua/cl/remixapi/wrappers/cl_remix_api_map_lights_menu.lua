@@ -1,6 +1,7 @@
 -- Dedicated Tool Menu for Remix API Lights runtime controls
 -- Loaded automatically by autorun/cl_rtx.lua which includes all files under remixlua/cl/remixapi/
 
+if not (BRANCH == "x86-64" or BRANCH == "chromium") then return end
 if not CLIENT then return end
 
 hook.Add("PopulateToolMenu", "RemixAPILights", function()
