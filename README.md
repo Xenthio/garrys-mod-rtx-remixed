@@ -1,17 +1,15 @@
 <img src="https://github.com/user-attachments/assets/fad469d4-b7b2-428c-a093-5b497f02d820" alt="drawing" width="500"/>
 
 ## Features
-- Light Updaters
-    - Forces Source to render all map lights
 - Material fixes
     - Fixes some broken UI/game materials and removes detail textures
     - Change all water textures to a single one to simplify replacements in Remix
 - Model fixes
     - Fixes some props having unstable hashes in RTX Remix so they can be replaced in the Remix Toolkit
     - Allows most HL2 RTX mesh replacements to load correctly
-- Remix API support (x64 only)
+- Remix API Support (x64 only)
+    - Lights
     - Lua bindings for addon creation
-       - Materials, config vars
     - Map-specific Remix settings
       
 
@@ -29,7 +27,7 @@ Multiplayer works best when the server/host has this addon and the cvar `sv_allo
 You can join servers without the addon but you ***will*** experience visual issues.
 
 ## Support
-### [Incompatible Addons](https://github.com/Xenthio/garrys-mod-rtx-remixed/wiki/Incompatible-Addons)
+### [Problematic Addons](https://github.com/Xenthio/garrys-mod-rtx-remixed/wiki/Incompatible-Addons)
 ### [Known issues](https://github.com/Xenthio/garrys-mod-rtx-remixed/wiki/Known-Issues)
 
 ## Recommended Resources
