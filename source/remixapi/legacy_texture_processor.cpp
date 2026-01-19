@@ -2738,12 +2738,12 @@ bool TextureProcessor::WriteModUSDA() {
                 materialsUsda << "                    colorSpace = \"srgb\"\n";
                 materialsUsda << "                )\n";
                 // use_diffuse_layer controls whether the texture appears as a diffuse surface layer
-                // For Refract shaders: use_diffuse_layer=0 (pure glass, no solid layer)
-                // For non-Refract glass (like bottles): use_diffuse_layer=1 (shows texture color)
+                // Enable for both Refract and non-Refract glass, but reduce opacity for Refract
+                materialsUsda << "                bool inputs:use_diffuse_layer = 1\n";
+                
+                // For Refract shaders: reduce diffuse opacity to prevent overly bright/contrasty look
                 if (info.isRefractShader) {
-                    materialsUsda << "                bool inputs:use_diffuse_layer = 0\n";
-                } else {
-                    materialsUsda << "                bool inputs:use_diffuse_layer = 1\n";
+                    materialsUsda << "                float inputs:diffuse_color_constant_opacity = 0.3\n";
                 }
             }
             
