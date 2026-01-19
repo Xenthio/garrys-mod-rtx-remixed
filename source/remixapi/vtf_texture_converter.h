@@ -213,9 +213,6 @@ private:
     // Generate output filename for a texture type
     std::string GenerateOutputPath(uint64_t hash, const std::string& suffix);
     
-    // Generate relative path for Remix API (uses forward slashes)
-    std::string GenerateRelativePath(uint64_t hash, const std::string& suffix);
-    
     // Convert normal map from DirectX format to octahedral format for RTX Remix
     void ConvertNormalMapToOctahedral(ConvertedTexture& texture);
     
@@ -234,7 +231,6 @@ private:
     bool m_autoProcessing;
     bool m_debugOutput;
     std::string m_outputDirectory;       // Absolute output directory for writing DDS files
-    std::string m_relativeOutputPath;    // Relative path for Remix API (uses forward slashes)
     
     // Cache of processed materials
     std::unordered_set<std::string> m_processedMaterials;
