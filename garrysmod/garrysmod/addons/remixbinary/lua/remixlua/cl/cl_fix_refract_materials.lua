@@ -94,11 +94,20 @@ local function ProcessMaterial(matName)
     local fallbackTexture = nil
     local fallbackSource = nil
     
-    -- Try $normalmap first (most common for refract)
-    local normalMap = mat:GetString("$normalmap")
-    if IsValidTexturePath(normalMap) then
-        fallbackTexture = normalMap
-        fallbackSource = "$normalmap"
+    -- Try $refracttinttexture FIRST (this is the actual color texture for the glass)
+    local refractTint = mat:GetString("$refracttinttexture")
+    if IsValidTexturePath(refractTint) then
+        fallbackTexture = refractTint
+        fallbackSource = "$refracttinttexture"
+    end
+    
+    -- Try $normalmap second (common for refract)
+    if not fallbackTexture then
+        local normalMap = mat:GetString("$normalmap")
+        if IsValidTexturePath(normalMap) then
+            fallbackTexture = normalMap
+            fallbackSource = "$normalmap"
+        end
     end
     
     -- Try $dudvmap if no normalmap
@@ -107,15 +116,6 @@ local function ProcessMaterial(matName)
         if IsValidTexturePath(dudvMap) then
             fallbackTexture = dudvMap
             fallbackSource = "$dudvmap"
-        end
-    end
-    
-    -- Try $refracttinttexture if still no fallback
-    if not fallbackTexture then
-        local refractTint = mat:GetString("$refracttinttexture")
-        if IsValidTexturePath(refractTint) then
-            fallbackTexture = refractTint
-            fallbackSource = "$refracttinttexture"
         end
     end
     
@@ -289,4 +289,4 @@ end, nil, "Show Refract material fix statistics")
 
 -- Startup message
 MsgC(Color(100, 255, 100), "[RTX FixRefract] Refract Material Fixer loaded.\n")
-MsgC(Color(200, 200, 200), "  Will set $basetexture for Refract materials from $normalmap/$dudvmap.\n")
+MsgC(Color(200, 200, 200), "  Will set $basetexture for Refract materials from $refracttinttexture/$normalmap/$dudvmap.\n")

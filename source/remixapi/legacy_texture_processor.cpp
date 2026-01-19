@@ -2653,6 +2653,15 @@ bool TextureProcessor::WriteModUSDA() {
                 // Use diffuse layer to show the texture on the glass
                 materialsUsda << "                bool inputs:use_diffuse_layer = 1\n";
             }
+            
+            // Add normal map support for glass (for frosted/textured glass)
+            if (!info.normalPath.empty()) {
+                std::string relPath = GetRelativeTexturePath(info.normalPath, m_outputDirectory);
+                materialsUsda << "                int inputs:encoding = 0\n";  // 0 = octahedral
+                materialsUsda << "                asset inputs:normalmap_texture = @" << relPath << "@ (\n";
+                materialsUsda << "                    colorSpace = \"raw\"\n";
+                materialsUsda << "                )\n";
+            }
         } else {
             // Standard opaque materials use AperturePBR_Opaque shader
             materialsUsda << "                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@\n";
