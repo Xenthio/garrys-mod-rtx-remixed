@@ -447,6 +447,15 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
         if (m_debugOutput) {
             Msg("[LegacyTextureProcessor] %s: Using envmap mask for roughness\n", props.materialName.c_str());
         }
+    } else if ((props.hasEnvMap || props.hasEnvMapTint) && props.hasBumpMap && !props.bumpMapPath.empty()) {
+        // FALLBACK for $normalmapalphaenvmapmask: If $envmap or $envmaptint is set and we have a bumpmap,
+        // try using normal map alpha first (implicit $normalmapalphaenvmapmask behavior)
+        // This handles cases where FindVar doesn't find $normalmapalphaenvmapmask but it's set in VMT
+        vtfPath = props.bumpMapPath;
+        useAlphaChannel = true;
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: Trying normal map alpha as fallback roughness (implicit $normalmapalphaenvmapmask)\n", props.materialName.c_str());
+        }
     } else if ((props.hasEnvMap || props.hasEnvMapTint) && !props.baseTexturePath.empty()) {
         // FALLBACK: If $envmap or $envmaptint is set but no explicit roughness source,
         // try using base texture alpha as envmap mask (implicit $basealphaenvmapmask behavior)
@@ -455,6 +464,17 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
         useAlphaChannel = true;
         if (m_debugOutput) {
             Msg("[LegacyTextureProcessor] %s: Trying base texture alpha as fallback roughness (implicit envmap alpha)\n", props.materialName.c_str());
+        }
+    } else if (props.hasBumpMap && !props.bumpMapPath.empty()) {
+        // LAST RESORT: If we have a bumpmap but couldn't detect envmap reliably,
+        // try normal map alpha anyway. The alpha variation check will filter out
+        // normal maps without useful alpha data. This handles cases where:
+        // - $envmap is set but FindVar returns UNDEFINED
+        // - $normalmapalphaenvmapmask is set but FindVar doesn't find it
+        vtfPath = props.bumpMapPath;
+        useAlphaChannel = true;
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: Last resort - trying normal map alpha (FindVar limitations)\n", props.materialName.c_str());
         }
     } else {
         // NO REFLECTIVE PROPERTIES - don't try to generate roughness texture
