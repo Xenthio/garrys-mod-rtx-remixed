@@ -162,6 +162,8 @@ bool VTFTextureConverter::Initialize(remix::Interface* remixInterface) {
                 }
             }
             m_outputDirectory = gameDir + "\\rtx-remix\\mods\\gmod_topbr\\textures";
+            // Relative path for Remix API (uses forward slashes)
+            m_relativeOutputPath = "./rtx-remix/mods/gmod_topbr/textures";
         }
     }
     
@@ -246,6 +248,12 @@ bool VTFTextureConverter::EnsureOutputDirectory() {
 std::string VTFTextureConverter::GenerateOutputPath(uint64_t hash, const std::string& suffix) {
     std::ostringstream oss;
     oss << m_outputDirectory << "\\" << std::hex << std::uppercase << hash << suffix << ".dds";
+    return oss.str();
+}
+
+std::string VTFTextureConverter::GenerateRelativePath(uint64_t hash, const std::string& suffix) {
+    std::ostringstream oss;
+    oss << m_relativeOutputPath << "/" << std::hex << std::uppercase << hash << suffix << ".dds";
     return oss.str();
 }
 
@@ -1284,16 +1292,17 @@ bool VTFTextureConverter::CreatePBRMaterial(const MaterialPBRProperties& props, 
                 if (ExtractVTFPixelData(fileData, header, normalTex, true)) {
                     normalTex.hash = GenerateTextureHash(props.bumpMapPath + "_normal", normalTex.width, normalTex.height);
                     std::string outputPath = GenerateOutputPath(normalTex.hash, "_normal");
+                    std::string relativePath = GenerateRelativePath(normalTex.hash, "_normal");
                     
                     if (WriteTextureToDDS(normalTex, outputPath)) {
-                        // Convert to wide string for Remix API
-                        normalTexturePath = std::wstring(outputPath.begin(), outputPath.end());
+                        // Use relative path for Remix API (it needs forward slashes)
+                        normalTexturePath = std::wstring(relativePath.begin(), relativePath.end());
                         matInfo.normalTexture = normalTexturePath.c_str();
                         m_writtenTexturePaths[normalTex.hash] = outputPath;
                         m_stats.materialsWithNormals++;
                         
                         if (m_debugOutput) {
-                            Msg("[VTFConverter] Set normal texture: %s\n", outputPath.c_str());
+                            Msg("[VTFConverter] Set normal texture: %s (relative: %s)\n", outputPath.c_str(), relativePath.c_str());
                         }
                     } else if (m_debugOutput) {
                         Msg("[VTFConverter] Failed to write normal DDS for %s\n", props.bumpMapPath.c_str());
@@ -1317,15 +1326,17 @@ bool VTFTextureConverter::CreatePBRMaterial(const MaterialPBRProperties& props, 
         if (GenerateRoughnessTexture(props, roughnessTex)) {
             roughnessTex.hash = GenerateTextureHash(props.materialName + "_roughness", roughnessTex.width, roughnessTex.height);
             std::string outputPath = GenerateOutputPath(roughnessTex.hash, "_rough");
+            std::string relativePath = GenerateRelativePath(roughnessTex.hash, "_rough");
             
             if (WriteTextureToDDS(roughnessTex, outputPath)) {
-                roughnessTexturePath = std::wstring(outputPath.begin(), outputPath.end());
+                // Use relative path for Remix API
+                roughnessTexturePath = std::wstring(relativePath.begin(), relativePath.end());
                 opaqueExt.roughnessTexture = roughnessTexturePath.c_str();
                 m_writtenTexturePaths[roughnessTex.hash] = outputPath;
                 m_stats.materialsWithRoughness++;
                 
                 if (m_debugOutput) {
-                    Msg("[VTFConverter] Set roughness texture: %s\n", outputPath.c_str());
+                    Msg("[VTFConverter] Set roughness texture: %s (relative: %s)\n", outputPath.c_str(), relativePath.c_str());
                 }
             } else {
                 // Fall back to constant
@@ -1344,14 +1355,16 @@ bool VTFTextureConverter::CreatePBRMaterial(const MaterialPBRProperties& props, 
         if (GenerateMetallicTexture(props, metallicTex)) {
             metallicTex.hash = GenerateTextureHash(props.materialName + "_metallic", metallicTex.width, metallicTex.height);
             std::string outputPath = GenerateOutputPath(metallicTex.hash, "_metal");
+            std::string relativePath = GenerateRelativePath(metallicTex.hash, "_metal");
             
             if (WriteTextureToDDS(metallicTex, outputPath)) {
-                metallicTexturePath = std::wstring(outputPath.begin(), outputPath.end());
+                // Use relative path for Remix API
+                metallicTexturePath = std::wstring(relativePath.begin(), relativePath.end());
                 opaqueExt.metallicTexture = metallicTexturePath.c_str();
                 m_writtenTexturePaths[metallicTex.hash] = outputPath;
                 
                 if (m_debugOutput) {
-                    Msg("[VTFConverter] Set metallic texture: %s\n", outputPath.c_str());
+                    Msg("[VTFConverter] Set metallic texture: %s (relative: %s)\n", outputPath.c_str(), relativePath.c_str());
                 }
             } else {
                 opaqueExt.metallicConstant = props.metallic;
