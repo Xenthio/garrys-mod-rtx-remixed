@@ -496,28 +496,33 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
             
             // Convert exponent to roughness using a power curve
             // Exponent 0 (value 0) = very rough (roughness ~0.85)
-            // Exponent 255 (max) = very shiny (roughness ~0.15)
+            // Exponent 255 (max) = moderately shiny (roughness ~0.35)
+            // Note: 0.35 roughness is still quite smooth but not mirror-like
             float normalizedExp = exponentValue / 255.0f;
-            float roughnessF = 0.85f - (sqrtf(normalizedExp) * 0.7f);  // 0->0.85, 255->0.15
+            float roughnessF = 0.85f - (sqrtf(normalizedExp) * 0.5f);  // 0->0.85, 255->0.35
             roughness = static_cast<uint8_t>(std::clamp(roughnessF * 255.0f, 0.0f, 255.0f));
         } else if (useAlphaChannel) {
             // Use alpha channel from normal map or base texture
             // This is the phong mask: bright = shiny areas = LOW roughness
             uint8_t sourceValue = sourceTex.pixelData[i + 3];
             
-            // Direct conversion: high alpha = shiny = low roughness
-            // Apply a curve to make the transition more gradual
+            // Source Engine phong mask is more of a "specular intensity" than pure roughness
+            // Bright (255) = strong specular highlight = moderately smooth (roughness ~0.40)
+            // Dark (0) = no specular = matte (roughness ~0.85)
+            // Using a less extreme range to avoid mirror-like surfaces
             float normalizedMask = sourceValue / 255.0f;
-            // Map: 0->0.85 (matte), 255->0.15 (shiny)
-            float roughnessF = 0.85f - (normalizedMask * 0.7f);
+            // Map: 0->0.85 (matte), 255->0.40 (smooth but not mirror)
+            float roughnessF = 0.85f - (normalizedMask * 0.45f);
             roughness = static_cast<uint8_t>(std::clamp(roughnessF * 255.0f, 0.0f, 255.0f));
         } else {
             // Use the red channel (envmap mask)
+            // Envmap mask controls environment reflections - similar to phong mask
             uint8_t sourceValue = sourceTex.pixelData[i];
             
-            // Invert: bright in source = reflective = low roughness
+            // Invert: bright in source = reflective = lower roughness
+            // But keep it conservative - Source Engine materials aren't meant to be mirrors
             float normalizedMask = sourceValue / 255.0f;
-            float roughnessF = 0.85f - (normalizedMask * 0.7f);
+            float roughnessF = 0.85f - (normalizedMask * 0.45f);  // 0->0.85, 255->0.40
             roughness = static_cast<uint8_t>(std::clamp(roughnessF * 255.0f, 0.0f, 255.0f));
         }
         
@@ -1199,18 +1204,18 @@ float TextureProcessor::PhongToRoughness(float phongExponent) {
     // Clamp to reasonable range
     phongExponent = std::clamp(phongExponent, 1.0f, 256.0f);
     
-    // Source Engine phong materials ARE meant to be shiny - they have specular highlights.
-    // We need to preserve some of that shininess in PBR.
+    // Source Engine phong materials have specular highlights, but they're not mirrors.
+    // PBR roughness 0.35-0.40 is "smooth plastic" territory - appropriate for game assets.
     // 
     // phongExponent 1 -> roughness ~0.75 (fairly broad highlight)
-    // phongExponent 25 -> roughness ~0.45 (moderate)
-    // phongExponent 50 -> roughness ~0.35 (fairly smooth)
-    // phongExponent 150 -> roughness ~0.20 (quite smooth)
-    // phongExponent 256 -> roughness ~0.15 (very smooth)
+    // phongExponent 25 -> roughness ~0.55 (moderate)
+    // phongExponent 50 -> roughness ~0.45 (fairly smooth)
+    // phongExponent 150 -> roughness ~0.35 (smooth plastic)
+    // phongExponent 256 -> roughness ~0.30 (very smooth, but not mirror)
     
-    float roughness = 0.8f - (std::log(phongExponent) / std::log(300.0f)) * 0.65f;
+    float roughness = 0.8f - (std::log(phongExponent) / std::log(300.0f)) * 0.5f;
     
-    return std::clamp(roughness, 0.15f, 0.85f);
+    return std::clamp(roughness, 0.30f, 0.85f);
 }
 
 float TextureProcessor::CalculateRoughness(const MaterialPBRProperties& props) {
@@ -1232,20 +1237,20 @@ float TextureProcessor::CalculateRoughness(const MaterialPBRProperties& props) {
         if (tintIntensity < 0.5f) {
             roughness = roughness + (0.5f - tintIntensity) * 0.3f;
         }
-        roughness = std::clamp(roughness, 0.15f, 0.85f);
+        roughness = std::clamp(roughness, 0.30f, 0.85f);
     }
     
     // Phong boost affects highlight brightness
-    // Higher boost suggests intentionally shiny material - DECREASE roughness
+    // Higher boost suggests intentionally shiny material - DECREASE roughness slightly
     if (props.phongBoost > 1.0f) {
         // phongBoost 2 -> small decrease
         // phongBoost 5 -> moderate decrease
-        // phongBoost 10 -> significant decrease
-        float boostFactor = min((props.phongBoost - 1.0f) * 0.05f, 0.25f);
-        roughness = max(0.15f, roughness - boostFactor);
+        // phongBoost 10 -> capped decrease (don't go below 0.30)
+        float boostFactor = min((props.phongBoost - 1.0f) * 0.03f, 0.15f);
+        roughness = max(0.30f, roughness - boostFactor);
     }
     
-    return std::clamp(roughness, 0.15f, 0.85f);
+    return std::clamp(roughness, 0.30f, 0.85f);
 }
 
 float TextureProcessor::EstimateMetallic(const MaterialPBRProperties& props) {
