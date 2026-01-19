@@ -17,6 +17,12 @@ class IMaterial;
 class ITexture;
 class IFileSystem;
 
+namespace GarrysMod {
+namespace Lua {
+class ILuaBase;
+}
+}
+
 namespace VTFConverter {
 
 // VTF file format structures

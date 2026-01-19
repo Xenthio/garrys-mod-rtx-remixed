@@ -1,6 +1,7 @@
 #ifdef _WIN64
 
 #include "vtf_texture_converter.h"
+#include "remixapi.h"
 #include "../d3d9_texture_tracker.h"
 
 #include <tier0/dbg.h>
@@ -886,10 +887,14 @@ bool VTFTextureConverter::UploadTextureToRemix(const ConvertedTexture& texture,
     texInfo.data = texture.pixelData.data();
     texInfo.dataSize = texture.pixelData.size();
     
-    auto result = m_remixInterface->CreateTexture(&texInfo, outHandle);
-    if (result != REMIXAPI_ERROR_CODE_SUCCESS) {
-        Warning("[VTFConverter] Failed to create texture: error %d\n", result);
+    auto result = m_remixInterface->CreateTexture(texInfo);
+    if (!result) {
+        Warning("[VTFConverter] Failed to create texture: error %d\n", result.status());
         return false;
+    }
+    
+    if (outHandle) {
+        *outHandle = result.value();
     }
     
     if (m_debugOutput) {
@@ -1179,18 +1184,17 @@ bool VTFTextureConverter::CreatePBRMaterial(const MaterialPBRProperties& props, 
     matInfo.pNext = &opaqueExt;
     
     // Create the material
-    remixapi_MaterialHandle handle = nullptr;
-    auto result = m_remixInterface->CreateMaterial(&matInfo, &handle);
+    auto result = m_remixInterface->CreateMaterial(matInfo);
     
-    if (result != REMIXAPI_ERROR_CODE_SUCCESS) {
+    if (!result) {
         if (m_debugOutput) {
             Warning("[VTFConverter] Failed to create material for hash 0x%llX: error %d\n", 
-                    textureHash, result);
+                    textureHash, result.status());
         }
         return false;
     }
     
-    m_materialHandles[textureHash] = handle;
+    m_materialHandles[textureHash] = result.value();
     m_stats.materialsProcessed++;
     
     if (m_debugOutput) {
