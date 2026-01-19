@@ -1639,17 +1639,25 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
                 outProps.envMapTint[0] = r;
                 outProps.envMapTint[1] = g;
                 outProps.envMapTint[2] = b;
-                outProps.hasEnvMapTint = true;
-                // If envmaptint is set, envmap must be enabled even if FindVar didn't find $envmap
-                if (!outProps.hasEnvMap) {
-                    outProps.hasEnvMap = true;
-                    if (m_debugOutput) {
-                        Msg("[LegacyTextureProcessor] %s: Setting hasEnvMap=true based on $envmaptint presence\n", materialName.c_str());
+                
+                // IMPORTANT: Only treat as having explicit envmaptint if value is NOT the default [1 1 1]
+                // Source Engine shaders return [1 1 1] as default even when not set in VMT
+                bool isDefaultTint = (fabs(r - 1.0f) < 0.01f && fabs(g - 1.0f) < 0.01f && fabs(b - 1.0f) < 0.01f);
+                
+                if (!isDefaultTint) {
+                    outProps.hasEnvMapTint = true;
+                    // If envmaptint is explicitly set (non-default), envmap must be enabled
+                    if (!outProps.hasEnvMap) {
+                        outProps.hasEnvMap = true;
+                        if (m_debugOutput) {
+                            Msg("[LegacyTextureProcessor] %s: Setting hasEnvMap=true based on non-default $envmaptint\n", materialName.c_str());
+                        }
                     }
                 }
+                
                 if (m_debugOutput) {
-                    Msg("[LegacyTextureProcessor] %s: $envmaptint = [%.2f %.2f %.2f]\n", 
-                        materialName.c_str(), r, g, b);
+                    Msg("[LegacyTextureProcessor] %s: $envmaptint = [%.2f %.2f %.2f]%s\n", 
+                        materialName.c_str(), r, g, b, isDefaultTint ? " (default, ignoring)" : "");
                 }
             } else if (m_debugOutput) {
                 Msg("[LegacyTextureProcessor] %s: $envmaptint found but parse failed: '%s'\n", materialName.c_str(), strVal);
