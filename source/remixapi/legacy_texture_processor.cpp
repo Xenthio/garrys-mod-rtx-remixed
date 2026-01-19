@@ -381,11 +381,30 @@ bool TextureProcessor::WriteTextureToDDS(const ConvertedTexture& texture, const 
 }
 
 bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& props, ConvertedTexture& outTexture) {
-    // Only generate a roughness texture if we have an actual envmap mask texture
+    // Check for roughness sources in order of preference:
+    // 1. $normalmapalphaenvmapmask - use normal map's alpha channel
+    // 2. $envmapmask - use separate envmap mask texture
     // Otherwise, return false and let the USDA use a constant value instead
     
-    if (!props.hasEnvMapMask || props.envMapMaskPath.empty()) {
-        // No envmap mask - use constant in USDA instead of generating a texture
+    std::string vtfPath;
+    bool useAlphaChannel = false;
+    
+    if (props.normalMapAlphaEnvMapMask && props.hasBumpMap && !props.bumpMapPath.empty()) {
+        // Use the normal map's alpha channel as the roughness source
+        vtfPath = props.bumpMapPath;
+        useAlphaChannel = true;
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: Using normal map alpha channel for roughness\n", props.materialName.c_str());
+        }
+    } else if (props.hasEnvMapMask && !props.envMapMaskPath.empty()) {
+        // Use the envmap mask texture
+        vtfPath = props.envMapMaskPath;
+        useAlphaChannel = false;
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: Using envmap mask for roughness\n", props.materialName.c_str());
+        }
+    } else {
+        // No texture source for roughness - use constant in USDA
         if (m_debugOutput) {
             Msg("[LegacyTextureProcessor] No envmap mask for %s, will use roughness constant %.2f\n",
                 props.materialName.c_str(), props.roughness);
@@ -393,18 +412,16 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
         return false;
     }
     
-    // Try to read the envmap mask and convert it
-    // ReadVTFFile adds "materials/" prefix automatically, so just pass the texture path
-    std::string vtfPath = props.envMapMaskPath;
+    // Try to read the texture
     std::vector<uint8_t> fileData;
     
     if (m_debugOutput) {
-        Msg("[LegacyTextureProcessor] Attempting to read envmap mask: %s\n", vtfPath.c_str());
+        Msg("[LegacyTextureProcessor] Attempting to read texture for roughness: %s\n", vtfPath.c_str());
     }
     
     if (!ReadVTFFile(vtfPath, fileData)) {
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] Failed to read envmap mask VTF: %s (will use constant)\n", vtfPath.c_str());
+            Msg("[LegacyTextureProcessor] Failed to read VTF: %s (will use constant)\n", vtfPath.c_str());
         }
         return false;
     }
@@ -412,30 +429,39 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
     VTFFileHeader header;
     if (!ParseVTFHeader(fileData, header)) {
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] Failed to parse VTF header for envmap mask: %s\n", vtfPath.c_str());
+            Msg("[LegacyTextureProcessor] Failed to parse VTF header: %s\n", vtfPath.c_str());
         }
         return false;
     }
     
-    ConvertedTexture envMapTex;
-    if (!ExtractVTFPixelData(fileData, header, envMapTex, false)) {
+    ConvertedTexture sourceTex;
+    if (!ExtractVTFPixelData(fileData, header, sourceTex, false)) {
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] Failed to extract pixel data from envmap mask: %s\n", vtfPath.c_str());
+            Msg("[LegacyTextureProcessor] Failed to extract pixel data: %s\n", vtfPath.c_str());
         }
         return false;
     }
     
-    // Convert envmap mask to roughness (invert: bright = smooth, dark = rough)
+    // Convert source texture to roughness
     // In PBR: low roughness = shiny/reflective, high roughness = matte
-    // In envmap mask: bright = more reflection = low roughness
-    outTexture.width = envMapTex.width;
-    outTexture.height = envMapTex.height;
-    outTexture.pixelData.resize(envMapTex.width * envMapTex.height * 4);
+    // In envmap mask/alpha: bright = more reflection = low roughness
+    outTexture.width = sourceTex.width;
+    outTexture.height = sourceTex.height;
+    outTexture.pixelData.resize(sourceTex.width * sourceTex.height * 4);
     
-    for (size_t i = 0; i < envMapTex.pixelData.size(); i += 4) {
-        // Use the red channel (or luminance) and invert it
-        uint8_t luminance = envMapTex.pixelData[i];
-        uint8_t roughness = 255 - luminance;  // Invert
+    for (size_t i = 0; i < sourceTex.pixelData.size(); i += 4) {
+        uint8_t sourceValue;
+        
+        if (useAlphaChannel) {
+            // Use alpha channel from normal map
+            sourceValue = sourceTex.pixelData[i + 3];
+        } else {
+            // Use the red channel (or luminance)
+            sourceValue = sourceTex.pixelData[i];
+        }
+        
+        // Invert: bright in source = low roughness
+        uint8_t roughness = 255 - sourceValue;
         
         // Apply phong-based adjustment
         float roughnessFactor = props.roughness;
@@ -451,8 +477,9 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
     outTexture.mipLevels = 1;
     
     if (m_debugOutput) {
-        Msg("[LegacyTextureProcessor] Generated roughness from envmap mask: %s (%dx%d)\n",
-            props.envMapMaskPath.c_str(), outTexture.width, outTexture.height);
+        Msg("[LegacyTextureProcessor] Generated roughness from %s: %s (%dx%d)\n",
+            useAlphaChannel ? "normal alpha" : "envmap mask",
+            vtfPath.c_str(), outTexture.width, outTexture.height);
     }
     return true;
 }
@@ -1122,6 +1149,52 @@ float TextureProcessor::PhongToRoughness(float phongExponent) {
     return std::clamp(roughness, 0.05f, 0.95f);
 }
 
+float TextureProcessor::CalculateRoughness(const MaterialPBRProperties& props) {
+    // Start with roughness from phong exponent
+    float roughness = PhongToRoughness(props.phongExponent);
+    
+    // If there's an envmap with tint, use tint intensity to influence roughness
+    // Brighter envmap tint = more reflective = lower roughness
+    if (props.hasEnvMapTint && props.hasEnvMap) {
+        float tintIntensity = (props.envMapTint[0] + props.envMapTint[1] + props.envMapTint[2]) / 3.0f;
+        // Scale roughness inversely with tint intensity
+        // tintIntensity of 0.25 (like crossbow) should make it less shiny, not more
+        // tintIntensity of 1.0 should make it shinier
+        if (tintIntensity < 1.0f) {
+            // Reduce reflectivity by increasing roughness for low tint
+            roughness = roughness + (1.0f - tintIntensity) * 0.3f;
+        } else {
+            // Increase reflectivity by decreasing roughness for high tint
+            roughness = roughness * (1.0f / tintIntensity);
+        }
+        roughness = std::clamp(roughness, 0.05f, 0.95f);
+    }
+    
+    // Phong fresnel ranges can indicate how reflective at different angles
+    // $phongfresnelranges "[min mid max]" - higher values = more reflection at grazing angles
+    if (props.hasPhongFresnelRanges) {
+        // The middle value is the base reflectivity at normal incidence
+        // If mid value is low (like 0.1), material is mostly diffuse = high roughness
+        // If mid value is high (like 3), material is very reflective = low roughness
+        float midFresnel = props.phongFresnelRanges[1];
+        if (midFresnel > 1.0f) {
+            // Reduce roughness for materials with high fresnel mid values
+            roughness *= (1.0f / midFresnel);
+            roughness = std::clamp(roughness, 0.05f, 0.95f);
+        }
+    }
+    
+    // Phong boost also affects how shiny the material appears
+    // Higher boost = shinier = lower roughness
+    if (props.phongBoost > 1.0f) {
+        // Scale roughness inversely with boost (but not too aggressively)
+        roughness *= (1.0f / std::sqrt(props.phongBoost));
+        roughness = std::clamp(roughness, 0.05f, 0.95f);
+    }
+    
+    return roughness;
+}
+
 float TextureProcessor::EstimateMetallic(const MaterialPBRProperties& props) {
     float metallic = 0.0f;
     
@@ -1163,6 +1236,18 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     outProps.phongBoost = 1.0f;
     outProps.roughness = 1.0f;  // Default to max roughness (matte)
     outProps.metallic = 0.0f;   // Default to non-metallic
+    
+    // Extended properties
+    outProps.normalMapAlphaEnvMapMask = false;
+    outProps.hasPhongFresnelRanges = false;
+    outProps.phongFresnelRanges[0] = 0.0f;
+    outProps.phongFresnelRanges[1] = 0.0f;
+    outProps.phongFresnelRanges[2] = 0.0f;
+    outProps.hasEnvMapTint = false;
+    outProps.envMapTint[0] = 1.0f;
+    outProps.envMapTint[1] = 1.0f;
+    outProps.envMapTint[2] = 1.0f;
+    outProps.hasEnvMap = false;
     
     // Helper lambda to check if a texture path is valid (not a placeholder/internal texture)
     auto IsValidTexturePath = [](const std::string& path) -> bool {
@@ -1256,17 +1341,88 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
         }
     }
     
+    // Get $envmap (to check if envmapping is enabled)
+    pVar = pMaterial->FindVar("$envmap", &found, false);
+    if (found && pVar) {
+        const char* strVal = pVar->GetStringValue();
+        // Check if it has any value (env_cubemap, or a texture path)
+        if (strVal && strVal[0] != '\0') {
+            outProps.hasEnvMap = true;
+            if (m_debugOutput) {
+                Msg("[LegacyTextureProcessor] %s: $envmap = %s\n", materialName.c_str(), strVal);
+            }
+        }
+    }
+    
+    // Get $normalmapalphaenvmapmask - use normal map's alpha as envmap mask for roughness
+    pVar = pMaterial->FindVar("$normalmapalphaenvmapmask", &found, false);
+    if (found && pVar) {
+        outProps.normalMapAlphaEnvMapMask = (pVar->GetIntValue() == 1);
+        if (m_debugOutput && outProps.normalMapAlphaEnvMapMask) {
+            Msg("[LegacyTextureProcessor] %s: $normalmapalphaenvmapmask = 1 (will use normal alpha for roughness)\n", materialName.c_str());
+        }
+    }
+    
+    // Get $phong (check if phong is enabled)
+    pVar = pMaterial->FindVar("$phong", &found, false);
+    if (found && pVar) {
+        outProps.hasPhong = (pVar->GetIntValue() == 1);
+    }
+    
     // Get $phongexponent
     pVar = pMaterial->FindVar("$phongexponent", &found, false);
     if (found && pVar) {
         outProps.phongExponent = pVar->GetFloatValue();
-        outProps.hasPhong = true;
+        if (!outProps.hasPhong) outProps.hasPhong = true;
     }
     
     // Get $phongboost
     pVar = pMaterial->FindVar("$phongboost", &found, false);
     if (found && pVar) {
         outProps.phongBoost = pVar->GetFloatValue();
+    }
+    
+    // Get $phongfresnelranges "[x y z]"
+    pVar = pMaterial->FindVar("$phongfresnelranges", &found, false);
+    if (found && pVar) {
+        // Get vector value from the material var
+        const char* strVal = pVar->GetStringValue();
+        if (strVal && strVal[0] != '\0') {
+            // Parse "[x y z]" format
+            float x = 0, y = 0, z = 0;
+            if (sscanf(strVal, "[%f %f %f]", &x, &y, &z) == 3 ||
+                sscanf(strVal, "%f %f %f", &x, &y, &z) == 3) {
+                outProps.phongFresnelRanges[0] = x;
+                outProps.phongFresnelRanges[1] = y;
+                outProps.phongFresnelRanges[2] = z;
+                outProps.hasPhongFresnelRanges = true;
+                if (m_debugOutput) {
+                    Msg("[LegacyTextureProcessor] %s: $phongfresnelranges = [%.2f %.2f %.2f]\n", 
+                        materialName.c_str(), x, y, z);
+                }
+            }
+        }
+    }
+    
+    // Get $envmaptint "[r g b]"
+    pVar = pMaterial->FindVar("$envmaptint", &found, false);
+    if (found && pVar) {
+        const char* strVal = pVar->GetStringValue();
+        if (strVal && strVal[0] != '\0') {
+            // Parse "[r g b]" format
+            float r = 1, g = 1, b = 1;
+            if (sscanf(strVal, "[%f %f %f]", &r, &g, &b) == 3 ||
+                sscanf(strVal, "%f %f %f", &r, &g, &b) == 3) {
+                outProps.envMapTint[0] = r;
+                outProps.envMapTint[1] = g;
+                outProps.envMapTint[2] = b;
+                outProps.hasEnvMapTint = true;
+                if (m_debugOutput) {
+                    Msg("[LegacyTextureProcessor] %s: $envmaptint = [%.2f %.2f %.2f]\n", 
+                        materialName.c_str(), r, g, b);
+                }
+            }
+        }
     }
     
     // Get $selfillum
@@ -1281,12 +1437,13 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
         outProps.isTranslucent = (pVar->GetIntValue() == 1);
     }
     
-    // Calculate PBR values
-    outProps.roughness = PhongToRoughness(outProps.phongExponent);
+    // Calculate PBR values with enhanced logic
+    outProps.roughness = CalculateRoughness(outProps);
     outProps.metallic = EstimateMetallic(outProps);
     
     return true;
 }
+
 
 // Helper function to check if a file exists
 static bool FileExists(const std::string& path) {
@@ -1507,7 +1664,8 @@ int TextureProcessor::ProcessAllTrackedMaterials() {
         }
         
         // Only process materials with PBR-relevant data
-        if (!props.hasBumpMap && !props.hasPhong && !props.hasEnvMapMask) {
+        // Include materials with $normalmapalphaenvmapmask
+        if (!props.hasBumpMap && !props.hasPhong && !props.hasEnvMapMask && !props.normalMapAlphaEnvMapMask) {
             m_processedMaterials.insert(matName);
             continue;
         }
@@ -1611,7 +1769,8 @@ bool TextureProcessor::ProcessSingleMaterial(const std::string& materialName) {
     }
     
     // Only process materials with PBR-relevant data
-    if (!props.hasBumpMap && !props.hasPhong && !props.hasEnvMapMask) {
+    // Include materials with $normalmapalphaenvmapmask
+    if (!props.hasBumpMap && !props.hasPhong && !props.hasEnvMapMask && !props.normalMapAlphaEnvMapMask) {
         m_processedMaterials.insert(materialName);
         return false;
     }
@@ -1726,7 +1885,53 @@ bool TextureProcessor::WriteModUSDA() {
         }
     }
     
-    // Write mod.usda
+    // Track which hashes are already in the existing USDA
+    std::unordered_set<uint64_t> existingHashes;
+    std::string materialsUsdaPath = modDir + "/materials.usda";
+    
+    // Read existing materials.usda to find which hashes are already defined
+    std::ifstream existingFile(materialsUsdaPath);
+    if (existingFile.is_open()) {
+        std::string line;
+        while (std::getline(existingFile, line)) {
+            // Look for lines like: over "mat_HASH"
+            size_t matPos = line.find("over \"mat_");
+            if (matPos != std::string::npos) {
+                size_t hashStart = matPos + 10; // Length of 'over "mat_'
+                size_t hashEnd = line.find("\"", hashStart);
+                if (hashEnd != std::string::npos) {
+                    std::string hashStr = line.substr(hashStart, hashEnd - hashStart);
+                    uint64_t hash = 0;
+                    if (sscanf(hashStr.c_str(), "%llX", (unsigned long long*)&hash) == 1) {
+                        existingHashes.insert(hash);
+                    }
+                }
+            }
+        }
+        existingFile.close();
+        
+        if (m_debugOutput && !existingHashes.empty()) {
+            Msg("[LegacyTextureProcessor] Found %d existing material entries in USDA\n", (int)existingHashes.size());
+        }
+    }
+    
+    // Count how many new materials we'll be adding
+    int newMaterialCount = 0;
+    for (const auto& pair : m_processedMaterialInfo) {
+        if (existingHashes.find(pair.first) == existingHashes.end()) {
+            newMaterialCount++;
+        }
+    }
+    
+    // If no new materials to add and file exists, skip writing
+    if (newMaterialCount == 0 && !existingHashes.empty()) {
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] No new materials to add to USDA\n");
+        }
+        return true;
+    }
+    
+    // Write mod.usda (always write this as it's small)
     std::string modUsdaPath = modDir + "/mod.usda";
     std::ofstream modUsda(modUsdaPath);
     if (!modUsda.is_open()) {
@@ -1750,8 +1955,7 @@ bool TextureProcessor::WriteModUSDA() {
     modUsda << ")\n\n";
     modUsda.close();
     
-    // Write materials.usda with all the material definitions
-    std::string materialsUsdaPath = modDir + "/materials.usda";
+    // Write materials.usda with all material definitions (including existing ones we're re-writing)
     std::ofstream materialsUsda(materialsUsdaPath);
     if (!materialsUsda.is_open()) {
         Warning("[LegacyTextureProcessor] Failed to create materials.usda at %s\n", materialsUsdaPath.c_str());
@@ -1825,8 +2029,8 @@ bool TextureProcessor::WriteModUSDA() {
     
     materialsUsda.close();
     
-    Msg("[LegacyTextureProcessor] Wrote mod.usda and materials.usda with %d materials to %s\n", 
-        (int)m_processedMaterialInfo.size(), modDir.c_str());
+    Msg("[LegacyTextureProcessor] Wrote mod.usda and materials.usda with %d materials (%d new) to %s\n", 
+        (int)m_processedMaterialInfo.size(), newMaterialCount, modDir.c_str());
     
     return true;
 }

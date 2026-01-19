@@ -115,6 +115,14 @@ struct MaterialPBRProperties {
     bool isSelfIllum;
     bool isTranslucent;
     uint64_t baseTextureHash;  // Hash from rendered texture
+    
+    // Extended Source Engine properties
+    bool normalMapAlphaEnvMapMask;  // $normalmapalphaenvmapmask - use normal map alpha as envmap mask
+    float phongFresnelRanges[3];    // $phongfresnelranges - fresnel values
+    bool hasPhongFresnelRanges;
+    float envMapTint[3];            // $envmaptint - tints the environment map
+    bool hasEnvMapTint;
+    bool hasEnvMap;                 // $envmap - has environment mapping
 };
 
 // Main converter class - core VTF to DDS/PBR conversion
@@ -236,6 +244,9 @@ private:
     
     // Calculate roughness from phong exponent
     float PhongToRoughness(float phongExponent);
+    
+    // Calculate roughness using all available material properties
+    float CalculateRoughness(const MaterialPBRProperties& props);
     
     // Calculate metallic hint from material properties
     float EstimateMetallic(const MaterialPBRProperties& props);
