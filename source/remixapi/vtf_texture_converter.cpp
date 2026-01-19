@@ -1030,61 +1030,95 @@ bool VTFTextureConverter::ExtractMaterialPBR(const std::string& materialName,
     outProps.roughness = 0.5f;
     outProps.metallic = 0.0f;
     
+    // Helper lambda to check if a texture path is valid (not a placeholder/internal texture)
+    auto IsValidTexturePath = [](const std::string& path) -> bool {
+        if (path.empty()) return false;
+        // Filter out RTX internal textures
+        if (path.find("rtx/") == 0 || path.find("rtx\\") == 0) return false;
+        // Filter out render targets and internal textures
+        if (path.find("_rt_") != std::string::npos) return false;
+        if (path.find("__") == 0) return false;  // Internal textures like __error
+        // Filter out procedural textures
+        if (path.find("env_cubemap") != std::string::npos) return false;
+        // Filter out paths that are just numbers or very short
+        if (path.length() < 3) return false;
+        return true;
+    };
+    
     // Get $basetexture - try string value first, then texture name
     bool found = false;
     IMaterialVar* pVar = pMaterial->FindVar("$basetexture", &found, false);
     if (found && pVar) {
+        std::string texPath;
         // Try to get the string value (path from VMT) first
         const char* strVal = pVar->GetStringValue();
         if (strVal && strVal[0] != '\0') {
-            outProps.baseTexturePath = strVal;
-        } else {
-            // Fall back to texture name
+            texPath = strVal;
+        }
+        // If string is empty or invalid, try texture name
+        if (!IsValidTexturePath(texPath)) {
             ITexture* pTex = pVar->GetTextureValue();
             if (pTex) {
-                outProps.baseTexturePath = pTex->GetName();
+                texPath = pTex->GetName();
             }
+        }
+        if (IsValidTexturePath(texPath)) {
+            outProps.baseTexturePath = texPath;
         }
         if (m_debugOutput && !outProps.baseTexturePath.empty()) {
             Msg("[VTFConverter] %s: $basetexture = %s\n", materialName.c_str(), outProps.baseTexturePath.c_str());
+        } else if (m_debugOutput && strVal) {
+            Msg("[VTFConverter] %s: $basetexture filtered (invalid path: '%s')\n", materialName.c_str(), strVal);
         }
     }
     
     // Get $bumpmap - try string value first, then texture name
     pVar = pMaterial->FindVar("$bumpmap", &found, false);
     if (found && pVar) {
+        std::string texPath;
         const char* strVal = pVar->GetStringValue();
         if (strVal && strVal[0] != '\0') {
-            outProps.bumpMapPath = strVal;
-            outProps.hasBumpMap = true;
-        } else {
+            texPath = strVal;
+        }
+        if (!IsValidTexturePath(texPath)) {
             ITexture* pTex = pVar->GetTextureValue();
             if (pTex) {
-                outProps.bumpMapPath = pTex->GetName();
-                outProps.hasBumpMap = true;
+                texPath = pTex->GetName();
             }
+        }
+        if (IsValidTexturePath(texPath)) {
+            outProps.bumpMapPath = texPath;
+            outProps.hasBumpMap = true;
         }
         if (m_debugOutput && outProps.hasBumpMap) {
             Msg("[VTFConverter] %s: $bumpmap = %s\n", materialName.c_str(), outProps.bumpMapPath.c_str());
+        } else if (m_debugOutput && strVal) {
+            Msg("[VTFConverter] %s: $bumpmap filtered (invalid path: '%s')\n", materialName.c_str(), strVal);
         }
     }
     
     // Get $envmapmask - try string value first, then texture name
     pVar = pMaterial->FindVar("$envmapmask", &found, false);
     if (found && pVar) {
+        std::string texPath;
         const char* strVal = pVar->GetStringValue();
         if (strVal && strVal[0] != '\0') {
-            outProps.envMapMaskPath = strVal;
-            outProps.hasEnvMapMask = true;
-        } else {
+            texPath = strVal;
+        }
+        if (!IsValidTexturePath(texPath)) {
             ITexture* pTex = pVar->GetTextureValue();
             if (pTex) {
-                outProps.envMapMaskPath = pTex->GetName();
-                outProps.hasEnvMapMask = true;
+                texPath = pTex->GetName();
             }
+        }
+        if (IsValidTexturePath(texPath)) {
+            outProps.envMapMaskPath = texPath;
+            outProps.hasEnvMapMask = true;
         }
         if (m_debugOutput && outProps.hasEnvMapMask) {
             Msg("[VTFConverter] %s: $envmapmask = %s\n", materialName.c_str(), outProps.envMapMaskPath.c_str());
+        } else if (m_debugOutput && strVal) {
+            Msg("[VTFConverter] %s: $envmapmask filtered (invalid path: '%s')\n", materialName.c_str(), strVal);
         }
     }
     
