@@ -1524,10 +1524,27 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     // Get $normalmapalphaenvmapmask - use normal map's alpha as envmap mask for roughness
     pVar = pMaterial->FindVar("$normalmapalphaenvmapmask", &found, false);
     if (found && pVar) {
-        outProps.normalMapAlphaEnvMapMask = (pVar->GetIntValue() == 1);
-        if (m_debugOutput && outProps.normalMapAlphaEnvMapMask) {
-            Msg("[LegacyTextureProcessor] %s: $normalmapalphaenvmapmask = 1 (will use normal alpha for roughness)\n", materialName.c_str());
+        // Try multiple methods to get the value - Source Engine can be inconsistent
+        int intVal = pVar->GetIntValue();
+        float floatVal = pVar->GetFloatValue();
+        const char* strVal = pVar->GetStringValue();
+        
+        // Accept any truthy value
+        bool isTruthy = (intVal != 0) || (floatVal != 0.0f);
+        if (!isTruthy && strVal && strVal[0] != '\0') {
+            isTruthy = (atoi(strVal) != 0) || (atof(strVal) != 0.0);
         }
+        
+        outProps.normalMapAlphaEnvMapMask = isTruthy;
+        if (m_debugOutput) {
+            if (outProps.normalMapAlphaEnvMapMask) {
+                Msg("[LegacyTextureProcessor] %s: $normalmapalphaenvmapmask = 1 (will use normal alpha for roughness)\n", materialName.c_str());
+            } else {
+                Msg("[LegacyTextureProcessor] %s: $normalmapalphaenvmapmask found but value = 0\n", materialName.c_str());
+            }
+        }
+    } else if (m_debugOutput) {
+        Msg("[LegacyTextureProcessor] %s: $normalmapalphaenvmapmask NOT FOUND\n", materialName.c_str());
     }
     
     // Get $phong (check if phong is enabled)
@@ -1710,9 +1727,9 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     outProps.metallic = EstimateMetallic(outProps);
     
     if (m_debugOutput) {
-        Msg("[LegacyTextureProcessor] %s extracted: hasPhong=%d, phongExp=%.0f, hasBump=%d, hasEnvMask=%d, hasPhongExpTex=%d, hasEnvMapTint=%d, hasEnvMap=%d\n",
+        Msg("[LegacyTextureProcessor] %s extracted: hasPhong=%d, phongExp=%.0f, hasBump=%d, hasEnvMask=%d, hasPhongExpTex=%d, hasEnvMapTint=%d, hasEnvMap=%d, normMapAlpha=%d\n",
             materialName.c_str(), outProps.hasPhong, outProps.phongExponent, outProps.hasBumpMap, 
-            outProps.hasEnvMapMask, outProps.hasPhongExponentTexture, outProps.hasEnvMapTint, outProps.hasEnvMap);
+            outProps.hasEnvMapMask, outProps.hasPhongExponentTexture, outProps.hasEnvMapTint, outProps.hasEnvMap, outProps.normalMapAlphaEnvMapMask);
     }
     
     return true;
