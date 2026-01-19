@@ -94,17 +94,46 @@ function RTXToPBR.PhongBoostToMetallicHint(boost, fresnelRanges)
 end
 
 --[[
+    Sanitize material name to prevent path traversal attacks
+]]--
+local function SanitizeMaterialName(materialName)
+    if not materialName or type(materialName) ~= "string" then
+        return nil
+    end
+    
+    -- Remove any path traversal attempts
+    local sanitized = materialName
+    sanitized = string.gsub(sanitized, "%.%.", "")  -- Remove ..
+    sanitized = string.gsub(sanitized, "//+", "/")  -- Collapse multiple slashes
+    sanitized = string.gsub(sanitized, "\\", "/")   -- Normalize slashes
+    sanitized = string.gsub(sanitized, "^/+", "")   -- Remove leading slashes
+    
+    -- Ensure it doesn't escape materials folder
+    if string.find(sanitized, "^/") or string.find(sanitized, "^%.") then
+        return nil
+    end
+    
+    return sanitized
+end
+
+--[[
     Extract material properties from a Source Engine material
     Returns table with extracted PBR-relevant data
 ]]--
 function RTXToPBR.ExtractMaterialProperties(materialName)
-    local mat = Material(materialName)
+    -- Sanitize material name to prevent path traversal
+    local safeName = SanitizeMaterialName(materialName)
+    if not safeName then
+        return nil
+    end
+    
+    local mat = Material(safeName)
     if not mat or mat:IsError() then
         return nil
     end
     
     local props = {
-        materialName = materialName,
+        materialName = safeName,
         bumpmap = nil,           -- Normal map texture path
         phongExponent = nil,     -- For roughness calculation
         phongBoost = nil,        -- For metallic hint
@@ -176,8 +205,8 @@ function RTXToPBR.ExtractMaterialProperties(materialName)
     local translucent = mat:GetInt("$translucent")
     props.translucent = (translucent and translucent == 1)
     
-    -- VMT file fallback for missing parameters
-    local vmtPath = "materials/" .. materialName
+    -- VMT file fallback for missing parameters (safeName is already sanitized)
+    local vmtPath = "materials/" .. safeName
     if not string.EndsWith(vmtPath, ".vmt") then
         vmtPath = vmtPath .. ".vmt"
     end
@@ -570,7 +599,14 @@ concommand.Add("rtx_topbr_inspect", function(ply, cmd, args)
         return
     end
     
-    RTXToPBR.InspectMaterial(args[1])
+    -- Sanitize input material name
+    local safeName = SanitizeMaterialName(args[1])
+    if not safeName then
+        MsgC(Color(255, 100, 100), "[RTX ToPBR] Invalid material name\n")
+        return
+    end
+    
+    RTXToPBR.InspectMaterial(safeName)
 end, nil, "Inspect a material's PBR-convertible properties")
 
 concommand.Add("rtx_topbr_stats", function()
@@ -588,16 +624,30 @@ concommand.Add("rtx_topbr_clear", function()
     RTXToPBR.ClearCache()
 end, nil, "Clear ToPBR conversion cache (allows re-processing)")
 
+-- Helper to safely get ConVar value with nil guard
+local function GetConVarBoolSafe(name)
+    local cv = GetConVar(name)
+    return cv and cv:GetBool()
+end
+
+local function GetConVarFloatSafe(name, default)
+    local cv = GetConVar(name)
+    return cv and cv:GetFloat() or default
+end
+
 -- Auto-run on map load (if enabled)
 hook.Add("InitPostEntity", "RTXToPBR_AutoConvert", function()
-    if not GetConVar("rtx_topbr_enabled"):GetBool() then
+    -- Clear cache from previous map
+    RTXToPBR.ClearCache()
+    
+    if not GetConVarBoolSafe("rtx_topbr_enabled") then
         return
     end
     
-    local delay = GetConVar("rtx_topbr_delay"):GetFloat()
+    local delay = GetConVarFloatSafe("rtx_topbr_delay", 5)
     
     timer.Simple(delay, function()
-        if not GetConVar("rtx_topbr_enabled"):GetBool() then
+        if not GetConVarBoolSafe("rtx_topbr_enabled") then
             return
         end
         
@@ -606,8 +656,8 @@ hook.Add("InitPostEntity", "RTXToPBR_AutoConvert", function()
     end)
 end)
 
--- Reset on map change
-hook.Add("ShutDown", "RTXToPBR_Cleanup", function()
+-- Also clear on map cleanup (before new map loads)
+hook.Add("PostCleanupMap", "RTXToPBR_MapCleanup", function()
     RTXToPBR.ClearCache()
 end)
 
