@@ -1138,61 +1138,79 @@ uint64_t TextureProcessor::ConvertAndUploadTexture(const std::string& vtfPath, b
 }
 
 float TextureProcessor::PhongToRoughness(float phongExponent) {
-    if (phongExponent <= 0) return 1.0f;  // Default to max roughness (matte)
+    // Default to fairly rough (most Source materials without phong are matte)
+    if (phongExponent <= 0) return 0.85f;
     
     // Clamp to reasonable range
     phongExponent = std::clamp(phongExponent, 1.0f, 256.0f);
     
-    // Logarithmic conversion - higher exponent = lower roughness (shinier)
-    float roughness = 1.0f - (std::log(phongExponent) / std::log(MAX_PHONG_EXPONENT));
+    // The phong exponent controls specular highlight tightness, not overall reflectivity.
+    // Most Source materials with phong are still fairly rough by PBR standards.
+    // Even high exponent materials (like 150) should still have moderate roughness (0.3-0.5)
+    // because Source's phong is just for highlights, not full mirror reflections.
     
-    return std::clamp(roughness, 0.05f, 0.95f);
+    // Using a more conservative conversion:
+    // phongExponent 1 -> roughness ~0.9 (almost matte, very broad highlight)
+    // phongExponent 50 -> roughness ~0.55 (moderate roughness)
+    // phongExponent 150 -> roughness ~0.35 (somewhat smooth but not mirror)
+    // phongExponent 256 -> roughness ~0.25 (smoothest typical Source material)
+    
+    float roughness = 0.95f - (std::log(phongExponent) / std::log(300.0f)) * 0.7f;
+    
+    return std::clamp(roughness, 0.25f, 0.95f);
 }
 
 float TextureProcessor::CalculateRoughness(const MaterialPBRProperties& props) {
-    // Start with roughness from phong exponent
+    // Start with roughness from phong exponent (defaults to fairly rough)
     float roughness = PhongToRoughness(props.phongExponent);
     
-    // If there's an envmap with tint, use tint intensity to influence roughness
-    // Brighter envmap tint = more reflective = lower roughness
+    // For materials without phong enabled, default to rough
+    if (!props.hasPhong) {
+        return 0.85f;
+    }
+    
+    // If there's an envmap with tint, the tint controls reflection intensity
+    // LOWER tint = LESS reflective = HIGHER roughness
     if (props.hasEnvMapTint && props.hasEnvMap) {
         float tintIntensity = (props.envMapTint[0] + props.envMapTint[1] + props.envMapTint[2]) / 3.0f;
-        // Scale roughness inversely with tint intensity
-        // tintIntensity of 0.25 (like crossbow) should make it less shiny, not more
-        // tintIntensity of 1.0 should make it shinier
-        if (tintIntensity < 1.0f) {
-            // Reduce reflectivity by increasing roughness for low tint
-            roughness = roughness + (1.0f - tintIntensity) * 0.3f;
-        } else {
-            // Increase reflectivity by decreasing roughness for high tint
-            roughness = roughness * (1.0f / tintIntensity);
+        
+        // tintIntensity of 0.25 (like crossbow) means only 25% reflection = quite rough
+        // tintIntensity of 1.0 means full reflection = can be smoother
+        // But Source envmaps are typically very dim, so we need to be conservative
+        
+        if (tintIntensity < 0.5f) {
+            // Very low tint - this material is meant to be mostly matte
+            // Increase roughness significantly
+            roughness = std::max(roughness, 0.6f + (0.5f - tintIntensity) * 0.6f);
+        } else if (tintIntensity < 1.0f) {
+            // Moderate tint - slightly increase roughness
+            roughness = roughness + (1.0f - tintIntensity) * 0.2f;
         }
-        roughness = std::clamp(roughness, 0.05f, 0.95f);
+        // Don't decrease roughness for high tint - Source materials are rarely mirror-like
+        roughness = std::clamp(roughness, 0.25f, 0.95f);
     }
     
-    // Phong fresnel ranges can indicate how reflective at different angles
-    // $phongfresnelranges "[min mid max]" - higher values = more reflection at grazing angles
+    // Phong fresnel ranges - the values [min mid max] affect reflectivity at different angles
+    // But these are typically small values (like [0.1 3 1]) that mostly affect rim lighting
+    // We shouldn't use these to make materials super shiny
     if (props.hasPhongFresnelRanges) {
-        // The middle value is the base reflectivity at normal incidence
-        // If mid value is low (like 0.1), material is mostly diffuse = high roughness
-        // If mid value is high (like 3), material is very reflective = low roughness
-        float midFresnel = props.phongFresnelRanges[1];
-        if (midFresnel > 1.0f) {
-            // Reduce roughness for materials with high fresnel mid values
-            roughness *= (1.0f / midFresnel);
-            roughness = std::clamp(roughness, 0.05f, 0.95f);
+        // Only use fresnel to INCREASE roughness if the values suggest low reflectivity
+        float minFresnel = props.phongFresnelRanges[0];
+        if (minFresnel < 0.5f) {
+            // Low min fresnel = not reflective at normal incidence = more matte
+            roughness = std::max(roughness, 0.5f);
         }
     }
     
-    // Phong boost also affects how shiny the material appears
-    // Higher boost = shinier = lower roughness
-    if (props.phongBoost > 1.0f) {
-        // Scale roughness inversely with boost (but not too aggressively)
-        roughness *= (1.0f / std::sqrt(props.phongBoost));
-        roughness = std::clamp(roughness, 0.05f, 0.95f);
+    // Phong boost affects highlight brightness, not roughness directly
+    // Higher boost just means brighter highlights, material is still the same roughness
+    // Only use very high boost to slightly decrease roughness
+    if (props.phongBoost > 5.0f) {
+        // Very high boost suggests intentionally shiny material
+        roughness = std::max(0.35f, roughness - 0.1f);
     }
     
-    return roughness;
+    return std::clamp(roughness, 0.25f, 0.95f);
 }
 
 float TextureProcessor::EstimateMetallic(const MaterialPBRProperties& props) {
