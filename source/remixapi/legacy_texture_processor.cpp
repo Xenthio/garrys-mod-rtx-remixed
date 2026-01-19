@@ -1241,7 +1241,7 @@ float TextureProcessor::CalculateRoughness(const MaterialPBRProperties& props) {
         // phongBoost 2 -> small decrease
         // phongBoost 5 -> moderate decrease
         // phongBoost 10 -> significant decrease
-        float boostFactor = std::min((props.phongBoost - 1.0f) * 0.05f, 0.25f);
+        float boostFactor = min((props.phongBoost - 1.0f) * 0.05f, 0.25f);
         roughness = max(0.15f, roughness - boostFactor);
     }
     
