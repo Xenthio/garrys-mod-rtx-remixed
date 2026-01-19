@@ -142,13 +142,25 @@ bool VTFTextureConverter::Initialize(remix::Interface* remixInterface) {
     }
     
     // Set default output directory for generated textures
-    // This will be inside the game directory: garrysmod/rtx-remix/mods/gmod_topbr/textures/
+    // The executable is at bin/win64/gmod.exe, we need to go up to the game root
+    // Output should be: GarrysModWithRTXAgain/rtx-remix/mods/gmod_topbr/textures/
     char gamePath[MAX_PATH];
     if (GetModuleFileNameA(NULL, gamePath, MAX_PATH)) {
         std::string gameDir(gamePath);
+        // Remove executable name (gmod.exe)
         size_t lastSlash = gameDir.find_last_of("\\/");
         if (lastSlash != std::string::npos) {
             gameDir = gameDir.substr(0, lastSlash);
+            // Remove "win64" directory
+            lastSlash = gameDir.find_last_of("\\/");
+            if (lastSlash != std::string::npos) {
+                gameDir = gameDir.substr(0, lastSlash);
+                // Remove "bin" directory to get to game root
+                lastSlash = gameDir.find_last_of("\\/");
+                if (lastSlash != std::string::npos) {
+                    gameDir = gameDir.substr(0, lastSlash);
+                }
+            }
             m_outputDirectory = gameDir + "\\rtx-remix\\mods\\gmod_topbr\\textures";
         }
     }
