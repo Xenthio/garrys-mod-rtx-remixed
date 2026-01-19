@@ -447,6 +447,15 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
         if (m_debugOutput) {
             Msg("[LegacyTextureProcessor] %s: Using envmap mask for roughness\n", props.materialName.c_str());
         }
+    } else if ((props.hasEnvMap || props.hasEnvMapTint) && !props.baseTexturePath.empty()) {
+        // FALLBACK: If $envmap or $envmaptint is set but no explicit roughness source,
+        // try using base texture alpha as envmap mask (implicit $basealphaenvmapmask behavior)
+        // This handles cases where FindVar doesn't find $basealphaenvmapmask but it's set in VMT
+        vtfPath = props.baseTexturePath;
+        useAlphaChannel = true;
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: Trying base texture alpha as fallback roughness (implicit envmap alpha)\n", props.materialName.c_str());
+        }
     } else {
         // No texture source for roughness - use constant in USDA
         if (m_debugOutput) {
@@ -1628,6 +1637,13 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
                 outProps.envMapTint[1] = g;
                 outProps.envMapTint[2] = b;
                 outProps.hasEnvMapTint = true;
+                // If envmaptint is set, envmap must be enabled even if FindVar didn't find $envmap
+                if (!outProps.hasEnvMap) {
+                    outProps.hasEnvMap = true;
+                    if (m_debugOutput) {
+                        Msg("[LegacyTextureProcessor] %s: Setting hasEnvMap=true based on $envmaptint presence\n", materialName.c_str());
+                    }
+                }
                 if (m_debugOutput) {
                     Msg("[LegacyTextureProcessor] %s: $envmaptint = [%.2f %.2f %.2f]\n", 
                         materialName.c_str(), r, g, b);
