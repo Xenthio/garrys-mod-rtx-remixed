@@ -1390,6 +1390,156 @@ float TextureProcessor::EstimateMetallic(const MaterialPBRProperties& props) {
     return metallic;
 }
 
+// Helper struct for VMT properties parsed from file
+struct VMTProperties {
+    std::string shaderName;
+    bool hasRefractAmount;
+    float refractAmount;
+    bool hasTranslucent;
+    bool translucent;
+    std::string surfaceProp;
+    bool hasEnvMap;
+    std::string envMap;
+};
+
+// Parse a VMT file and extract properties that FindVar doesn't reliably expose
+static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialName, VMTProperties& outProps, bool debugOutput) {
+    if (!fileSystem) return false;
+    
+    outProps = VMTProperties{};
+    outProps.hasRefractAmount = false;
+    outProps.refractAmount = 0.0f;
+    outProps.hasTranslucent = false;
+    outProps.translucent = false;
+    outProps.hasEnvMap = false;
+    
+    // Build VMT path
+    std::string vmtPath = "materials/" + materialName;
+    if (vmtPath.find(".vmt") == std::string::npos) {
+        vmtPath += ".vmt";
+    }
+    
+    FileHandle_t file = fileSystem->Open(vmtPath.c_str(), "rb", "GAME");
+    if (!file) {
+        // Try without materials/ prefix
+        vmtPath = materialName;
+        if (vmtPath.find(".vmt") == std::string::npos) {
+            vmtPath += ".vmt";
+        }
+        file = fileSystem->Open(vmtPath.c_str(), "rb", "GAME");
+        if (!file) {
+            return false;
+        }
+    }
+    
+    // Get file size
+    int fileSize = fileSystem->Size(file);
+    if (fileSize <= 0 || fileSize > 64 * 1024) {  // Max 64KB VMT
+        fileSystem->Close(file);
+        return false;
+    }
+    
+    // Read file content
+    std::vector<char> buffer(fileSize + 1);
+    int bytesRead = fileSystem->Read(buffer.data(), fileSize, file);
+    fileSystem->Close(file);
+    
+    if (bytesRead != fileSize) {
+        return false;
+    }
+    buffer[fileSize] = '\0';
+    
+    // Parse the VMT content (simple key-value parsing)
+    std::string content(buffer.data());
+    
+    // Convert to lowercase for case-insensitive matching
+    std::string contentLower = content;
+    std::transform(contentLower.begin(), contentLower.end(), contentLower.begin(), ::tolower);
+    
+    // Extract shader name (first non-whitespace word, possibly in quotes)
+    size_t start = contentLower.find_first_not_of(" \t\r\n");
+    if (start != std::string::npos) {
+        // Skip quotes if present
+        if (content[start] == '"') {
+            start++;
+            size_t end = content.find('"', start);
+            if (end != std::string::npos) {
+                outProps.shaderName = content.substr(start, end - start);
+            }
+        } else {
+            // Find end of shader name (whitespace or brace)
+            size_t end = content.find_first_of(" \t\r\n{", start);
+            if (end != std::string::npos) {
+                outProps.shaderName = content.substr(start, end - start);
+            }
+        }
+    }
+    
+    // Helper to find a key-value pair (case-insensitive key)
+    auto findValue = [&contentLower, &content](const std::string& keyLower) -> std::string {
+        size_t pos = contentLower.find(keyLower);
+        if (pos == std::string::npos) return "";
+        
+        // Find the value after the key
+        pos += keyLower.length();
+        // Skip whitespace
+        while (pos < content.length() && (content[pos] == ' ' || content[pos] == '\t' || content[pos] == '"')) {
+            pos++;
+        }
+        
+        // Read value until whitespace, quote, or newline
+        size_t valueStart = pos;
+        while (pos < content.length() && content[pos] != '"' && content[pos] != '\r' && content[pos] != '\n' && content[pos] != ' ' && content[pos] != '\t') {
+            pos++;
+        }
+        
+        return content.substr(valueStart, pos - valueStart);
+    };
+    
+    // Check for $refractamount
+    size_t refractPos = contentLower.find("$refractamount");
+    if (refractPos != std::string::npos) {
+        outProps.hasRefractAmount = true;
+        std::string valStr = findValue("$refractamount");
+        if (!valStr.empty()) {
+            try {
+                outProps.refractAmount = std::stof(valStr);
+            } catch (...) {
+                outProps.refractAmount = 0.25f;  // Default
+            }
+        }
+    }
+    
+    // Check for $translucent
+    size_t translucentPos = contentLower.find("$translucent");
+    if (translucentPos != std::string::npos) {
+        outProps.hasTranslucent = true;
+        std::string valStr = findValue("$translucent");
+        outProps.translucent = (valStr == "1" || valStr == "true");
+    }
+    
+    // Check for $surfaceprop
+    size_t surfacePos = contentLower.find("$surfaceprop");
+    if (surfacePos != std::string::npos) {
+        outProps.surfaceProp = findValue("$surfaceprop");
+    }
+    
+    // Check for $envmap
+    size_t envmapPos = contentLower.find("$envmap");
+    if (envmapPos != std::string::npos) {
+        outProps.hasEnvMap = true;
+        outProps.envMap = findValue("$envmap");
+    }
+    
+    if (debugOutput && (outProps.hasRefractAmount || !outProps.shaderName.empty())) {
+        Msg("[LegacyTextureProcessor] VMT parse: shader='%s', $refractamount=%d (%.2f), $translucent=%d (%d), $surfaceprop='%s', $envmap=%d\n",
+            outProps.shaderName.c_str(), outProps.hasRefractAmount, outProps.refractAmount,
+            outProps.hasTranslucent, outProps.translucent, outProps.surfaceProp.c_str(), outProps.hasEnvMap);
+    }
+    
+    return true;
+}
+
 bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName, 
                                               MaterialPBRProperties& outProps) {
     if (!materials) {
@@ -1872,162 +2022,6 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     return true;
 }
 
-
-// Helper function to check if a file exists
-static bool FileExists(const std::string& path) {
-    std::ifstream file(path, std::ios::binary);
-    return file.good();
-}
-
-// Helper struct for VMT properties parsed from file
-struct VMTProperties {
-    std::string shaderName;
-    bool hasRefractAmount;
-    float refractAmount;
-    bool hasTranslucent;
-    bool translucent;
-    std::string surfaceProp;
-    bool hasEnvMap;
-    std::string envMap;
-};
-
-// Parse a VMT file and extract properties that FindVar doesn't reliably expose
-static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialName, VMTProperties& outProps, bool debugOutput) {
-    if (!fileSystem) return false;
-    
-    outProps = VMTProperties{};
-    outProps.hasRefractAmount = false;
-    outProps.refractAmount = 0.0f;
-    outProps.hasTranslucent = false;
-    outProps.translucent = false;
-    outProps.hasEnvMap = false;
-    
-    // Build VMT path
-    std::string vmtPath = "materials/" + materialName;
-    if (vmtPath.find(".vmt") == std::string::npos) {
-        vmtPath += ".vmt";
-    }
-    
-    FileHandle_t file = fileSystem->Open(vmtPath.c_str(), "rb", "GAME");
-    if (!file) {
-        // Try without materials/ prefix
-        vmtPath = materialName;
-        if (vmtPath.find(".vmt") == std::string::npos) {
-            vmtPath += ".vmt";
-        }
-        file = fileSystem->Open(vmtPath.c_str(), "rb", "GAME");
-        if (!file) {
-            return false;
-        }
-    }
-    
-    // Get file size
-    int fileSize = fileSystem->Size(file);
-    if (fileSize <= 0 || fileSize > 64 * 1024) {  // Max 64KB VMT
-        fileSystem->Close(file);
-        return false;
-    }
-    
-    // Read file content
-    std::vector<char> buffer(fileSize + 1);
-    int bytesRead = fileSystem->Read(buffer.data(), fileSize, file);
-    fileSystem->Close(file);
-    
-    if (bytesRead != fileSize) {
-        return false;
-    }
-    buffer[fileSize] = '\0';
-    
-    // Parse the VMT content (simple key-value parsing)
-    std::string content(buffer.data());
-    
-    // Convert to lowercase for case-insensitive matching
-    std::string contentLower = content;
-    std::transform(contentLower.begin(), contentLower.end(), contentLower.begin(), ::tolower);
-    
-    // Extract shader name (first non-whitespace word, possibly in quotes)
-    size_t start = contentLower.find_first_not_of(" \t\r\n");
-    if (start != std::string::npos) {
-        // Skip quotes if present
-        if (content[start] == '"') {
-            start++;
-            size_t end = content.find('"', start);
-            if (end != std::string::npos) {
-                outProps.shaderName = content.substr(start, end - start);
-            }
-        } else {
-            // Find end of shader name (whitespace or brace)
-            size_t end = content.find_first_of(" \t\r\n{", start);
-            if (end != std::string::npos) {
-                outProps.shaderName = content.substr(start, end - start);
-            }
-        }
-    }
-    
-    // Helper to find a key-value pair (case-insensitive key)
-    auto findValue = [&contentLower, &content](const std::string& keyLower) -> std::string {
-        size_t pos = contentLower.find(keyLower);
-        if (pos == std::string::npos) return "";
-        
-        // Find the value after the key
-        pos += keyLower.length();
-        // Skip whitespace
-        while (pos < content.length() && (content[pos] == ' ' || content[pos] == '\t' || content[pos] == '"')) {
-            pos++;
-        }
-        
-        // Read value until whitespace, quote, or newline
-        size_t start = pos;
-        while (pos < content.length() && content[pos] != '"' && content[pos] != '\r' && content[pos] != '\n' && content[pos] != ' ' && content[pos] != '\t') {
-            pos++;
-        }
-        
-        return content.substr(start, pos - start);
-    };
-    
-    // Check for $refractamount
-    size_t refractPos = contentLower.find("$refractamount");
-    if (refractPos != std::string::npos) {
-        outProps.hasRefractAmount = true;
-        std::string valStr = findValue("$refractamount");
-        if (!valStr.empty()) {
-            try {
-                outProps.refractAmount = std::stof(valStr);
-            } catch (...) {
-                outProps.refractAmount = 0.25f;  // Default
-            }
-        }
-    }
-    
-    // Check for $translucent
-    size_t translucentPos = contentLower.find("$translucent");
-    if (translucentPos != std::string::npos) {
-        outProps.hasTranslucent = true;
-        std::string valStr = findValue("$translucent");
-        outProps.translucent = (valStr == "1" || valStr == "true");
-    }
-    
-    // Check for $surfaceprop
-    size_t surfacePos = contentLower.find("$surfaceprop");
-    if (surfacePos != std::string::npos) {
-        outProps.surfaceProp = findValue("$surfaceprop");
-    }
-    
-    // Check for $envmap
-    size_t envmapPos = contentLower.find("$envmap");
-    if (envmapPos != std::string::npos) {
-        outProps.hasEnvMap = true;
-        outProps.envMap = findValue("$envmap");
-    }
-    
-    if (debugOutput && (outProps.hasRefractAmount || !outProps.shaderName.empty())) {
-        Msg("[LegacyTextureProcessor] VMT parse: shader='%s', $refractamount=%d (%.2f), $translucent=%d (%d), $surfaceprop='%s', $envmap=%d\n",
-            outProps.shaderName.c_str(), outProps.hasRefractAmount, outProps.refractAmount,
-            outProps.hasTranslucent, outProps.translucent, outProps.surfaceProp.c_str(), outProps.hasEnvMap);
-    }
-    
-    return true;
-}
 
 bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uint64_t textureHash) {
     if (textureHash == 0) {
