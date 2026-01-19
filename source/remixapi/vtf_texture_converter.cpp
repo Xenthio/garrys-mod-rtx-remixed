@@ -333,6 +333,10 @@ bool VTFTextureConverter::GenerateRoughnessTexture(const MaterialPBRProperties& 
         std::string vtfPath = props.envMapMaskPath;
         std::vector<uint8_t> fileData;
         
+        if (m_debugOutput) {
+            Msg("[VTFConverter] Attempting to read envmap mask: %s\n", vtfPath.c_str());
+        }
+        
         if (ReadVTFFile(vtfPath, fileData)) {
             VTFFileHeader header;
             if (ParseVTFHeader(fileData, header)) {
@@ -368,8 +372,14 @@ bool VTFTextureConverter::GenerateRoughnessTexture(const MaterialPBRProperties& 
                             props.envMapMaskPath.c_str(), outTexture.width, outTexture.height);
                     }
                     return true;
+                } else if (m_debugOutput) {
+                    Msg("[VTFConverter] Failed to extract pixel data from envmap mask: %s\n", vtfPath.c_str());
                 }
+            } else if (m_debugOutput) {
+                Msg("[VTFConverter] Failed to parse VTF header for envmap mask: %s\n", vtfPath.c_str());
             }
+        } else if (m_debugOutput) {
+            Msg("[VTFConverter] Failed to read envmap mask VTF: %s (falling back to constant)\n", vtfPath.c_str());
         }
     }
     
@@ -1020,33 +1030,61 @@ bool VTFTextureConverter::ExtractMaterialPBR(const std::string& materialName,
     outProps.roughness = 0.5f;
     outProps.metallic = 0.0f;
     
-    // Get $basetexture
+    // Get $basetexture - try string value first, then texture name
     bool found = false;
     IMaterialVar* pVar = pMaterial->FindVar("$basetexture", &found, false);
     if (found && pVar) {
-        ITexture* pTex = pVar->GetTextureValue();
-        if (pTex) {
-            outProps.baseTexturePath = pTex->GetName();
+        // Try to get the string value (path from VMT) first
+        const char* strVal = pVar->GetStringValue();
+        if (strVal && strVal[0] != '\0') {
+            outProps.baseTexturePath = strVal;
+        } else {
+            // Fall back to texture name
+            ITexture* pTex = pVar->GetTextureValue();
+            if (pTex) {
+                outProps.baseTexturePath = pTex->GetName();
+            }
+        }
+        if (m_debugOutput && !outProps.baseTexturePath.empty()) {
+            Msg("[VTFConverter] %s: $basetexture = %s\n", materialName.c_str(), outProps.baseTexturePath.c_str());
         }
     }
     
-    // Get $bumpmap
+    // Get $bumpmap - try string value first, then texture name
     pVar = pMaterial->FindVar("$bumpmap", &found, false);
     if (found && pVar) {
-        ITexture* pTex = pVar->GetTextureValue();
-        if (pTex) {
-            outProps.bumpMapPath = pTex->GetName();
+        const char* strVal = pVar->GetStringValue();
+        if (strVal && strVal[0] != '\0') {
+            outProps.bumpMapPath = strVal;
             outProps.hasBumpMap = true;
+        } else {
+            ITexture* pTex = pVar->GetTextureValue();
+            if (pTex) {
+                outProps.bumpMapPath = pTex->GetName();
+                outProps.hasBumpMap = true;
+            }
+        }
+        if (m_debugOutput && outProps.hasBumpMap) {
+            Msg("[VTFConverter] %s: $bumpmap = %s\n", materialName.c_str(), outProps.bumpMapPath.c_str());
         }
     }
     
-    // Get $envmapmask
+    // Get $envmapmask - try string value first, then texture name
     pVar = pMaterial->FindVar("$envmapmask", &found, false);
     if (found && pVar) {
-        ITexture* pTex = pVar->GetTextureValue();
-        if (pTex) {
-            outProps.envMapMaskPath = pTex->GetName();
+        const char* strVal = pVar->GetStringValue();
+        if (strVal && strVal[0] != '\0') {
+            outProps.envMapMaskPath = strVal;
             outProps.hasEnvMapMask = true;
+        } else {
+            ITexture* pTex = pVar->GetTextureValue();
+            if (pTex) {
+                outProps.envMapMaskPath = pTex->GetName();
+                outProps.hasEnvMapMask = true;
+            }
+        }
+        if (m_debugOutput && outProps.hasEnvMapMask) {
+            Msg("[VTFConverter] %s: $envmapmask = %s\n", materialName.c_str(), outProps.envMapMaskPath.c_str());
         }
     }
     
@@ -1305,6 +1343,12 @@ int VTFTextureConverter::ProcessAllTrackedMaterials() {
     
     if (processedCount > 0) {
         Msg("[VTFConverter] Processed %d materials with PBR properties\n", processedCount);
+        Msg("[VTFConverter] Stats: %d with normals, %d with roughness textures\n", 
+            m_stats.materialsWithNormals, m_stats.materialsWithRoughness);
+        if (m_stats.materialsProcessed > m_stats.materialsWithNormals) {
+            Msg("[VTFConverter] Note: %d materials fell back to constant roughness (enable debug with rtx_topbr_debug 1 for details)\n",
+                m_stats.materialsProcessed - m_stats.materialsWithNormals);
+        }
     }
     
     return processedCount;
