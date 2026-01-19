@@ -384,15 +384,17 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
     // Check for roughness sources in order of preference:
     // 1. $phongexponenttexture - best source, per-pixel phong exponent
     // 2. $normalmapalphaenvmapmask - use normal map's alpha channel
-    // 3. $basemapalphaphongmask - use base texture alpha as mask
-    // 4. $envmapmask - use separate envmap mask texture
+    // 3. $phong with $bumpmap - Source Engine uses normal map alpha as phong mask by default!
+    // 4. $basemapalphaphongmask - use base texture alpha as mask
+    // 5. $envmapmask - use separate envmap mask texture
     // Otherwise, return false and let the USDA use a constant value instead
     
     if (m_debugOutput) {
-        Msg("[LegacyTextureProcessor] GenerateRoughnessTexture for %s: hasPhongExpTex=%d (%s), normMapAlpha=%d, baseMapAlpha=%d, envMapMask=%d (%s)\n",
+        Msg("[LegacyTextureProcessor] GenerateRoughnessTexture for %s: hasPhongExpTex=%d (%s), normMapAlpha=%d, hasPhong=%d, hasBump=%d, baseMapAlpha=%d, envMapMask=%d (%s)\n",
             props.materialName.c_str(),
             props.hasPhongExponentTexture, props.phongExponentTexturePath.c_str(),
             props.normalMapAlphaEnvMapMask, 
+            props.hasPhong, props.hasBumpMap,
             props.hasBaseMapAlphaPhongMask,
             props.hasEnvMapMask, props.envMapMaskPath.c_str());
     }
@@ -410,11 +412,20 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
             Msg("[LegacyTextureProcessor] %s: Using $phongexponenttexture for roughness (best quality)\n", props.materialName.c_str());
         }
     } else if (props.normalMapAlphaEnvMapMask && props.hasBumpMap && !props.bumpMapPath.empty()) {
-        // Use the normal map's alpha channel as the roughness source
+        // Use the normal map's alpha channel as the roughness source (explicit flag)
         vtfPath = props.bumpMapPath;
         useAlphaChannel = true;
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: Using normal map alpha channel for roughness\n", props.materialName.c_str());
+            Msg("[LegacyTextureProcessor] %s: Using normal map alpha channel for roughness ($normalmapalphaenvmapmask)\n", props.materialName.c_str());
+        }
+    } else if (props.hasPhong && props.hasBumpMap && !props.bumpMapPath.empty()) {
+        // Source Engine default behavior: when $phong is enabled, the normal map's alpha
+        // channel contains the phong mask (determines which areas get specular highlights)
+        // This is the DEFAULT behavior in Source, not just when $normalmapalphaenvmapmask is set
+        vtfPath = props.bumpMapPath;
+        useAlphaChannel = true;
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: Using normal map alpha as phong mask (default Source behavior)\n", props.materialName.c_str());
         }
     } else if (props.hasBaseMapAlphaPhongMask && !props.baseTexturePath.empty()) {
         // Use the base texture's alpha channel as phong mask
@@ -484,32 +495,30 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
             uint8_t exponentValue = sourceTex.pixelData[i];  // Red channel
             
             // Convert exponent to roughness using a power curve
-            // Exponent 0 (value 0) = very rough (roughness ~1.0)
-            // Exponent 255 (max) = very shiny (roughness ~0.25)
-            // Using sqrt for a more perceptually linear conversion
+            // Exponent 0 (value 0) = very rough (roughness ~0.85)
+            // Exponent 255 (max) = very shiny (roughness ~0.15)
             float normalizedExp = exponentValue / 255.0f;
-            float roughnessF = 1.0f - (sqrtf(normalizedExp) * 0.75f);  // Max shininess -> 0.25 roughness
+            float roughnessF = 0.85f - (sqrtf(normalizedExp) * 0.7f);  // 0->0.85, 255->0.15
             roughness = static_cast<uint8_t>(std::clamp(roughnessF * 255.0f, 0.0f, 255.0f));
         } else if (useAlphaChannel) {
             // Use alpha channel from normal map or base texture
+            // This is the phong mask: bright = shiny areas = LOW roughness
             uint8_t sourceValue = sourceTex.pixelData[i + 3];
             
-            // For alpha masks: bright = more reflection = low roughness
-            // Invert to get roughness
-            roughness = 255 - sourceValue;
+            // Direct conversion: high alpha = shiny = low roughness
+            // Apply a curve to make the transition more gradual
+            float normalizedMask = sourceValue / 255.0f;
+            // Map: 0->0.85 (matte), 255->0.15 (shiny)
+            float roughnessF = 0.85f - (normalizedMask * 0.7f);
+            roughness = static_cast<uint8_t>(std::clamp(roughnessF * 255.0f, 0.0f, 255.0f));
         } else {
             // Use the red channel (envmap mask)
             uint8_t sourceValue = sourceTex.pixelData[i];
             
-            // Invert: bright in source = low roughness
-            roughness = 255 - sourceValue;
-        }
-        
-        // Don't apply additional factors for phong exponent texture - it's already the correct value
-        if (!isPhongExponentTexture) {
-            // Apply phong-based adjustment for other texture sources
-            float roughnessFactor = props.roughness;
-            roughness = static_cast<uint8_t>(std::clamp(roughness * roughnessFactor * 2.0f, 0.0f, 255.0f));
+            // Invert: bright in source = reflective = low roughness
+            float normalizedMask = sourceValue / 255.0f;
+            float roughnessF = 0.85f - (normalizedMask * 0.7f);
+            roughness = static_cast<uint8_t>(std::clamp(roughnessF * 255.0f, 0.0f, 255.0f));
         }
         
         outTexture.pixelData[i + 0] = roughness;
@@ -523,7 +532,7 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
     
     if (m_debugOutput) {
         const char* sourceType = isPhongExponentTexture ? "phong exponent texture" :
-                                 useAlphaChannel ? "alpha channel" : "envmap mask";
+                                 useAlphaChannel ? "alpha channel (phong mask)" : "envmap mask";
         Msg("[LegacyTextureProcessor] Generated roughness from %s: %s (%dx%d)\n",
             sourceType, vtfPath.c_str(), outTexture.width, outTexture.height);
     }
@@ -1185,25 +1194,23 @@ uint64_t TextureProcessor::ConvertAndUploadTexture(const std::string& vtfPath, b
 
 float TextureProcessor::PhongToRoughness(float phongExponent) {
     // Default to fairly rough (most Source materials without phong are matte)
-    if (phongExponent <= 0) return 0.85f;
+    if (phongExponent <= 0) return 0.75f;
     
     // Clamp to reasonable range
     phongExponent = std::clamp(phongExponent, 1.0f, 256.0f);
     
-    // The phong exponent controls specular highlight tightness, not overall reflectivity.
-    // Most Source materials with phong are still fairly rough by PBR standards.
-    // Even high exponent materials (like 150) should still have moderate roughness (0.3-0.5)
-    // because Source's phong is just for highlights, not full mirror reflections.
+    // Source Engine phong materials ARE meant to be shiny - they have specular highlights.
+    // We need to preserve some of that shininess in PBR.
+    // 
+    // phongExponent 1 -> roughness ~0.75 (fairly broad highlight)
+    // phongExponent 25 -> roughness ~0.45 (moderate)
+    // phongExponent 50 -> roughness ~0.35 (fairly smooth)
+    // phongExponent 150 -> roughness ~0.20 (quite smooth)
+    // phongExponent 256 -> roughness ~0.15 (very smooth)
     
-    // Using a more conservative conversion:
-    // phongExponent 1 -> roughness ~0.9 (almost matte, very broad highlight)
-    // phongExponent 50 -> roughness ~0.55 (moderate roughness)
-    // phongExponent 150 -> roughness ~0.35 (somewhat smooth but not mirror)
-    // phongExponent 256 -> roughness ~0.25 (smoothest typical Source material)
+    float roughness = 0.8f - (std::log(phongExponent) / std::log(300.0f)) * 0.65f;
     
-    float roughness = 0.95f - (std::log(phongExponent) / std::log(300.0f)) * 0.7f;
-    
-    return std::clamp(roughness, 0.25f, 0.95f);
+    return std::clamp(roughness, 0.15f, 0.85f);
 }
 
 float TextureProcessor::CalculateRoughness(const MaterialPBRProperties& props) {
@@ -1212,7 +1219,7 @@ float TextureProcessor::CalculateRoughness(const MaterialPBRProperties& props) {
     
     // For materials without phong enabled, default to rough
     if (!props.hasPhong) {
-        return 0.85f;
+        return 0.75f;
     }
     
     // If there's an envmap with tint, the tint controls reflection intensity
@@ -1220,43 +1227,25 @@ float TextureProcessor::CalculateRoughness(const MaterialPBRProperties& props) {
     if (props.hasEnvMapTint && props.hasEnvMap) {
         float tintIntensity = (props.envMapTint[0] + props.envMapTint[1] + props.envMapTint[2]) / 3.0f;
         
-        // tintIntensity of 0.25 (like crossbow) means only 25% reflection = quite rough
-        // tintIntensity of 1.0 means full reflection = can be smoother
-        // But Source envmaps are typically very dim, so we need to be conservative
-        
+        // Low tint means the material reflects less, so increase roughness a bit
+        // But don't completely override the phong-based roughness
         if (tintIntensity < 0.5f) {
-            // Very low tint - this material is meant to be mostly matte
-            // Increase roughness significantly
-            roughness = max(roughness, 0.6f + (0.5f - tintIntensity) * 0.6f);
-        } else if (tintIntensity < 1.0f) {
-            // Moderate tint - slightly increase roughness
-            roughness = roughness + (1.0f - tintIntensity) * 0.2f;
+            roughness = roughness + (0.5f - tintIntensity) * 0.3f;
         }
-        // Don't decrease roughness for high tint - Source materials are rarely mirror-like
-        roughness = std::clamp(roughness, 0.25f, 0.95f);
+        roughness = std::clamp(roughness, 0.15f, 0.85f);
     }
     
-    // Phong fresnel ranges - the values [min mid max] affect reflectivity at different angles
-    // But these are typically small values (like [0.1 3 1]) that mostly affect rim lighting
-    // We shouldn't use these to make materials super shiny
-    if (props.hasPhongFresnelRanges) {
-        // Only use fresnel to INCREASE roughness if the values suggest low reflectivity
-        float minFresnel = props.phongFresnelRanges[0];
-        if (minFresnel < 0.5f) {
-            // Low min fresnel = not reflective at normal incidence = more matte
-            roughness = max(roughness, 0.5f);
-        }
+    // Phong boost affects highlight brightness
+    // Higher boost suggests intentionally shiny material - DECREASE roughness
+    if (props.phongBoost > 1.0f) {
+        // phongBoost 2 -> small decrease
+        // phongBoost 5 -> moderate decrease
+        // phongBoost 10 -> significant decrease
+        float boostFactor = std::min((props.phongBoost - 1.0f) * 0.05f, 0.25f);
+        roughness = max(0.15f, roughness - boostFactor);
     }
     
-    // Phong boost affects highlight brightness, not roughness directly
-    // Higher boost just means brighter highlights, material is still the same roughness
-    // Only use very high boost to slightly decrease roughness
-    if (props.phongBoost > 5.0f) {
-        // Very high boost suggests intentionally shiny material
-        roughness = max(0.35f, roughness - 0.1f);
-    }
-    
-    return std::clamp(roughness, 0.25f, 0.95f);
+    return std::clamp(roughness, 0.15f, 0.85f);
 }
 
 float TextureProcessor::EstimateMetallic(const MaterialPBRProperties& props) {
