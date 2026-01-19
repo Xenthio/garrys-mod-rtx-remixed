@@ -977,7 +977,7 @@ uint64_t VTFTextureConverter::ConvertAndUploadTexture(const std::string& vtfPath
 }
 
 float VTFTextureConverter::PhongToRoughness(float phongExponent) {
-    if (phongExponent <= 0) return 0.5f;
+    if (phongExponent <= 0) return 1.0f;  // Default to max roughness (matte)
     
     // Clamp to reasonable range
     phongExponent = std::clamp(phongExponent, 1.0f, 256.0f);
@@ -1027,8 +1027,8 @@ bool VTFTextureConverter::ExtractMaterialPBR(const std::string& materialName,
     outProps.isTranslucent = false;
     outProps.phongExponent = 0;
     outProps.phongBoost = 1.0f;
-    outProps.roughness = 0.5f;
-    outProps.metallic = 0.0f;
+    outProps.roughness = 1.0f;  // Default to max roughness (matte)
+    outProps.metallic = 0.0f;   // Default to non-metallic
     
     // Helper lambda to check if a texture path is valid (not a placeholder/internal texture)
     auto IsValidTexturePath = [](const std::string& path) -> bool {
