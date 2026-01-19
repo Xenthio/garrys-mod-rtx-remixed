@@ -434,6 +434,13 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
         if (m_debugOutput) {
             Msg("[LegacyTextureProcessor] %s: Using base texture alpha for roughness ($basemapalphaphongmask)\n", props.materialName.c_str());
         }
+    } else if (props.hasBaseAlphaEnvMapMask && !props.baseTexturePath.empty()) {
+        // Use the base texture's alpha channel as envmap mask (common in LightmappedGeneric brushes)
+        vtfPath = props.baseTexturePath;
+        useAlphaChannel = true;
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: Using base texture alpha for roughness ($basealphaenvmapmask - LightmappedGeneric)\n", props.materialName.c_str());
+        }
     } else if (props.hasEnvMapMask && !props.envMapMaskPath.empty()) {
         // Use the envmap mask texture
         vtfPath = props.envMapMaskPath;
@@ -1242,9 +1249,35 @@ float TextureProcessor::CalculateRoughness(const MaterialPBRProperties& props) {
     // Start with roughness from phong exponent (defaults to fairly rough)
     float roughness = PhongToRoughness(props.phongExponent);
     
-    // For materials without phong enabled, default to rough
+    // For materials without phong enabled, check if they have $envmap
+    // This is common for LightmappedGeneric brushes (floors, walls, etc.)
     if (!props.hasPhong) {
-        return 0.75f;
+        if (props.hasEnvMap) {
+            // Material has $envmap, so it should be reflective
+            // Base roughness depends on envmap tint
+            if (props.hasEnvMapTint) {
+                float tintIntensity = (props.envMapTint[0] + props.envMapTint[1] + props.envMapTint[2]) / 3.0f;
+                // tintIntensity 1.0 (full) -> roughness 0.30 (shiny)
+                // tintIntensity 0.5 (half) -> roughness 0.50 (semi-shiny)
+                // tintIntensity 0.25 (quarter) -> roughness 0.60 (moderate)
+                // tintIntensity 0.0 (none) -> roughness 0.75 (matte)
+                roughness = 0.75f - (tintIntensity * 0.45f);
+            } else {
+                // Has envmap but no tint specified - assume moderate reflectivity
+                roughness = 0.50f;
+            }
+            
+            // If material has envmap mask, it will use per-pixel roughness later
+            // Here we just set a reasonable constant for the USDA fallback
+            if (props.hasEnvMapMask) {
+                // Will use texture, but constant should be moderate
+                roughness = min(roughness, 0.50f);
+            }
+            
+            return std::clamp(roughness, 0.30f, 0.75f);
+        }
+        // No phong and no envmap - just a matte surface
+        return 0.85f;
     }
     
     // If there's an envmap with tint, the tint controls reflection intensity
@@ -1329,6 +1362,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     outProps.hasEnvMap = false;
     outProps.hasBaseMapAlphaPhongMask = false;
     outProps.baseMapAlphaPhongMask = 0.0f;
+    outProps.hasBaseAlphaEnvMapMask = false;  // $basealphaenvmapmask for LightmappedGeneric
     
     // Helper lambda to check if a texture path is valid (not a placeholder/internal texture)
     auto IsValidTexturePath = [](const std::string& path) -> bool {
@@ -1503,6 +1537,15 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
         outProps.hasBaseMapAlphaPhongMask = (pVar->GetIntValue() == 1);
         if (m_debugOutput && outProps.hasBaseMapAlphaPhongMask) {
             Msg("[LegacyTextureProcessor] %s: $basemapalphaphongmask = 1\n", materialName.c_str());
+        }
+    }
+    
+    // Get $basealphaenvmapmask - use base texture alpha as envmap mask (common in LightmappedGeneric)
+    pVar = pMaterial->FindVar("$basealphaenvmapmask", &found, false);
+    if (found && pVar) {
+        outProps.hasBaseAlphaEnvMapMask = (pVar->GetIntValue() == 1);
+        if (m_debugOutput && outProps.hasBaseAlphaEnvMapMask) {
+            Msg("[LegacyTextureProcessor] %s: $basealphaenvmapmask = 1 (will use base alpha for roughness)\n", materialName.c_str());
         }
     }
     

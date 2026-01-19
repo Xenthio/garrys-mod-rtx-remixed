@@ -127,6 +127,7 @@ struct MaterialPBRProperties {
     bool hasEnvMap;                 // $envmap - has environment mapping
     float baseMapAlphaPhongMask;    // $basemapalphaphongmask - use base texture alpha as phong mask
     bool hasBaseMapAlphaPhongMask;
+    bool hasBaseAlphaEnvMapMask;    // $basealphaenvmapmask - use base texture alpha as envmap mask (LightmappedGeneric)
 };
 
 // Main converter class - core VTF to DDS/PBR conversion
