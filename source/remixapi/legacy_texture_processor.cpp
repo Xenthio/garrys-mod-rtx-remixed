@@ -1777,7 +1777,8 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     
     // Glass detection: Material is considered glass if:
     // 1. Shader is "Refract" (always glass), OR
-    // 2. $translucent = 1 AND ($surfaceprop = "glass" OR material has envmap + reflective properties)
+    // 2. $surfaceprop = "glass" (FindVar doesn't reliably expose $translucent), OR
+    // 3. $translucent = 1 AND material has envmap + reflective properties
     {
         // Check if shader name indicates glass/refraction
         bool isRefractShader = false;
@@ -1796,18 +1797,25 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
         }
         
         // Determine if this is a glass material
+        // Note: Source Engine's FindVar doesn't reliably expose $translucent, so we relax the check
         if (isRefractShader) {
             outProps.isGlass = true;  // Refract shader is always glass
-        } else if (outProps.isTranslucent && isSurfaceGlass) {
-            outProps.isGlass = true;  // Translucent + glass surfaceprop = glass
+        } else if (isSurfaceGlass) {
+            outProps.isGlass = true;  // surfaceprop=glass means it's glass (don't require $translucent, FindVar is unreliable)
         } else if (outProps.isTranslucent && outProps.hasEnvMap) {
             // Translucent + envmap is likely glass (like the phoenix_storms glass example)
             outProps.isGlass = true;
         }
         
-        if (m_debugOutput && outProps.isGlass) {
-            Msg("[LegacyTextureProcessor] %s: DETECTED AS GLASS (shader=%s, translucent=%d, surfaceprop=%s, hasEnvMap=%d)\n",
-                materialName.c_str(), outProps.shaderName.c_str(), outProps.isTranslucent, outProps.surfaceProp.c_str(), outProps.hasEnvMap);
+        if (m_debugOutput) {
+            if (outProps.isGlass) {
+                Msg("[LegacyTextureProcessor] %s: DETECTED AS GLASS (shader=%s, translucent=%d, surfaceprop=%s, hasEnvMap=%d)\n",
+                    materialName.c_str(), outProps.shaderName.c_str(), outProps.isTranslucent, outProps.surfaceProp.c_str(), outProps.hasEnvMap);
+            } else if (isSurfaceGlass || isRefractShader) {
+                // This shouldn't happen, but log it for debugging
+                Msg("[LegacyTextureProcessor] %s: GLASS DETECTION FAILED - shader=%s, isRefract=%d, isSurfaceGlass=%d, translucent=%d, hasEnvMap=%d\n",
+                    materialName.c_str(), outProps.shaderName.c_str(), isRefractShader, isSurfaceGlass, outProps.isTranslucent, outProps.hasEnvMap);
+            }
         }
     }
     
