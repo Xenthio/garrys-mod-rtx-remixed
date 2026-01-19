@@ -34,10 +34,25 @@ local stats = {
 }
 
 --[[
+    Safe ConVar access helpers with nil guards
+]]--
+local function GetConVarBoolSafe(name, default)
+    local cv = GetConVar(name)
+    if cv then return cv:GetBool() end
+    return default or false
+end
+
+local function GetConVarFloatSafe(name, default)
+    local cv = GetConVar(name)
+    if cv then return cv:GetFloat() end
+    return default or 0
+end
+
+--[[
     Debug print helper
 ]]--
 local function DebugPrint(...)
-    if GetConVar("rtx_topbr_debug"):GetBool() then
+    if GetConVarBoolSafe("rtx_topbr_debug", false) then
         MsgC(Color(200, 200, 255), "[RTX ToPBR] ", Color(255, 255, 255), ...)
         MsgC(Color(255, 255, 255), "\n")
     end
@@ -53,7 +68,7 @@ end
 ]]--
 function RTXToPBR.PhongExponentToRoughness(exponent)
     if not exponent or exponent <= 0 then
-        return GetConVar("rtx_topbr_default_roughness"):GetFloat()
+        return GetConVarFloatSafe("rtx_topbr_default_roughness", 0.5)
     end
     
     -- Clamp exponent to reasonable range
@@ -269,7 +284,7 @@ end
     Creates or updates a Remix material with converted PBR properties
 ]]--
 function RTXToPBR.ConvertMaterial(materialName)
-    if not GetConVar("rtx_topbr_enabled"):GetBool() then
+    if not GetConVarBoolSafe("rtx_topbr_enabled", true) then
         return false
     end
     
@@ -289,9 +304,9 @@ function RTXToPBR.ConvertMaterial(materialName)
     end
     
     -- Check if there's anything to convert
-    local hasNormal = GetConVar("rtx_topbr_normals"):GetBool() and props.bumpmap
-    local hasPhong = GetConVar("rtx_topbr_roughness"):GetBool() and props.phongExponent
-    local hasEnvmapMask = GetConVar("rtx_topbr_metallic"):GetBool() and props.envmapMask
+    local hasNormal = GetConVarBoolSafe("rtx_topbr_normals", true) and props.bumpmap
+    local hasPhong = GetConVarBoolSafe("rtx_topbr_roughness", true) and props.phongExponent
+    local hasEnvmapMask = GetConVarBoolSafe("rtx_topbr_metallic", false) and props.envmapMask
     
     if not hasNormal and not hasPhong and not hasEnvmapMask then
         -- Nothing to convert, skip silently
@@ -336,7 +351,7 @@ function RTXToPBR.ConvertMaterial(materialName)
             materialName, roughness, props.phongExponent))
     else
         -- Apply default roughness
-        opaqueInfo.roughnessConstant = GetConVar("rtx_topbr_default_roughness"):GetFloat()
+        opaqueInfo.roughnessConstant = GetConVarFloatSafe("rtx_topbr_default_roughness", 0.5)
     end
     
     -- Metallic approximation from envmap mask or phong boost
@@ -357,7 +372,7 @@ function RTXToPBR.ConvertMaterial(materialName)
         -- opaqueInfo.roughnessTexture = roughnessTexPath
     else
         -- Apply default metallic
-        opaqueInfo.metallicConstant = GetConVar("rtx_topbr_default_metallic"):GetFloat()
+        opaqueInfo.metallicConstant = GetConVarFloatSafe("rtx_topbr_default_metallic", 0.0)
     end
     
     if not convertedSomething then
@@ -385,7 +400,7 @@ function RTXToPBR.ConvertMaterial(materialName)
         }
         stats.total = stats.total + 1
         
-        if GetConVar("rtx_topbr_debug"):GetBool() then
+        if GetConVarBoolSafe("rtx_topbr_debug", false) then
             MsgC(Color(100, 255, 100), string.format("[RTX ToPBR] Converted: %s (hash: %s)\n", 
                 materialName, hashStr or "unknown"))
         end
@@ -403,7 +418,7 @@ end
     Scan all tracked materials and attempt conversion
 ]]--
 function RTXToPBR.ConvertAllTrackedMaterials()
-    if not GetConVar("rtx_topbr_enabled"):GetBool() then
+    if not GetConVarBoolSafe("rtx_topbr_enabled", true) then
         MsgC(Color(255, 200, 100), "[RTX ToPBR] Conversion disabled (rtx_topbr_enabled = 0)\n")
         return
     end
@@ -455,7 +470,7 @@ end
     Scan BSP materials from NikNaks
 ]]--
 function RTXToPBR.ConvertBSPMaterials()
-    if not GetConVar("rtx_topbr_enabled"):GetBool() then
+    if not GetConVarBoolSafe("rtx_topbr_enabled", true) then
         return
     end
     
@@ -551,7 +566,7 @@ function RTXToPBR.InspectMaterial(materialName)
             props.phongExponent, roughness))
     else
         MsgC(Color(255, 200, 100), string.format("  ✗ Phong Exponent: (none) -> Default Roughness: %.2f\n",
-            GetConVar("rtx_topbr_default_roughness"):GetFloat()))
+            GetConVarFloatSafe("rtx_topbr_default_roughness", 0.5)))
     end
     
     if props.phongBoost then
@@ -624,30 +639,19 @@ concommand.Add("rtx_topbr_clear", function()
     RTXToPBR.ClearCache()
 end, nil, "Clear ToPBR conversion cache (allows re-processing)")
 
--- Helper to safely get ConVar value with nil guard
-local function GetConVarBoolSafe(name)
-    local cv = GetConVar(name)
-    return cv and cv:GetBool()
-end
-
-local function GetConVarFloatSafe(name, default)
-    local cv = GetConVar(name)
-    return cv and cv:GetFloat() or default
-end
-
 -- Auto-run on map load (if enabled)
 hook.Add("InitPostEntity", "RTXToPBR_AutoConvert", function()
     -- Clear cache from previous map
     RTXToPBR.ClearCache()
     
-    if not GetConVarBoolSafe("rtx_topbr_enabled") then
+    if not GetConVarBoolSafe("rtx_topbr_enabled", true) then
         return
     end
     
     local delay = GetConVarFloatSafe("rtx_topbr_delay", 5)
     
     timer.Simple(delay, function()
-        if not GetConVarBoolSafe("rtx_topbr_enabled") then
+        if not GetConVarBoolSafe("rtx_topbr_enabled", true) then
             return
         end
         
