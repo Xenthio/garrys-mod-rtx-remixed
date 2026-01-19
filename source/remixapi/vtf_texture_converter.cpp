@@ -1317,6 +1317,13 @@ void VTFTextureConverter::ClearCache() {
 using namespace GarrysMod::Lua;
 
 LUA_FUNCTION(VTFConverter_Initialize) {
+    // If already initialized (by C++ during RemixAPI init), return success
+    if (VTFTextureConverter::Instance().IsInitialized()) {
+        LUA->PushBool(true);
+        return 1;
+    }
+    
+    // Not initialized yet - need g_remix to initialize
     if (!g_remix) {
         LUA->PushBool(false);
         return 1;
