@@ -382,19 +382,37 @@ bool TextureProcessor::WriteTextureToDDS(const ConvertedTexture& texture, const 
 
 bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& props, ConvertedTexture& outTexture) {
     // Check for roughness sources in order of preference:
-    // 1. $normalmapalphaenvmapmask - use normal map's alpha channel
-    // 2. $envmapmask - use separate envmap mask texture
+    // 1. $phongexponenttexture - best source, per-pixel phong exponent
+    // 2. $normalmapalphaenvmapmask - use normal map's alpha channel
+    // 3. $basemapalphaphongmask - use base texture alpha as mask
+    // 4. $envmapmask - use separate envmap mask texture
     // Otherwise, return false and let the USDA use a constant value instead
     
     std::string vtfPath;
     bool useAlphaChannel = false;
+    bool isPhongExponentTexture = false;
     
-    if (props.normalMapAlphaEnvMapMask && props.hasBumpMap && !props.bumpMapPath.empty()) {
+    if (props.hasPhongExponentTexture && !props.phongExponentTexturePath.empty()) {
+        // Use the phong exponent texture - best source!
+        vtfPath = props.phongExponentTexturePath;
+        useAlphaChannel = false;
+        isPhongExponentTexture = true;
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: Using $phongexponenttexture for roughness (best quality)\n", props.materialName.c_str());
+        }
+    } else if (props.normalMapAlphaEnvMapMask && props.hasBumpMap && !props.bumpMapPath.empty()) {
         // Use the normal map's alpha channel as the roughness source
         vtfPath = props.bumpMapPath;
         useAlphaChannel = true;
         if (m_debugOutput) {
             Msg("[LegacyTextureProcessor] %s: Using normal map alpha channel for roughness\n", props.materialName.c_str());
+        }
+    } else if (props.hasBaseMapAlphaPhongMask && !props.baseTexturePath.empty()) {
+        // Use the base texture's alpha channel as phong mask
+        vtfPath = props.baseTexturePath;
+        useAlphaChannel = true;
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: Using base texture alpha for roughness ($basemapalphaphongmask)\n", props.materialName.c_str());
         }
     } else if (props.hasEnvMapMask && !props.envMapMaskPath.empty()) {
         // Use the envmap mask texture
@@ -406,7 +424,7 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
     } else {
         // No texture source for roughness - use constant in USDA
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] No envmap mask for %s, will use roughness constant %.2f\n",
+            Msg("[LegacyTextureProcessor] No roughness texture source for %s, will use roughness constant %.2f\n",
                 props.materialName.c_str(), props.roughness);
         }
         return false;
@@ -443,29 +461,47 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
     }
     
     // Convert source texture to roughness
-    // In PBR: low roughness = shiny/reflective, high roughness = matte
-    // In envmap mask/alpha: bright = more reflection = low roughness
     outTexture.width = sourceTex.width;
     outTexture.height = sourceTex.height;
     outTexture.pixelData.resize(sourceTex.width * sourceTex.height * 4);
     
     for (size_t i = 0; i < sourceTex.pixelData.size(); i += 4) {
-        uint8_t sourceValue;
+        uint8_t roughness;
         
-        if (useAlphaChannel) {
-            // Use alpha channel from normal map
-            sourceValue = sourceTex.pixelData[i + 3];
+        if (isPhongExponentTexture) {
+            // $phongexponenttexture: pixel value is the phong exponent (0-255 maps to exponent)
+            // Higher exponent = shinier = LOWER roughness
+            // The texture typically uses the red channel (or all channels for grayscale)
+            uint8_t exponentValue = sourceTex.pixelData[i];  // Red channel
+            
+            // Convert exponent to roughness using a power curve
+            // Exponent 0 (value 0) = very rough (roughness ~1.0)
+            // Exponent 255 (max) = very shiny (roughness ~0.25)
+            // Using sqrt for a more perceptually linear conversion
+            float normalizedExp = exponentValue / 255.0f;
+            float roughnessF = 1.0f - (sqrtf(normalizedExp) * 0.75f);  // Max shininess -> 0.25 roughness
+            roughness = static_cast<uint8_t>(std::clamp(roughnessF * 255.0f, 0.0f, 255.0f));
+        } else if (useAlphaChannel) {
+            // Use alpha channel from normal map or base texture
+            uint8_t sourceValue = sourceTex.pixelData[i + 3];
+            
+            // For alpha masks: bright = more reflection = low roughness
+            // Invert to get roughness
+            roughness = 255 - sourceValue;
         } else {
-            // Use the red channel (or luminance)
-            sourceValue = sourceTex.pixelData[i];
+            // Use the red channel (envmap mask)
+            uint8_t sourceValue = sourceTex.pixelData[i];
+            
+            // Invert: bright in source = low roughness
+            roughness = 255 - sourceValue;
         }
         
-        // Invert: bright in source = low roughness
-        uint8_t roughness = 255 - sourceValue;
-        
-        // Apply phong-based adjustment
-        float roughnessFactor = props.roughness;
-        roughness = static_cast<uint8_t>(std::clamp(roughness * roughnessFactor * 2.0f, 0.0f, 255.0f));
+        // Don't apply additional factors for phong exponent texture - it's already the correct value
+        if (!isPhongExponentTexture) {
+            // Apply phong-based adjustment for other texture sources
+            float roughnessFactor = props.roughness;
+            roughness = static_cast<uint8_t>(std::clamp(roughness * roughnessFactor * 2.0f, 0.0f, 255.0f));
+        }
         
         outTexture.pixelData[i + 0] = roughness;
         outTexture.pixelData[i + 1] = roughness;
@@ -477,9 +513,10 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
     outTexture.mipLevels = 1;
     
     if (m_debugOutput) {
+        const char* sourceType = isPhongExponentTexture ? "phong exponent texture" :
+                                 useAlphaChannel ? "alpha channel" : "envmap mask";
         Msg("[LegacyTextureProcessor] Generated roughness from %s: %s (%dx%d)\n",
-            useAlphaChannel ? "normal alpha" : "envmap mask",
-            vtfPath.c_str(), outTexture.width, outTexture.height);
+            sourceType, vtfPath.c_str(), outTexture.width, outTexture.height);
     }
     return true;
 }
@@ -1248,6 +1285,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     outProps.hasPhong = false;
     outProps.hasBumpMap = false;
     outProps.hasEnvMapMask = false;
+    outProps.hasPhongExponentTexture = false;
     outProps.isSelfIllum = false;
     outProps.isTranslucent = false;
     outProps.phongExponent = 0;
@@ -1266,6 +1304,8 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     outProps.envMapTint[1] = 1.0f;
     outProps.envMapTint[2] = 1.0f;
     outProps.hasEnvMap = false;
+    outProps.hasBaseMapAlphaPhongMask = false;
+    outProps.baseMapAlphaPhongMask = 0.0f;
     
     // Helper lambda to check if a texture path is valid (not a placeholder/internal texture)
     auto IsValidTexturePath = [](const std::string& path) -> bool {
@@ -1398,6 +1438,38 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     pVar = pMaterial->FindVar("$phongboost", &found, false);
     if (found && pVar) {
         outProps.phongBoost = pVar->GetFloatValue();
+    }
+    
+    // Get $phongexponenttexture - per-pixel phong exponent texture (very useful for roughness!)
+    pVar = pMaterial->FindVar("$phongexponenttexture", &found, false);
+    if (found && pVar) {
+        std::string texPath;
+        const char* strVal = pVar->GetStringValue();
+        if (strVal && strVal[0] != '\0') {
+            texPath = strVal;
+        }
+        if (!IsValidTexturePath(texPath)) {
+            ITexture* pTex = pVar->GetTextureValue();
+            if (pTex) {
+                texPath = pTex->GetName();
+            }
+        }
+        if (IsValidTexturePath(texPath)) {
+            outProps.phongExponentTexturePath = texPath;
+            outProps.hasPhongExponentTexture = true;
+            if (m_debugOutput) {
+                Msg("[LegacyTextureProcessor] %s: $phongexponenttexture = %s\n", materialName.c_str(), texPath.c_str());
+            }
+        }
+    }
+    
+    // Get $basemapalphaphongmask - use base texture alpha as phong mask
+    pVar = pMaterial->FindVar("$basemapalphaphongmask", &found, false);
+    if (found && pVar) {
+        outProps.hasBaseMapAlphaPhongMask = (pVar->GetIntValue() == 1);
+        if (m_debugOutput && outProps.hasBaseMapAlphaPhongMask) {
+            Msg("[LegacyTextureProcessor] %s: $basemapalphaphongmask = 1\n", materialName.c_str());
+        }
     }
     
     // Get $phongfresnelranges "[x y z]"
@@ -1682,8 +1754,10 @@ int TextureProcessor::ProcessAllTrackedMaterials() {
         }
         
         // Only process materials with PBR-relevant data
-        // Include materials with $normalmapalphaenvmapmask
-        if (!props.hasBumpMap && !props.hasPhong && !props.hasEnvMapMask && !props.normalMapAlphaEnvMapMask) {
+        // Include materials with roughness texture sources
+        if (!props.hasBumpMap && !props.hasPhong && !props.hasEnvMapMask && 
+            !props.normalMapAlphaEnvMapMask && !props.hasPhongExponentTexture && 
+            !props.hasBaseMapAlphaPhongMask) {
             m_processedMaterials.insert(matName);
             continue;
         }
@@ -1787,8 +1861,10 @@ bool TextureProcessor::ProcessSingleMaterial(const std::string& materialName) {
     }
     
     // Only process materials with PBR-relevant data
-    // Include materials with $normalmapalphaenvmapmask
-    if (!props.hasBumpMap && !props.hasPhong && !props.hasEnvMapMask && !props.normalMapAlphaEnvMapMask) {
+    // Include materials with roughness texture sources
+    if (!props.hasBumpMap && !props.hasPhong && !props.hasEnvMapMask && 
+        !props.normalMapAlphaEnvMapMask && !props.hasPhongExponentTexture &&
+        !props.hasBaseMapAlphaPhongMask) {
         m_processedMaterials.insert(materialName);
         return false;
     }
@@ -2203,6 +2279,18 @@ LUA_FUNCTION(LegacyTextureProcessor_InspectMaterial) {
     
     LUA->PushBool(props.hasEnvMapMask);
     LUA->SetField(-2, "hasEnvMapMask");
+    
+    LUA->PushBool(props.hasPhongExponentTexture);
+    LUA->SetField(-2, "hasPhongExponentTexture");
+    
+    LUA->PushString(props.phongExponentTexturePath.c_str());
+    LUA->SetField(-2, "phongExponentTexture");
+    
+    LUA->PushBool(props.hasBaseMapAlphaPhongMask);
+    LUA->SetField(-2, "hasBaseMapAlphaPhongMask");
+    
+    LUA->PushBool(props.normalMapAlphaEnvMapMask);
+    LUA->SetField(-2, "normalMapAlphaEnvMapMask");
     
     LUA->PushBool(props.isSelfIllum);
     LUA->SetField(-2, "isSelfIllum");

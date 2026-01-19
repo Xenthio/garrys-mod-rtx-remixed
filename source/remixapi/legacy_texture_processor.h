@@ -105,6 +105,7 @@ struct MaterialPBRProperties {
     std::string baseTexturePath;
     std::string bumpMapPath;
     std::string envMapMaskPath;
+    std::string phongExponentTexturePath;  // $phongexponenttexture - per-pixel phong exponent
     float phongExponent;
     float phongBoost;
     float roughness;        // Calculated from phong
@@ -112,6 +113,7 @@ struct MaterialPBRProperties {
     bool hasPhong;
     bool hasBumpMap;
     bool hasEnvMapMask;
+    bool hasPhongExponentTexture;  // $phongexponenttexture available
     bool isSelfIllum;
     bool isTranslucent;
     uint64_t baseTextureHash;  // Hash from rendered texture
@@ -123,6 +125,8 @@ struct MaterialPBRProperties {
     float envMapTint[3];            // $envmaptint - tints the environment map
     bool hasEnvMapTint;
     bool hasEnvMap;                 // $envmap - has environment mapping
+    float baseMapAlphaPhongMask;    // $basemapalphaphongmask - use base texture alpha as phong mask
+    bool hasBaseMapAlphaPhongMask;
 };
 
 // Main converter class - core VTF to DDS/PBR conversion
