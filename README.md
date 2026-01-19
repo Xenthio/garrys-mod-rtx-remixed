@@ -4,11 +4,12 @@
 - Material fixes
     - Fixes some broken UI/game materials and removes detail textures
     - Change all water textures to a single one to simplify replacements in Remix
-    - **ToPBR Material Extractor**: Scans and extracts Source Engine material properties for PBR conversion:
-        - Extracts `$bumpmap` paths (normal maps)
-        - Converts `$phongexponent` to suggested roughness values
-        - Identifies `$envmapmask` textures for roughness/metallic approximation
-        - Exports data to JSON for use with Remix Toolkit
+    - **Runtime ToPBR Conversion**: Automatically converts Source Engine materials to PBR at runtime:
+        - Reads VTF texture files directly from Source Engine filesystem
+        - Uploads normal maps to RTX Remix via CreateTexture API
+        - Calculates roughness from `$phongexponent` values
+        - Estimates metallic from `$envmapmask` and `$phongboost`
+        - Auto-processes materials on map load
 - Model fixes
     - Fixes some props having unstable hashes in RTX Remix so they can be replaced in the Remix Toolkit
     - Allows most HL2 RTX mesh replacements to load correctly
