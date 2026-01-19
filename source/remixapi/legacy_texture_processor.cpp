@@ -2737,11 +2737,9 @@ bool TextureProcessor::WriteModUSDA() {
                 materialsUsda << "                asset inputs:transmittance_texture = @" << relPath << "@ (\n";
                 materialsUsda << "                    colorSpace = \"srgb\"\n";
                 materialsUsda << "                )\n";
-                // Only use diffuse layer for non-Refract glass (like bottles that need to show their texture)
-                // Refract glass should be purely transparent, not show a solid texture layer
-                if (!info.isRefractShader) {
-                    materialsUsda << "                bool inputs:use_diffuse_layer = 1\n";
-                }
+                // Use diffuse layer to show the transmittance texture color
+                // This is needed for both Refract (with $refracttinttexture) and non-Refract glass (like bottles)
+                materialsUsda << "                bool inputs:use_diffuse_layer = 1\n";
             }
             
             // Add normal map support for glass (for frosted/textured glass)
