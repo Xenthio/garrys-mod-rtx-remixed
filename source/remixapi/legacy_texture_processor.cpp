@@ -1671,6 +1671,34 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
         }
     }
     
+    // Get $normalmap - used by Refract shader instead of $bumpmap
+    // Only check this if we don't already have a bump map
+    if (!outProps.hasBumpMap) {
+        pVar = pMaterial->FindVar("$normalmap", &found, false);
+        if (found && pVar) {
+            std::string texPath;
+            const char* strVal = pVar->GetStringValue();
+            if (strVal && strVal[0] != '\0') {
+                texPath = strVal;
+            }
+            if (!IsValidTexturePath(texPath)) {
+                ITexture* pTex = pVar->GetTextureValue();
+                if (pTex) {
+                    texPath = pTex->GetName();
+                }
+            }
+            if (IsValidTexturePath(texPath)) {
+                outProps.bumpMapPath = texPath;
+                outProps.hasBumpMap = true;
+            }
+            if (m_debugOutput && outProps.hasBumpMap) {
+                Msg("[LegacyTextureProcessor] %s: $normalmap = %s\n", materialName.c_str(), outProps.bumpMapPath.c_str());
+            } else if (m_debugOutput && strVal) {
+                Msg("[LegacyTextureProcessor] %s: $normalmap filtered (invalid path: '%s')\n", materialName.c_str(), strVal);
+            }
+        }
+    }
+    
     // Get $envmapmask - try string value first, then texture name
     pVar = pMaterial->FindVar("$envmapmask", &found, false);
     if (found && pVar) {
@@ -2640,8 +2668,19 @@ bool TextureProcessor::WriteModUSDA() {
             materialsUsda << "                float inputs:ior_constant = " << info.ior << "\n";
             materialsUsda << "                bool inputs:thin_walled = 1\n";  // Most game glass is thin-walled
             
-            // Low roughness for clear glass
-            materialsUsda << "                float inputs:reflection_roughness_constant = 0.05\n";
+            // Use roughness texture if available, otherwise use constant
+            // This allows frosted/textured glass to have varying roughness
+            if (!info.roughnessPath.empty()) {
+                std::string relPath = GetRelativeTexturePath(info.roughnessPath, m_outputDirectory);
+                materialsUsda << "                asset inputs:reflectionroughness_texture = @" << relPath << "@ (\n";
+                materialsUsda << "                    colorSpace = \"raw\"\n";
+                materialsUsda << "                )\n";
+            } else {
+                // Use calculated roughness (default for glass is lower)
+                // If no roughness info, use 0.05 for clear glass
+                float glassRoughness = (info.roughnessConstant >= 0.99f) ? 0.05f : info.roughnessConstant;
+                materialsUsda << "                float inputs:reflection_roughness_constant = " << glassRoughness << "\n";
+            }
             
             // If we have a base texture, use it as the transmittance texture to color/tint the glass
             // This is important for things like colored glass bottles
