@@ -1,15 +1,16 @@
 #ifdef _WIN64
 
-#include "vtf_texture_converter.h"
 #include "remixapi.h"
-#include "../d3d9_texture_tracker.h"
-
 #include <tier0/dbg.h>
-#include <Windows.h>
 #include <materialsystem/imaterialsystem.h>
 #include <materialsystem/imaterial.h>
 #include <materialsystem/imaterialvar.h>
+#include <materialsystem/itexture.h>
 #include <filesystem.h>
+#include <d3d9.h>
+#include <Windows.h>
+#include "../d3d9_texture_tracker.h"
+#include "vtf_texture_converter.h"
 
 #include <algorithm>
 #include <cstring>

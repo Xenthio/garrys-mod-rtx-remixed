@@ -14,7 +14,6 @@
 
 // Forward declarations
 class IMaterial;
-class ITexture;
 class IFileSystem;
 
 namespace GarrysMod {
