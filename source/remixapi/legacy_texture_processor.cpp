@@ -456,6 +456,16 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
         if (m_debugOutput) {
             Msg("[LegacyTextureProcessor] %s: Trying base texture alpha as fallback roughness (implicit envmap alpha)\n", props.materialName.c_str());
         }
+    } else if (!props.baseTexturePath.empty()) {
+        // LAST RESORT FALLBACK: If we have a base texture but no recognized roughness source,
+        // try using the base texture alpha anyway. The alpha variation check will filter out
+        // textures that don't have useful alpha data. This handles cases where FindVar
+        // can't expose VMT properties like $basealphaenvmapmask.
+        vtfPath = props.baseTexturePath;
+        useAlphaChannel = true;
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: Last resort - trying base texture alpha (FindVar limitations)\n", props.materialName.c_str());
+        }
     } else {
         // No texture source for roughness - use constant in USDA
         if (m_debugOutput) {
@@ -1648,8 +1658,14 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
                     Msg("[LegacyTextureProcessor] %s: $envmaptint = [%.2f %.2f %.2f]\n", 
                         materialName.c_str(), r, g, b);
                 }
+            } else if (m_debugOutput) {
+                Msg("[LegacyTextureProcessor] %s: $envmaptint found but parse failed: '%s'\n", materialName.c_str(), strVal);
             }
+        } else if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: $envmaptint found but empty value\n", materialName.c_str());
         }
+    } else if (m_debugOutput) {
+        Msg("[LegacyTextureProcessor] %s: $envmaptint not found by FindVar\n", materialName.c_str());
     }
     
     // Get $selfillum
@@ -1669,9 +1685,9 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     outProps.metallic = EstimateMetallic(outProps);
     
     if (m_debugOutput) {
-        Msg("[LegacyTextureProcessor] %s extracted: hasPhong=%d, phongExp=%.0f, hasBump=%d, hasEnvMask=%d, hasPhongExpTex=%d\n",
+        Msg("[LegacyTextureProcessor] %s extracted: hasPhong=%d, phongExp=%.0f, hasBump=%d, hasEnvMask=%d, hasPhongExpTex=%d, hasEnvMapTint=%d, hasEnvMap=%d\n",
             materialName.c_str(), outProps.hasPhong, outProps.phongExponent, outProps.hasBumpMap, 
-            outProps.hasEnvMapMask, outProps.hasPhongExponentTexture);
+            outProps.hasEnvMapMask, outProps.hasPhongExponentTexture, outProps.hasEnvMapTint, outProps.hasEnvMap);
     }
     
     return true;
