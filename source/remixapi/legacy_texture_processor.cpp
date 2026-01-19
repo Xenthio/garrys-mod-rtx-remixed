@@ -390,13 +390,12 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
     // Otherwise, return false and let the USDA use a constant value instead
     
     if (m_debugOutput) {
-        Msg("[LegacyTextureProcessor] GenerateRoughnessTexture for %s: hasPhongExpTex=%d (%s), normMapAlpha=%d, hasPhong=%d, hasBump=%d, baseMapAlpha=%d, envMapMask=%d (%s)\n",
-            props.materialName.c_str(),
-            props.hasPhongExponentTexture, props.phongExponentTexturePath.c_str(),
-            props.normalMapAlphaEnvMapMask, 
-            props.hasPhong, props.hasBumpMap,
-            props.hasBaseMapAlphaPhongMask,
-            props.hasEnvMapMask, props.envMapMaskPath.c_str());
+        Msg("[LegacyTextureProcessor] GenerateRoughnessTexture for %s:\n", props.materialName.c_str());
+        Msg("  hasPhongExpTex=%d (%s)\n", props.hasPhongExponentTexture, props.phongExponentTexturePath.c_str());
+        Msg("  normMapAlphaEnvMapMask=%d, hasPhong=%d, hasBump=%d (%s)\n", props.normalMapAlphaEnvMapMask, props.hasPhong, props.hasBumpMap, props.bumpMapPath.c_str());
+        Msg("  hasBaseMapAlphaPhongMask=%d, hasBaseAlphaEnvMapMask=%d\n", props.hasBaseMapAlphaPhongMask, props.hasBaseAlphaEnvMapMask);
+        Msg("  hasEnvMapMask=%d (%s), hasEnvMap=%d\n", props.hasEnvMapMask, props.envMapMaskPath.c_str(), props.hasEnvMap);
+        Msg("  baseTexturePath=%s\n", props.baseTexturePath.c_str());
     }
     
     std::string vtfPath;
