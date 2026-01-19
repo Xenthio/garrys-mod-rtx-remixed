@@ -9,7 +9,7 @@ end
 local enable_addon = CreateConVar("rtx_rdt_enabled", "1", FCVAR_ARCHIVE, "Enable/disable the Detail Texture Remover addon")
 local apply_delay = CreateConVar("rtx_rdt_delay", "0", FCVAR_ARCHIVE, "Delay before initial removal (seconds)")
 local debug_mode = CreateConVar("rtx_rdt_debug", "0", FCVAR_ARCHIVE, "Enable debugging output")
-local preserve_envmapmask = CreateConVar("rtx_rdt_preserve_envmapmask", "0", FCVAR_ARCHIVE, "Preserve $envmapmask for ToPBR conversion (1 = preserve, 0 = remove)")
+local preserve_envmapmask = CreateConVar("rtx_rdt_preserve_envmapmask", "1", FCVAR_ARCHIVE, "Preserve $envmapmask for ToPBR conversion (1 = preserve, 0 = remove)")
 local preserve_bumpmap = CreateConVar("rtx_rdt_preserve_bumpmap", "1", FCVAR_ARCHIVE, "Preserve $bumpmap for ToPBR conversion (1 = preserve, 0 = remove)")
 
 -- The replacement texture - using the error texture
