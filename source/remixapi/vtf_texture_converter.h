@@ -30,9 +30,9 @@ struct VTFFileHeader {
     uint32_t flags;             // VTF flags
     uint16_t frames;            // Number of frames (animated textures)
     uint16_t firstFrame;        // First frame in animation
-    uint8_t padding0[4];        // reflectivity padding
+    uint8_t padding0[4];        // reflectivity padding (before vector)
     float reflectivity[3];      // Reflectivity vector
-    uint8_t padding1[4];        // reflectivity padding
+    uint8_t padding1[4];        // reflectivity padding (after vector)
     float bumpScale;            // Bump map scale
     uint32_t imageFormat;       // Image format (DXT1, DXT5, RGBA8888, etc.)
     uint8_t mipmapCount;        // Number of mipmaps
@@ -42,7 +42,7 @@ struct VTFFileHeader {
     // VTF 7.2+
     uint16_t depth;             // Depth (for volume textures)
     // VTF 7.3+
-    uint8_t padding2[3];
+    uint8_t padding2[3];        // Alignment padding before numResources
     uint32_t numResources;      // Number of resources (7.3+)
 };
 #pragma pack(pop)

@@ -20,6 +20,12 @@ extern remix::Interface* g_remix;
 
 namespace VTFConverter {
 
+// Constants for VTF processing
+constexpr int VTF_MAJOR_VERSION_SUPPORTED = 7;
+constexpr int VTF_MAX_MINOR_VERSION = 5;
+constexpr size_t MAX_VTF_FILE_SIZE = 256 * 1024 * 1024;  // 256 MB
+constexpr float MAX_PHONG_EXPONENT = 150.0f;  // Typical max in Source Engine
+
 // Static filesystem pointer
 static IFileSystem* s_pFileSystem = nullptr;
 
@@ -150,7 +156,7 @@ bool VTFTextureConverter::ReadVTFFile(const std::string& path, std::vector<uint8
     
     // Get file size
     int fileSize = m_fileSystem->Size(file);
-    if (fileSize <= 0 || fileSize > 256 * 1024 * 1024) { // 256MB max
+    if (fileSize <= 0 || static_cast<size_t>(fileSize) > MAX_VTF_FILE_SIZE) {
         m_fileSystem->Close(file);
         Warning("[VTFConverter] Invalid file size for %s: %d\n", fullPath.c_str(), fileSize);
         return false;
@@ -185,7 +191,7 @@ bool VTFTextureConverter::ParseVTFHeader(const std::vector<uint8_t>& fileData, V
     }
     
     // Verify version (support 7.0 - 7.5)
-    if (outHeader.version[0] != 7 || outHeader.version[1] > 5) {
+    if (outHeader.version[0] != VTF_MAJOR_VERSION_SUPPORTED || outHeader.version[1] > VTF_MAX_MINOR_VERSION) {
         Warning("[VTFConverter] Unsupported VTF version %d.%d\n", 
                 outHeader.version[0], outHeader.version[1]);
         return false;
@@ -665,9 +671,8 @@ float VTFTextureConverter::PhongToRoughness(float phongExponent) {
     // Clamp to reasonable range
     phongExponent = std::clamp(phongExponent, 1.0f, 256.0f);
     
-    // Logarithmic conversion
-    float maxExp = 150.0f;
-    float roughness = 1.0f - (std::log(phongExponent) / std::log(maxExp));
+    // Logarithmic conversion - higher exponent = lower roughness (shinier)
+    float roughness = 1.0f - (std::log(phongExponent) / std::log(MAX_PHONG_EXPONENT));
     
     return std::clamp(roughness, 0.05f, 0.95f);
 }
@@ -930,7 +935,10 @@ VTFTextureConverter::Stats VTFTextureConverter::GetStats() const {
 void VTFTextureConverter::ClearCache() {
     std::lock_guard<std::mutex> lock(m_mutex);
     
-    // Don't destroy handles here - Remix manages their lifecycle
+    // Only clear tracking data, not the actual textures/materials.
+    // Uploaded textures and materials remain valid in Remix until Shutdown().
+    // This allows re-processing the same materials if needed while keeping
+    // previously uploaded resources available.
     m_processedMaterials.clear();
     m_uploadedTextures.clear();
     m_stats = {};
