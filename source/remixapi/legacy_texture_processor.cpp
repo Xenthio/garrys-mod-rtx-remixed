@@ -401,6 +401,7 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
     std::string vtfPath;
     bool useAlphaChannel = false;
     bool isPhongExponentTexture = false;
+    bool isInvertedMask = false;  // For $basealphaenvmapmask where white=masked(matte), black=reflective(shiny)
     
     if (props.hasPhongExponentTexture && !props.phongExponentTexturePath.empty()) {
         // Use the phong exponent texture - best source!
@@ -435,10 +436,12 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
         }
     } else if (props.hasBaseAlphaEnvMapMask && !props.baseTexturePath.empty()) {
         // Use the base texture's alpha channel as envmap mask (common in LightmappedGeneric brushes)
+        // NOTE: $basealphaenvmapmask is INVERTED: white (255) = masked/no reflection, black (0) = reflective
         vtfPath = props.baseTexturePath;
         useAlphaChannel = true;
+        isInvertedMask = true;  // This mask type is inverted!
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: Using base texture alpha for roughness ($basealphaenvmapmask - LightmappedGeneric)\n", props.materialName.c_str());
+            Msg("[LegacyTextureProcessor] %s: Using base texture alpha for roughness ($basealphaenvmapmask - INVERTED mask)\n", props.materialName.c_str());
         }
     } else if (props.hasEnvMapMask && !props.envMapMaskPath.empty()) {
         // Use the envmap mask texture
@@ -460,10 +463,12 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
         // FALLBACK: If $envmap or $envmaptint is set but no explicit roughness source,
         // try using base texture alpha as envmap mask (implicit $basealphaenvmapmask behavior)
         // This handles cases where FindVar doesn't find $basealphaenvmapmask but it's set in VMT
+        // NOTE: $basealphaenvmapmask is INVERTED: white (255) = masked/no reflection, black (0) = reflective
         vtfPath = props.baseTexturePath;
         useAlphaChannel = true;
+        isInvertedMask = true;  // This mask type is inverted!
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: Trying base texture alpha as fallback roughness (implicit envmap alpha)\n", props.materialName.c_str());
+            Msg("[LegacyTextureProcessor] %s: Trying base texture alpha as fallback roughness (implicit envmap alpha - INVERTED)\n", props.materialName.c_str());
         }
     } else if (props.hasBumpMap && !props.bumpMapPath.empty()) {
         // LAST RESORT: If we have a bumpmap but couldn't detect envmap reliably,
@@ -562,10 +567,18 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
             roughness = static_cast<uint8_t>(std::clamp(roughnessF * 255.0f, 0.0f, 255.0f));
         } else if (useAlphaChannel) {
             // Use alpha channel from normal map or base texture
-            // This is the phong mask: bright = shiny areas = LOW roughness
             uint8_t sourceValue = sourceTex.pixelData[i + 3];
             
-            // The phong mask represents "shininess" intensity (0-255)
+            // Handle inverted mask semantics for $basealphaenvmapmask
+            // Normal masks (phong, $normalmapalphaenvmapmask): bright = shiny areas = LOW roughness
+            // Inverted masks ($basealphaenvmapmask): bright = MASKED (matte), dark = reflective (shiny)
+            if (isInvertedMask) {
+                // $basealphaenvmapmask: white (255) = masked/no reflection/matte, black (0) = reflective/shiny
+                // Invert the source value first, then apply the same curve
+                sourceValue = 255 - sourceValue;
+            }
+            
+            // The mask represents "shininess" intensity (0-255) after potential inversion
             // Half mask value should give HALF SHININESS perception, not half roughness
             // Since roughness is roughly inverse-square to shininess perception,
             // we apply the perceptual curve to the shininess value first
