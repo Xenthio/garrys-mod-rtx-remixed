@@ -777,42 +777,59 @@ bool VTFTextureConverter::ExtractVTFPixelData(const std::vector<uint8_t>& fileDa
     VTFImageFormat srcFormat = (VTFImageFormat)header.imageFormat;
     
     // Calculate offset to high-res image data
-    // VTF stores mipmaps from smallest to largest, then the high-res image
+    // VTF stores: header, low-res image (optional), mipmaps from smallest to largest
     size_t dataOffset = header.headerSize;
     
     // Skip low-res thumbnail if present
-    if (header.lowResImageFormat != IMAGE_FORMAT_NONE) {
-        dataOffset += GetImageDataSize(header.lowResImageWidth, header.lowResImageHeight, 
-                                       (VTFImageFormat)header.lowResImageFormat);
+    if (header.lowResImageFormat != (uint32_t)IMAGE_FORMAT_NONE && 
+        header.lowResImageFormat != 0xFFFFFFFF) {
+        size_t lowResSize = GetImageDataSize(header.lowResImageWidth, header.lowResImageHeight, 
+                                             (VTFImageFormat)header.lowResImageFormat);
+        dataOffset += lowResSize;
     }
     
-    // Skip all mipmaps (stored smallest to largest) to get to largest mip
+    // Get mipmap count (at least 1)
     uint8_t mipmapCount = header.mipmapCount > 0 ? header.mipmapCount : 1;
+    uint16_t frameCount = header.frames > 0 ? header.frames : 1;
     
-    // Calculate size of all smaller mipmaps
+    // VTF stores mipmaps from smallest to largest
+    // We need to skip all smaller mipmaps and all frames except the first
+    // The data order is: for each mip level (smallest to largest): for each frame: image data
+    
+    // Calculate total size of all mipmaps for ONE frame
+    size_t totalMipSizeOneFrame = GetTotalMipmapSize(header.width, header.height, mipmapCount, srcFormat);
+    
+    // For the largest mip (mip 0), skip all smaller mipmaps (mipmaps mipmapCount-1 down to 1)
     size_t smallerMipsSize = 0;
-    uint32_t w = header.width;
-    uint32_t h = header.height;
-    for (int i = 0; i < mipmapCount - 1; i++) {
-        w = max(1u, w / 2);
-        h = max(1u, h / 2);
-    }
-    // Now accumulate from smallest to second-largest
-    for (int i = mipmapCount - 1; i > 0; i--) {
-        smallerMipsSize += GetImageDataSize(w, h, srcFormat);
-        w = min(header.width, w * 2);
-        h = min(header.height, h * 2);
+    for (int mip = mipmapCount - 1; mip >= 1; mip--) {
+        uint32_t mipW = max(1u, header.width >> mip);
+        uint32_t mipH = max(1u, header.height >> mip);
+        // Each mip level has frameCount frames
+        smallerMipsSize += GetImageDataSize(mipW, mipH, srcFormat) * frameCount;
     }
     
     dataOffset += smallerMipsSize;
     
+    // Now we're at the start of the largest mip (mip 0) for frame 0
     // Calculate size of largest mip
     size_t largestMipSize = GetImageDataSize(header.width, header.height, srcFormat);
     
     if (dataOffset + largestMipSize > fileData.size()) {
-        Warning("[VTFConverter] VTF data truncated: need %zu bytes, have %zu\n",
-                dataOffset + largestMipSize, fileData.size());
-        return false;
+        // Try alternative: maybe the file only has data for one frame with no low-res image
+        dataOffset = header.headerSize;
+        for (int mip = mipmapCount - 1; mip >= 1; mip--) {
+            uint32_t mipW = max(1u, header.width >> mip);
+            uint32_t mipH = max(1u, header.height >> mip);
+            dataOffset += GetImageDataSize(mipW, mipH, srcFormat);
+        }
+        
+        if (dataOffset + largestMipSize > fileData.size()) {
+            if (m_debugOutput) {
+                Msg("[VTFConverter] VTF data too small: offset %zu + size %zu > total %zu\n",
+                    dataOffset, largestMipSize, fileData.size());
+            }
+            return false;
+        }
     }
     
     const uint8_t* imageData = fileData.data() + dataOffset;
@@ -1262,21 +1279,19 @@ bool VTFTextureConverter::CreatePBRMaterial(const MaterialPBRProperties& props, 
         Warning("[VTFConverter] Cannot create output directory, falling back to constants\n");
     }
     
-    // Build material info
-    remixapi_MaterialInfo matInfo = {};
-    matInfo.sType = REMIXAPI_STRUCT_TYPE_MATERIAL_INFO;
+    // Build material info using C++ wrapper (handles string lifetime properly)
+    remix::MaterialInfo matInfo;
     matInfo.hash = textureHash;
     
-    // Build opaque extension for PBR properties
-    remixapi_MaterialInfoOpaqueEXT opaqueExt = {};
-    opaqueExt.sType = REMIXAPI_STRUCT_TYPE_MATERIAL_INFO_OPAQUE_EXT;
+    // Build opaque extension for PBR properties using C++ wrapper
+    remix::MaterialInfoOpaqueEXT opaqueExt;
     opaqueExt.albedoConstant = {1.0f, 1.0f, 1.0f};
     opaqueExt.opacityConstant = 1.0f;
     
-    // Storage for wide string paths (need to persist during material creation)
-    std::wstring normalTexturePath;
-    std::wstring roughnessTexturePath;
-    std::wstring metallicTexturePath;
+    // Track whether we set textures
+    bool hasNormalTexture = false;
+    bool hasRoughnessTexture = false;
+    bool hasMetallicTexture = false;
     
     // Write normal map to disk if available
     if (props.hasBumpMap && !props.bumpMapPath.empty() && !m_outputDirectory.empty()) {
@@ -1295,11 +1310,11 @@ bool VTFTextureConverter::CreatePBRMaterial(const MaterialPBRProperties& props, 
                     std::string relativePath = GenerateRelativePath(normalTex.hash, "_normal");
                     
                     if (WriteTextureToDDS(normalTex, outputPath)) {
-                        // Use relative path for Remix API (it needs forward slashes)
-                        normalTexturePath = std::wstring(relativePath.begin(), relativePath.end());
-                        matInfo.normalTexture = normalTexturePath.c_str();
+                        // Use set_normalTexture to properly handle string lifetime
+                        matInfo.set_normalTexture(relativePath);
                         m_writtenTexturePaths[normalTex.hash] = outputPath;
                         m_stats.materialsWithNormals++;
+                        hasNormalTexture = true;
                         
                         if (m_debugOutput) {
                             Msg("[VTFConverter] Set normal texture: %s (relative: %s)\n", outputPath.c_str(), relativePath.c_str());
@@ -1329,11 +1344,11 @@ bool VTFTextureConverter::CreatePBRMaterial(const MaterialPBRProperties& props, 
             std::string relativePath = GenerateRelativePath(roughnessTex.hash, "_rough");
             
             if (WriteTextureToDDS(roughnessTex, outputPath)) {
-                // Use relative path for Remix API
-                roughnessTexturePath = std::wstring(relativePath.begin(), relativePath.end());
-                opaqueExt.roughnessTexture = roughnessTexturePath.c_str();
+                // Use set_roughnessTexture to properly handle string lifetime
+                opaqueExt.set_roughnessTexture(relativePath);
                 m_writtenTexturePaths[roughnessTex.hash] = outputPath;
                 m_stats.materialsWithRoughness++;
+                hasRoughnessTexture = true;
                 
                 if (m_debugOutput) {
                     Msg("[VTFConverter] Set roughness texture: %s (relative: %s)\n", outputPath.c_str(), relativePath.c_str());
@@ -1358,10 +1373,10 @@ bool VTFTextureConverter::CreatePBRMaterial(const MaterialPBRProperties& props, 
             std::string relativePath = GenerateRelativePath(metallicTex.hash, "_metal");
             
             if (WriteTextureToDDS(metallicTex, outputPath)) {
-                // Use relative path for Remix API
-                metallicTexturePath = std::wstring(relativePath.begin(), relativePath.end());
-                opaqueExt.metallicTexture = metallicTexturePath.c_str();
+                // Use set_metallicTexture to properly handle string lifetime
+                opaqueExt.set_metallicTexture(relativePath);
                 m_writtenTexturePaths[metallicTex.hash] = outputPath;
+                hasMetallicTexture = true;
                 
                 if (m_debugOutput) {
                     Msg("[VTFConverter] Set metallic texture: %s (relative: %s)\n", outputPath.c_str(), relativePath.c_str());
@@ -1396,9 +1411,9 @@ bool VTFTextureConverter::CreatePBRMaterial(const MaterialPBRProperties& props, 
     if (m_debugOutput) {
         Msg("[VTFConverter] Created PBR material for '%s': roughness=%.2f, metallic=%.2f%s%s%s\n",
             props.materialName.c_str(), props.roughness, props.metallic,
-            !normalTexturePath.empty() ? " [normal]" : "",
-            !roughnessTexturePath.empty() ? " [roughness]" : "",
-            !metallicTexturePath.empty() ? " [metallic]" : "");
+            hasNormalTexture ? " [normal]" : "",
+            hasRoughnessTexture ? " [roughness]" : "",
+            hasMetallicTexture ? " [metallic]" : "");
     }
     
     return true;
