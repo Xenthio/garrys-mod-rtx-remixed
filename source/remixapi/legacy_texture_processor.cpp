@@ -792,13 +792,24 @@ bool TextureProcessor::DecompressDXT5(const uint8_t* compressedData, uint32_t wi
         for (uint32_t bx = 0; bx < blocksX; bx++) {
             uint8_t blockPixels[4 * 4 * 4]; // 4x4 RGBA
             
-            // First 8 bytes: alpha block
+            // First 8 bytes: alpha block - this sets the alpha channel
             DecompressDXT5AlphaBlock(blockPtr, blockPixels, 4 * 4);
             blockPtr += 8;
             
-            // Next 8 bytes: color block (DXT1)
+            // Save alpha values before color decompression (DXT1Block overwrites alpha)
+            uint8_t savedAlpha[16];
+            for (int i = 0; i < 16; i++) {
+                savedAlpha[i] = blockPixels[i * 4 + 3];
+            }
+            
+            // Next 8 bytes: color block (DXT1) - this overwrites alpha with 255
             DecompressDXT1Block(blockPtr, blockPixels, 4 * 4);
             blockPtr += 8;
+            
+            // Restore alpha values from DXT5 alpha block
+            for (int i = 0; i < 16; i++) {
+                blockPixels[i * 4 + 3] = savedAlpha[i];
+            }
             
             // Copy to output
             for (int py = 0; py < 4; py++) {
