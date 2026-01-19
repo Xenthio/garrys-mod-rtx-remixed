@@ -456,17 +456,10 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
         if (m_debugOutput) {
             Msg("[LegacyTextureProcessor] %s: Trying base texture alpha as fallback roughness (implicit envmap alpha)\n", props.materialName.c_str());
         }
-    } else if (!props.baseTexturePath.empty()) {
-        // LAST RESORT FALLBACK: If we have a base texture but no recognized roughness source,
-        // try using the base texture alpha anyway. The alpha variation check will filter out
-        // textures that don't have useful alpha data. This handles cases where FindVar
-        // can't expose VMT properties like $basealphaenvmapmask.
-        vtfPath = props.baseTexturePath;
-        useAlphaChannel = true;
-        if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: Last resort - trying base texture alpha (FindVar limitations)\n", props.materialName.c_str());
-        }
     } else {
+        // NO REFLECTIVE PROPERTIES - don't try to generate roughness texture
+        // Materials without $envmap, $phong, $envmaptint, etc. should just use constant roughness
+        // This prevents matte materials from incorrectly getting roughness textures
         // No texture source for roughness - use constant in USDA
         if (m_debugOutput) {
             Msg("[LegacyTextureProcessor] No roughness texture source for %s, will use roughness constant %.2f\n",
