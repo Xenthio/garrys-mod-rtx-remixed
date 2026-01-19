@@ -185,16 +185,9 @@ void VTFTextureConverter::Shutdown() {
     }
     m_textureHandles.clear();
     
-    // Destroy all created materials
-    for (auto& pair : m_materialHandles) {
-        if (m_remixInterface && pair.second) {
-            m_remixInterface->DestroyMaterial(pair.second);
-        }
-    }
-    m_materialHandles.clear();
-    
     m_uploadedTextures.clear();
     m_processedMaterials.clear();
+    m_processedMaterialInfo.clear();
     m_writtenTexturePaths.clear();
     
     m_remixInterface = nullptr;
@@ -1529,10 +1522,8 @@ VTFTextureConverter::Stats VTFTextureConverter::GetStats() const {
 void VTFTextureConverter::ClearCache() {
     std::lock_guard<std::mutex> lock(m_mutex);
     
-    // Only clear tracking data, not the actual textures/materials.
-    // Uploaded textures and materials remain valid in Remix until Shutdown().
-    // This allows re-processing the same materials if needed while keeping
-    // previously uploaded resources available.
+    // Clear all tracking data for reprocessing.
+    // Note: USDA files remain on disk and need game restart to reload.
     m_processedMaterials.clear();
     m_uploadedTextures.clear();
     m_processedMaterialInfo.clear();

@@ -244,9 +244,6 @@ private:
     // Cache of texture handles for cleanup
     std::unordered_map<uint64_t, remixapi_TextureHandle> m_textureHandles;
     
-    // Cache of material handles for cleanup
-    std::unordered_map<uint64_t, remixapi_MaterialHandle> m_materialHandles;
-    
     // Cache of written DDS file paths (hash -> path)
     std::unordered_map<uint64_t, std::string> m_writtenTexturePaths;
     
