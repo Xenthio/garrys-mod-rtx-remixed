@@ -494,35 +494,44 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
             // The texture typically uses the red channel (or all channels for grayscale)
             uint8_t exponentValue = sourceTex.pixelData[i];  // Red channel
             
-            // Convert exponent to roughness using a power curve
+            // Convert exponent to roughness using perceptual curve
             // Exponent 0 (value 0) = very rough (roughness ~0.85)
-            // Exponent 255 (max) = moderately shiny (roughness ~0.35)
-            // Note: 0.35 roughness is still quite smooth but not mirror-like
+            // Exponent 255 (max) = very shiny (roughness ~0.20)
             float normalizedExp = exponentValue / 255.0f;
-            float roughnessF = 0.85f - (sqrtf(normalizedExp) * 0.5f);  // 0->0.85, 255->0.35
+            // Use sqrt curve to maintain perceptual half-shininess at half-value
+            float shininessPerceptual = sqrtf(normalizedExp);
+            float roughnessF = 0.85f - (shininessPerceptual * 0.65f);  // 0->0.85, 255->0.20
             roughness = static_cast<uint8_t>(std::clamp(roughnessF * 255.0f, 0.0f, 255.0f));
         } else if (useAlphaChannel) {
             // Use alpha channel from normal map or base texture
             // This is the phong mask: bright = shiny areas = LOW roughness
             uint8_t sourceValue = sourceTex.pixelData[i + 3];
             
-            // Source Engine phong mask is more of a "specular intensity" than pure roughness
-            // Bright (255) = strong specular highlight = moderately smooth (roughness ~0.40)
-            // Dark (0) = no specular = matte (roughness ~0.85)
-            // Using a less extreme range to avoid mirror-like surfaces
+            // The phong mask represents "shininess" intensity (0-255)
+            // Half mask value should give HALF SHININESS perception, not half roughness
+            // Since roughness is roughly inverse-square to shininess perception,
+            // we apply the perceptual curve to the shininess value first
+            //
+            // Shininess perception: half mask (127) = half shininess
+            // Map: mask 0 -> low shininess -> high roughness (0.85)
+            //      mask 255 -> high shininess -> low roughness (0.20)
+            // 
+            // Use sqrt on the mask value to preserve perceptual half-shininess at half-mask
             float normalizedMask = sourceValue / 255.0f;
-            // Map: 0->0.85 (matte), 255->0.40 (smooth but not mirror)
-            float roughnessF = 0.85f - (normalizedMask * 0.45f);
+            // Apply sqrt curve so half-mask gives perceptually half-shiny appearance
+            float shininessPerceptual = sqrtf(normalizedMask);
+            // Map to roughness range: full shininess (1.0) -> 0.20, no shininess (0.0) -> 0.85
+            float roughnessF = 0.85f - (shininessPerceptual * 0.65f);
             roughness = static_cast<uint8_t>(std::clamp(roughnessF * 255.0f, 0.0f, 255.0f));
         } else {
             // Use the red channel (envmap mask)
             // Envmap mask controls environment reflections - similar to phong mask
             uint8_t sourceValue = sourceTex.pixelData[i];
             
-            // Invert: bright in source = reflective = lower roughness
-            // But keep it conservative - Source Engine materials aren't meant to be mirrors
+            // Same perceptual curve as phong mask
             float normalizedMask = sourceValue / 255.0f;
-            float roughnessF = 0.85f - (normalizedMask * 0.45f);  // 0->0.85, 255->0.40
+            float shininessPerceptual = sqrtf(normalizedMask);
+            float roughnessF = 0.85f - (shininessPerceptual * 0.65f);  // 0->0.85, 255->0.20
             roughness = static_cast<uint8_t>(std::clamp(roughnessF * 255.0f, 0.0f, 255.0f));
         }
         
