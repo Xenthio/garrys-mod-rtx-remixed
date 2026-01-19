@@ -1396,6 +1396,8 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
         // Filter out undefined/invalid texture markers (with or without angle brackets)
         if (path == "UNDEFINED" || path == "<UNDEFINED>") return false;
         if (path.find("UNDEFINED") != std::string::npos) return false;
+        // Filter out error textures that Source Engine returns for missing/invalid textures
+        if (path == "error" || path == "Error" || path == "ERROR") return false;
         // Filter out paths that are just numbers or very short
         if (path.length() < 3) return false;
         return true;
@@ -1476,6 +1478,8 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
         } else if (m_debugOutput && strVal) {
             Msg("[LegacyTextureProcessor] %s: $envmapmask filtered (invalid path: '%s')\n", materialName.c_str(), strVal);
         }
+    } else if (m_debugOutput) {
+        Msg("[LegacyTextureProcessor] %s: $envmapmask not found\n", materialName.c_str());
     }
     
     // Get $envmap (to check if envmapping is enabled)
