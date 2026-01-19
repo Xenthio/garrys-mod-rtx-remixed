@@ -329,7 +329,8 @@ bool VTFTextureConverter::GenerateRoughnessTexture(const MaterialPBRProperties& 
     
     if (props.hasEnvMapMask && !props.envMapMaskPath.empty()) {
         // Try to read the envmap mask and convert it
-        std::string vtfPath = "materials/" + props.envMapMaskPath + ".vtf";
+        // ReadVTFFile adds "materials/" prefix automatically, so just pass the texture path
+        std::string vtfPath = props.envMapMaskPath;
         std::vector<uint8_t> fileData;
         
         if (ReadVTFFile(vtfPath, fileData)) {
@@ -1114,7 +1115,8 @@ bool VTFTextureConverter::CreatePBRMaterial(const MaterialPBRProperties& props, 
     
     // Write normal map to disk if available
     if (props.hasBumpMap && !props.bumpMapPath.empty() && !m_outputDirectory.empty()) {
-        std::string vtfPath = "materials/" + props.bumpMapPath + ".vtf";
+        // ReadVTFFile adds "materials/" prefix automatically, so just pass the texture path
+        std::string vtfPath = props.bumpMapPath;
         std::vector<uint8_t> fileData;
         
         if (ReadVTFFile(vtfPath, fileData)) {
@@ -1136,10 +1138,20 @@ bool VTFTextureConverter::CreatePBRMaterial(const MaterialPBRProperties& props, 
                         if (m_debugOutput) {
                             Msg("[VTFConverter] Set normal texture: %s\n", outputPath.c_str());
                         }
+                    } else if (m_debugOutput) {
+                        Msg("[VTFConverter] Failed to write normal DDS for %s\n", props.bumpMapPath.c_str());
                     }
+                } else if (m_debugOutput) {
+                    Msg("[VTFConverter] Failed to extract pixel data for %s\n", props.bumpMapPath.c_str());
                 }
+            } else if (m_debugOutput) {
+                Msg("[VTFConverter] Failed to parse VTF header for %s\n", props.bumpMapPath.c_str());
             }
+        } else if (m_debugOutput) {
+            Msg("[VTFConverter] Failed to read VTF file for bump map: %s\n", props.bumpMapPath.c_str());
         }
+    } else if (m_debugOutput && props.hasBumpMap) {
+        Msg("[VTFConverter] Skipping bump map - path empty or no output dir: '%s'\n", props.bumpMapPath.c_str());
     }
     
     // Generate and write roughness texture
