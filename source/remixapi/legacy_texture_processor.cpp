@@ -1989,17 +1989,18 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
         }
         
         // Determine if this is a glass material
-        // Note: Source Engine's FindVar doesn't reliably expose $translucent, so we relax the check
+        // Be CONSERVATIVE - only mark as glass if we're SURE it's meant to be refractive glass
+        // NOT just any translucent material with reflections (like doors with glass cutouts)
         if (isRefractShader || vmtIsRefract) {
             outProps.isGlass = true;  // Refract shader is always glass
         } else if (vmtHasRefractAmount) {
             outProps.isGlass = true;  // Has $refractamount means it's a refractive material
         } else if (isSurfaceGlass) {
-            outProps.isGlass = true;  // surfaceprop=glass means it's glass (don't require $translucent, FindVar is unreliable)
-        } else if (outProps.isTranslucent && outProps.hasEnvMap) {
-            // Translucent + envmap is likely glass (like the phoenix_storms glass example)
-            outProps.isGlass = true;
+            outProps.isGlass = true;  // surfaceprop=glass means it's glass
         }
+        // NOTE: We REMOVED the "translucent + envmap = glass" heuristic because it catches
+        // too many materials that aren't glass (like doors with glass cutouts, windows with frames, etc.)
+        // Those materials have $translucent for alpha blending, not for glass refraction.
         
         if (m_debugOutput) {
             if (outProps.isGlass) {
@@ -2193,6 +2194,61 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
                         Msg("[LegacyTextureProcessor] Wrote metallic texture: %s\n", outputPath.c_str());
                     }
                 }
+            }
+        }
+    }
+    
+    // For glass materials with a base texture, write it for use as transmittance_texture
+    // This gives colored/tinted glass (like bottles) their texture instead of being clear
+    if (props.isGlass && !props.baseTexturePath.empty()) {
+        uint64_t baseTexHash = GenerateTextureHash(props.baseTexturePath + "_base", 0, 0);
+        std::string expectedOutputPath = GenerateOutputPath(baseTexHash, "_base");
+        
+        if (FileExists(expectedOutputPath)) {
+            matInfo.baseTexturePath = expectedOutputPath;
+            m_writtenTexturePaths[baseTexHash] = expectedOutputPath;
+            skippedCount++;
+            
+            if (m_debugOutput) {
+                Msg("[LegacyTextureProcessor] Skipping existing base texture for glass: %s\n", expectedOutputPath.c_str());
+            }
+        } else {
+            std::string vtfPath = props.baseTexturePath;
+            std::vector<uint8_t> fileData;
+            
+            if (ReadVTFFile(vtfPath, fileData)) {
+                VTFFileHeader header;
+                if (ParseVTFHeader(fileData, header)) {
+                    ConvertedTexture baseTex;
+                    baseTex.isNormalMap = false;
+                    if (ExtractVTFPixelData(fileData, header, baseTex, false)) {
+                        baseTex.hash = GenerateTextureHash(props.baseTexturePath + "_base", baseTex.width, baseTex.height);
+                        std::string outputPath = GenerateOutputPath(baseTex.hash, "_base");
+                        
+                        if (FileExists(outputPath)) {
+                            matInfo.baseTexturePath = outputPath;
+                            m_writtenTexturePaths[baseTex.hash] = outputPath;
+                            skippedCount++;
+                            
+                            if (m_debugOutput) {
+                                Msg("[LegacyTextureProcessor] Skipping existing base texture: %s\n", outputPath.c_str());
+                            }
+                        } else if (WriteTextureToDDS(baseTex, outputPath)) {
+                            matInfo.baseTexturePath = outputPath;
+                            m_writtenTexturePaths[baseTex.hash] = outputPath;
+                            
+                            if (m_debugOutput) {
+                                Msg("[LegacyTextureProcessor] Wrote base texture for glass: %s\n", outputPath.c_str());
+                            }
+                        } else if (m_debugOutput) {
+                            Msg("[LegacyTextureProcessor] Failed to write base DDS for glass: %s\n", props.baseTexturePath.c_str());
+                        }
+                    } else if (m_debugOutput) {
+                        Msg("[LegacyTextureProcessor] Failed to extract base texture data for glass: %s\n", props.baseTexturePath.c_str());
+                    }
+                }
+            } else if (m_debugOutput) {
+                Msg("[LegacyTextureProcessor] Failed to read VTF file for glass base texture: %s\n", props.baseTexturePath.c_str());
             }
         }
     }
@@ -2586,6 +2642,17 @@ bool TextureProcessor::WriteModUSDA() {
             
             // Low roughness for clear glass
             materialsUsda << "                float inputs:reflection_roughness_constant = 0.05\n";
+            
+            // If we have a base texture, use it as the transmittance texture to color/tint the glass
+            // This is important for things like colored glass bottles
+            if (!info.baseTexturePath.empty()) {
+                std::string relPath = GetRelativeTexturePath(info.baseTexturePath, m_outputDirectory);
+                materialsUsda << "                asset inputs:transmittance_texture = @" << relPath << "@ (\n";
+                materialsUsda << "                    colorSpace = \"srgb\"\n";
+                materialsUsda << "                )\n";
+                // Use diffuse layer to show the texture on the glass
+                materialsUsda << "                bool inputs:use_diffuse_layer = 1\n";
+            }
         } else {
             // Standard opaque materials use AperturePBR_Opaque shader
             materialsUsda << "                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@\n";

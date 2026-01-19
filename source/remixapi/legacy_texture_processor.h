@@ -289,6 +289,7 @@ private:
         std::string normalPath;
         std::string roughnessPath;
         std::string metallicPath;
+        std::string baseTexturePath;  // For glass: used as transmittance_texture to color the glass
         float roughnessConstant;
         float metallicConstant;
         bool isGlass;               // Whether this material should use the translucent glass shader
