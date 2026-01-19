@@ -1390,6 +1390,12 @@ float TextureProcessor::EstimateMetallic(const MaterialPBRProperties& props) {
     return metallic;
 }
 
+// Helper function to check if a file exists
+static bool FileExists(const std::string& path) {
+    std::ifstream file(path, std::ios::binary);
+    return file.good();
+}
+
 // Helper struct for VMT properties parsed from file
 struct VMTProperties {
     std::string shaderName;
