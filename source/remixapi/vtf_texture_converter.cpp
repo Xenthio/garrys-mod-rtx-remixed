@@ -37,10 +37,13 @@ constexpr uint32_t DDSD_CAPS = 0x1;
 constexpr uint32_t DDSD_HEIGHT = 0x2;
 constexpr uint32_t DDSD_WIDTH = 0x4;
 constexpr uint32_t DDSD_PIXELFORMAT = 0x1000;
+constexpr uint32_t DDSD_MIPMAPCOUNT = 0x20000;
 constexpr uint32_t DDSD_LINEARSIZE = 0x80000;
 constexpr uint32_t DDPF_ALPHAPIXELS = 0x1;
 constexpr uint32_t DDPF_RGB = 0x40;
 constexpr uint32_t DDSCAPS_TEXTURE = 0x1000;
+constexpr uint32_t DDSCAPS_MIPMAP = 0x400000;
+constexpr uint32_t DDSCAPS_COMPLEX = 0x8;
 
 // DDS header structures
 #pragma pack(push, 1)
@@ -249,17 +252,28 @@ std::string VTFTextureConverter::GenerateOutputPath(uint64_t hash, const std::st
     return oss.str();
 }
 
-bool VTFTextureConverter::WriteDDSHeader(std::ofstream& file, uint32_t width, uint32_t height, bool hasAlpha) {
+// Calculate number of mipmap levels for a given dimension
+static uint32_t CalculateMipLevels(uint32_t width, uint32_t height) {
+    uint32_t levels = 1;
+    uint32_t size = std::max(width, height);
+    while (size > 1) {
+        size /= 2;
+        levels++;
+    }
+    return levels;
+}
+
+bool VTFTextureConverter::WriteDDSHeader(std::ofstream& file, uint32_t width, uint32_t height, bool hasAlpha, uint32_t mipCount) {
     DDSHeader header = {};
     
     header.magic = DDS_MAGIC;
     header.size = 124;  // Size of header minus magic number
-    header.flags = DDSD_CAPS | DDSD_HEIGHT | DDSD_WIDTH | DDSD_PIXELFORMAT | DDSD_LINEARSIZE;
+    header.flags = DDSD_CAPS | DDSD_HEIGHT | DDSD_WIDTH | DDSD_PIXELFORMAT | DDSD_LINEARSIZE | DDSD_MIPMAPCOUNT;
     header.height = height;
     header.width = width;
     header.pitchOrLinearSize = width * height * (hasAlpha ? 4 : 3);
     header.depth = 1;
-    header.mipMapCount = 1;
+    header.mipMapCount = mipCount;
     
     // Pixel format for RGBA8888 or RGB888
     header.pixelFormat.size = 32;
@@ -270,7 +284,7 @@ bool VTFTextureConverter::WriteDDSHeader(std::ofstream& file, uint32_t width, ui
     header.pixelFormat.bBitMask = 0x000000FF;  // Blue
     header.pixelFormat.aBitMask = hasAlpha ? 0xFF000000 : 0;  // Alpha
     
-    header.caps = DDSCAPS_TEXTURE;
+    header.caps = DDSCAPS_TEXTURE | DDSCAPS_MIPMAP | DDSCAPS_COMPLEX;
     
     file.write(reinterpret_cast<const char*>(&header), sizeof(header));
     return file.good();
@@ -288,8 +302,11 @@ bool VTFTextureConverter::WriteTextureToDDS(const ConvertedTexture& texture, con
         return false;
     }
     
-    // Write DDS header (assume RGBA8888 format)
-    if (!WriteDDSHeader(file, texture.width, texture.height, true)) {
+    // Calculate number of mip levels
+    uint32_t mipCount = CalculateMipLevels(texture.width, texture.height);
+    
+    // Write DDS header with mipmap info
+    if (!WriteDDSHeader(file, texture.width, texture.height, true, mipCount)) {
         Warning("[VTFConverter] Failed to write DDS header\n");
         return false;
     }
@@ -303,8 +320,57 @@ bool VTFTextureConverter::WriteTextureToDDS(const ConvertedTexture& texture, con
         bgraData[i + 3] = texture.pixelData[i + 3];  // A <- A
     }
     
-    // Write pixel data
+    // Write base mip level (level 0)
     file.write(reinterpret_cast<const char*>(bgraData.data()), bgraData.size());
+    
+    // Generate and write subsequent mip levels
+    uint32_t mipWidth = texture.width;
+    uint32_t mipHeight = texture.height;
+    std::vector<uint8_t> currentMip = bgraData;
+    
+    for (uint32_t mip = 1; mip < mipCount; mip++) {
+        uint32_t newWidth = std::max(1u, mipWidth / 2);
+        uint32_t newHeight = std::max(1u, mipHeight / 2);
+        
+        std::vector<uint8_t> newMip(newWidth * newHeight * 4);
+        
+        // Box filter downscale (2x2 average)
+        for (uint32_t y = 0; y < newHeight; y++) {
+            for (uint32_t x = 0; x < newWidth; x++) {
+                uint32_t srcX = x * 2;
+                uint32_t srcY = y * 2;
+                
+                // Sample 2x2 block from source
+                uint32_t r = 0, g = 0, b = 0, a = 0;
+                int sampleCount = 0;
+                
+                for (int dy = 0; dy < 2 && (srcY + dy) < mipHeight; dy++) {
+                    for (int dx = 0; dx < 2 && (srcX + dx) < mipWidth; dx++) {
+                        size_t srcIdx = ((srcY + dy) * mipWidth + (srcX + dx)) * 4;
+                        b += currentMip[srcIdx + 0];
+                        g += currentMip[srcIdx + 1];
+                        r += currentMip[srcIdx + 2];
+                        a += currentMip[srcIdx + 3];
+                        sampleCount++;
+                    }
+                }
+                
+                size_t dstIdx = (y * newWidth + x) * 4;
+                newMip[dstIdx + 0] = static_cast<uint8_t>(b / sampleCount);
+                newMip[dstIdx + 1] = static_cast<uint8_t>(g / sampleCount);
+                newMip[dstIdx + 2] = static_cast<uint8_t>(r / sampleCount);
+                newMip[dstIdx + 3] = static_cast<uint8_t>(a / sampleCount);
+            }
+        }
+        
+        // Write this mip level
+        file.write(reinterpret_cast<const char*>(newMip.data()), newMip.size());
+        
+        // Prepare for next iteration
+        currentMip = std::move(newMip);
+        mipWidth = newWidth;
+        mipHeight = newHeight;
+    }
     
     if (!file.good()) {
         Warning("[VTFConverter] Failed to write texture data\n");
@@ -314,7 +380,7 @@ bool VTFTextureConverter::WriteTextureToDDS(const ConvertedTexture& texture, con
     file.close();
     
     if (m_debugOutput) {
-        Msg("[VTFConverter] Wrote DDS file: %s (%dx%d)\n", outputPath.c_str(), texture.width, texture.height);
+        Msg("[VTFConverter] Wrote DDS file: %s (%dx%d, %d mips)\n", outputPath.c_str(), texture.width, texture.height, mipCount);
     }
     
     return true;

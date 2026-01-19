@@ -199,7 +199,7 @@ private:
     
     // Write texture to DDS file
     bool WriteTextureToDDS(const ConvertedTexture& texture, const std::string& outputPath);
-    bool WriteDDSHeader(std::ofstream& file, uint32_t width, uint32_t height, bool hasAlpha);
+    bool WriteDDSHeader(std::ofstream& file, uint32_t width, uint32_t height, bool hasAlpha, uint32_t mipCount);
     
     // Generate roughness texture from envmap mask or phong constant
     bool GenerateRoughnessTexture(const MaterialPBRProperties& props, ConvertedTexture& outTexture);
