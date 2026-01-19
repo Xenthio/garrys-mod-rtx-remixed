@@ -11,6 +11,7 @@
 #include <functional>
 #include <cctype>
 #include <remix/remix.h>
+#include "remixapi/vtf_texture_converter.h"
 
 // Global material system pointer (from module.cpp)
 extern IMaterialSystem* materials;
@@ -359,6 +360,12 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                         // Only for Stage 0 to avoid double-categorization
                         if (Stage == 0) {
                             tracker.CheckAndApplyCategories(p2DTexture);
+                            
+                            // Notify VTFConverter of new material for auto-processing
+                            if (hash != 0) {
+                                VTFConverter::VTFTextureConverter::Instance().OnNewMaterialDetected(
+                                    tracker.m_currentMaterialName, hash);
+                            }
                         }
                     }
                 } else {

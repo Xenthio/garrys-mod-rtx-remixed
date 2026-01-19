@@ -117,7 +117,8 @@ VTFTextureConverter::VTFTextureConverter()
     , m_fileSystem(nullptr)
     , m_initialized(false)
     , m_autoProcessing(true)
-    , m_debugOutput(false) {
+    , m_debugOutput(false)
+    , m_needsUSDAUpdate(false) {
     m_stats = {};
 }
 
@@ -380,79 +381,69 @@ bool VTFTextureConverter::WriteTextureToDDS(const ConvertedTexture& texture, con
 }
 
 bool VTFTextureConverter::GenerateRoughnessTexture(const MaterialPBRProperties& props, ConvertedTexture& outTexture) {
-    // If we have an envmap mask, read it and convert to roughness
-    // Otherwise, generate a constant roughness texture
+    // Only generate a roughness texture if we have an actual envmap mask texture
+    // Otherwise, return false and let the USDA use a constant value instead
     
-    uint32_t width = 64;  // Default size for constant textures
-    uint32_t height = 64;
-    
-    if (props.hasEnvMapMask && !props.envMapMaskPath.empty()) {
-        // Try to read the envmap mask and convert it
-        // ReadVTFFile adds "materials/" prefix automatically, so just pass the texture path
-        std::string vtfPath = props.envMapMaskPath;
-        std::vector<uint8_t> fileData;
-        
+    if (!props.hasEnvMapMask || props.envMapMaskPath.empty()) {
+        // No envmap mask - use constant in USDA instead of generating a texture
         if (m_debugOutput) {
-            Msg("[VTFConverter] Attempting to read envmap mask: %s\n", vtfPath.c_str());
+            Msg("[VTFConverter] No envmap mask for %s, will use roughness constant %.2f\n",
+                props.materialName.c_str(), props.roughness);
         }
-        
-        if (ReadVTFFile(vtfPath, fileData)) {
-            VTFFileHeader header;
-            if (ParseVTFHeader(fileData, header)) {
-                ConvertedTexture envMapTex;
-                if (ExtractVTFPixelData(fileData, header, envMapTex, false)) {
-                    // Convert envmap mask to roughness (invert: bright = smooth, dark = rough)
-                    // In PBR: low roughness = shiny/reflective, high roughness = matte
-                    // In envmap mask: bright = more reflection = low roughness
-                    outTexture.width = envMapTex.width;
-                    outTexture.height = envMapTex.height;
-                    outTexture.pixelData.resize(envMapTex.width * envMapTex.height * 4);
-                    
-                    for (size_t i = 0; i < envMapTex.pixelData.size(); i += 4) {
-                        // Use the red channel (or luminance) and invert it
-                        uint8_t luminance = envMapTex.pixelData[i];
-                        uint8_t roughness = 255 - luminance;  // Invert
-                        
-                        // Apply phong-based adjustment
-                        float roughnessFactor = props.roughness;
-                        roughness = static_cast<uint8_t>(std::clamp(roughness * roughnessFactor * 2.0f, 0.0f, 255.0f));
-                        
-                        outTexture.pixelData[i + 0] = roughness;
-                        outTexture.pixelData[i + 1] = roughness;
-                        outTexture.pixelData[i + 2] = roughness;
-                        outTexture.pixelData[i + 3] = 255;
-                    }
-                    
-                    outTexture.format = REMIXAPI_FORMAT_R8G8B8A8_UNORM;
-                    outTexture.mipLevels = 1;
-                    
-                    if (m_debugOutput) {
-                        Msg("[VTFConverter] Generated roughness from envmap mask: %s (%dx%d)\n",
-                            props.envMapMaskPath.c_str(), outTexture.width, outTexture.height);
-                    }
-                    return true;
-                } else if (m_debugOutput) {
-                    Msg("[VTFConverter] Failed to extract pixel data from envmap mask: %s\n", vtfPath.c_str());
-                }
-            } else if (m_debugOutput) {
-                Msg("[VTFConverter] Failed to parse VTF header for envmap mask: %s\n", vtfPath.c_str());
-            }
-        } else if (m_debugOutput) {
-            Msg("[VTFConverter] Failed to read envmap mask VTF: %s (falling back to constant)\n", vtfPath.c_str());
-        }
+        return false;
     }
     
-    // Fall back to constant roughness texture based on phong exponent
-    outTexture.width = width;
-    outTexture.height = height;
-    outTexture.pixelData.resize(width * height * 4);
+    // Try to read the envmap mask and convert it
+    // ReadVTFFile adds "materials/" prefix automatically, so just pass the texture path
+    std::string vtfPath = props.envMapMaskPath;
+    std::vector<uint8_t> fileData;
     
-    uint8_t roughnessValue = static_cast<uint8_t>(props.roughness * 255.0f);
+    if (m_debugOutput) {
+        Msg("[VTFConverter] Attempting to read envmap mask: %s\n", vtfPath.c_str());
+    }
     
-    for (size_t i = 0; i < outTexture.pixelData.size(); i += 4) {
-        outTexture.pixelData[i + 0] = roughnessValue;
-        outTexture.pixelData[i + 1] = roughnessValue;
-        outTexture.pixelData[i + 2] = roughnessValue;
+    if (!ReadVTFFile(vtfPath, fileData)) {
+        if (m_debugOutput) {
+            Msg("[VTFConverter] Failed to read envmap mask VTF: %s (will use constant)\n", vtfPath.c_str());
+        }
+        return false;
+    }
+    
+    VTFFileHeader header;
+    if (!ParseVTFHeader(fileData, header)) {
+        if (m_debugOutput) {
+            Msg("[VTFConverter] Failed to parse VTF header for envmap mask: %s\n", vtfPath.c_str());
+        }
+        return false;
+    }
+    
+    ConvertedTexture envMapTex;
+    if (!ExtractVTFPixelData(fileData, header, envMapTex, false)) {
+        if (m_debugOutput) {
+            Msg("[VTFConverter] Failed to extract pixel data from envmap mask: %s\n", vtfPath.c_str());
+        }
+        return false;
+    }
+    
+    // Convert envmap mask to roughness (invert: bright = smooth, dark = rough)
+    // In PBR: low roughness = shiny/reflective, high roughness = matte
+    // In envmap mask: bright = more reflection = low roughness
+    outTexture.width = envMapTex.width;
+    outTexture.height = envMapTex.height;
+    outTexture.pixelData.resize(envMapTex.width * envMapTex.height * 4);
+    
+    for (size_t i = 0; i < envMapTex.pixelData.size(); i += 4) {
+        // Use the red channel (or luminance) and invert it
+        uint8_t luminance = envMapTex.pixelData[i];
+        uint8_t roughness = 255 - luminance;  // Invert
+        
+        // Apply phong-based adjustment
+        float roughnessFactor = props.roughness;
+        roughness = static_cast<uint8_t>(std::clamp(roughness * roughnessFactor * 2.0f, 0.0f, 255.0f));
+        
+        outTexture.pixelData[i + 0] = roughness;
+        outTexture.pixelData[i + 1] = roughness;
+        outTexture.pixelData[i + 2] = roughness;
         outTexture.pixelData[i + 3] = 255;
     }
     
@@ -460,39 +451,21 @@ bool VTFTextureConverter::GenerateRoughnessTexture(const MaterialPBRProperties& 
     outTexture.mipLevels = 1;
     
     if (m_debugOutput) {
-        Msg("[VTFConverter] Generated constant roughness texture: %.2f (%dx%d)\n",
-            props.roughness, width, height);
+        Msg("[VTFConverter] Generated roughness from envmap mask: %s (%dx%d)\n",
+            props.envMapMaskPath.c_str(), outTexture.width, outTexture.height);
     }
-    
     return true;
 }
 
 bool VTFTextureConverter::GenerateMetallicTexture(const MaterialPBRProperties& props, ConvertedTexture& outTexture) {
-    uint32_t width = 64;
-    uint32_t height = 64;
-    
-    outTexture.width = width;
-    outTexture.height = height;
-    outTexture.pixelData.resize(width * height * 4);
-    
-    uint8_t metallicValue = static_cast<uint8_t>(props.metallic * 255.0f);
-    
-    for (size_t i = 0; i < outTexture.pixelData.size(); i += 4) {
-        outTexture.pixelData[i + 0] = metallicValue;
-        outTexture.pixelData[i + 1] = metallicValue;
-        outTexture.pixelData[i + 2] = metallicValue;
-        outTexture.pixelData[i + 3] = 255;
-    }
-    
-    outTexture.format = REMIXAPI_FORMAT_R8G8B8A8_UNORM;
-    outTexture.mipLevels = 1;
-    
+    // Source Engine materials don't have actual metallic texture data
+    // We only have estimated constants from phongboost, so always use constants in USDA
+    // Return false to indicate no texture should be written
     if (m_debugOutput) {
-        Msg("[VTFConverter] Generated metallic texture: %.2f (%dx%d)\n",
-            props.metallic, width, height);
+        Msg("[VTFConverter] No metallic texture for %s, will use metallic constant %.2f\n",
+            props.materialName.c_str(), props.metallic);
     }
-    
-    return true;
+    return false;
 }
 
 bool VTFTextureConverter::ReadVTFFile(const std::string& path, std::vector<uint8_t>& outData) {
@@ -1315,6 +1288,12 @@ bool VTFTextureConverter::ExtractMaterialPBR(const std::string& materialName,
     return true;
 }
 
+// Helper function to check if a file exists
+static bool FileExists(const std::string& path) {
+    std::ifstream file(path, std::ios::binary);
+    return file.good();
+}
+
 bool VTFTextureConverter::CreatePBRMaterial(const MaterialPBRProperties& props, uint64_t textureHash) {
     if (textureHash == 0) {
         return false;
@@ -1337,56 +1316,105 @@ bool VTFTextureConverter::CreatePBRMaterial(const MaterialPBRProperties& props, 
     matInfo.roughnessConstant = props.roughness;
     matInfo.metallicConstant = props.metallic;
     
+    int skippedCount = 0;
+    
     // Write normal map to disk if available
     if (props.hasBumpMap && !props.bumpMapPath.empty()) {
-        std::string vtfPath = props.bumpMapPath;
-        std::vector<uint8_t> fileData;
+        // Generate the expected output path first to check if it exists
+        uint64_t normalHash = GenerateTextureHash(props.bumpMapPath + "_normal", 0, 0);
+        std::string expectedOutputPath = GenerateOutputPath(normalHash, "_normal");
         
-        if (ReadVTFFile(vtfPath, fileData)) {
-            VTFFileHeader header;
-            if (ParseVTFHeader(fileData, header)) {
-                ConvertedTexture normalTex;
-                normalTex.isNormalMap = true;
-                if (ExtractVTFPixelData(fileData, header, normalTex, true)) {
-                    normalTex.hash = GenerateTextureHash(props.bumpMapPath + "_normal", normalTex.width, normalTex.height);
-                    std::string outputPath = GenerateOutputPath(normalTex.hash, "_normal");
-                    
-                    if (WriteTextureToDDS(normalTex, outputPath)) {
-                        matInfo.normalPath = outputPath;
-                        m_writtenTexturePaths[normalTex.hash] = outputPath;
-                        m_stats.materialsWithNormals++;
+        // Check if the file already exists
+        if (FileExists(expectedOutputPath)) {
+            // File already exists, just use it
+            matInfo.normalPath = expectedOutputPath;
+            m_writtenTexturePaths[normalHash] = expectedOutputPath;
+            skippedCount++;
+            
+            if (m_debugOutput) {
+                Msg("[VTFConverter] Skipping existing normal texture: %s\n", expectedOutputPath.c_str());
+            }
+        } else {
+            std::string vtfPath = props.bumpMapPath;
+            std::vector<uint8_t> fileData;
+            
+            if (ReadVTFFile(vtfPath, fileData)) {
+                VTFFileHeader header;
+                if (ParseVTFHeader(fileData, header)) {
+                    ConvertedTexture normalTex;
+                    normalTex.isNormalMap = true;
+                    if (ExtractVTFPixelData(fileData, header, normalTex, true)) {
+                        normalTex.hash = GenerateTextureHash(props.bumpMapPath + "_normal", normalTex.width, normalTex.height);
+                        std::string outputPath = GenerateOutputPath(normalTex.hash, "_normal");
                         
-                        if (m_debugOutput) {
-                            Msg("[VTFConverter] Wrote normal texture: %s\n", outputPath.c_str());
+                        // Double-check with actual dimensions hash
+                        if (FileExists(outputPath)) {
+                            matInfo.normalPath = outputPath;
+                            m_writtenTexturePaths[normalTex.hash] = outputPath;
+                            skippedCount++;
+                            
+                            if (m_debugOutput) {
+                                Msg("[VTFConverter] Skipping existing normal texture: %s\n", outputPath.c_str());
+                            }
+                        } else if (WriteTextureToDDS(normalTex, outputPath)) {
+                            matInfo.normalPath = outputPath;
+                            m_writtenTexturePaths[normalTex.hash] = outputPath;
+                            m_stats.materialsWithNormals++;
+                            
+                            if (m_debugOutput) {
+                                Msg("[VTFConverter] Wrote normal texture: %s\n", outputPath.c_str());
+                            }
+                        } else if (m_debugOutput) {
+                            Msg("[VTFConverter] Failed to write normal DDS for %s\n", props.bumpMapPath.c_str());
                         }
                     } else if (m_debugOutput) {
-                        Msg("[VTFConverter] Failed to write normal DDS for %s\n", props.bumpMapPath.c_str());
+                        Msg("[VTFConverter] Failed to extract pixel data for %s\n", props.bumpMapPath.c_str());
                     }
                 } else if (m_debugOutput) {
-                    Msg("[VTFConverter] Failed to extract pixel data for %s\n", props.bumpMapPath.c_str());
+                    Msg("[VTFConverter] Failed to parse VTF header for %s\n", props.bumpMapPath.c_str());
                 }
             } else if (m_debugOutput) {
-                Msg("[VTFConverter] Failed to parse VTF header for %s\n", props.bumpMapPath.c_str());
+                Msg("[VTFConverter] Failed to read VTF file for bump map: %s\n", props.bumpMapPath.c_str());
             }
-        } else if (m_debugOutput) {
-            Msg("[VTFConverter] Failed to read VTF file for bump map: %s\n", props.bumpMapPath.c_str());
         }
     }
     
     // Generate and write roughness texture
     {
-        ConvertedTexture roughnessTex;
-        if (GenerateRoughnessTexture(props, roughnessTex)) {
-            roughnessTex.hash = GenerateTextureHash(props.materialName + "_roughness", roughnessTex.width, roughnessTex.height);
-            std::string outputPath = GenerateOutputPath(roughnessTex.hash, "_rough");
+        uint64_t roughnessHash = GenerateTextureHash(props.materialName + "_roughness", 256, 256);
+        std::string outputPath = GenerateOutputPath(roughnessHash, "_rough");
+        
+        // Check if the file already exists
+        if (FileExists(outputPath)) {
+            matInfo.roughnessPath = outputPath;
+            m_writtenTexturePaths[roughnessHash] = outputPath;
+            skippedCount++;
             
-            if (WriteTextureToDDS(roughnessTex, outputPath)) {
-                matInfo.roughnessPath = outputPath;
-                m_writtenTexturePaths[roughnessTex.hash] = outputPath;
-                m_stats.materialsWithRoughness++;
+            if (m_debugOutput) {
+                Msg("[VTFConverter] Skipping existing roughness texture: %s\n", outputPath.c_str());
+            }
+        } else {
+            ConvertedTexture roughnessTex;
+            if (GenerateRoughnessTexture(props, roughnessTex)) {
+                roughnessTex.hash = GenerateTextureHash(props.materialName + "_roughness", roughnessTex.width, roughnessTex.height);
+                outputPath = GenerateOutputPath(roughnessTex.hash, "_rough");
                 
-                if (m_debugOutput) {
-                    Msg("[VTFConverter] Wrote roughness texture: %s\n", outputPath.c_str());
+                if (FileExists(outputPath)) {
+                    matInfo.roughnessPath = outputPath;
+                    m_writtenTexturePaths[roughnessTex.hash] = outputPath;
+                    skippedCount++;
+                    
+                    if (m_debugOutput) {
+                        Msg("[VTFConverter] Skipping existing roughness texture: %s\n", outputPath.c_str());
+                    }
+                } else if (WriteTextureToDDS(roughnessTex, outputPath)) {
+                    matInfo.roughnessPath = outputPath;
+                    m_writtenTexturePaths[roughnessTex.hash] = outputPath;
+                    m_stats.materialsWithRoughness++;
+                    
+                    if (m_debugOutput) {
+                        Msg("[VTFConverter] Wrote roughness texture: %s\n", outputPath.c_str());
+                    }
                 }
             }
         }
@@ -1394,17 +1422,39 @@ bool VTFTextureConverter::CreatePBRMaterial(const MaterialPBRProperties& props, 
     
     // Generate and write metallic texture if significant
     if (props.metallic > 0.05f) {
-        ConvertedTexture metallicTex;
-        if (GenerateMetallicTexture(props, metallicTex)) {
-            metallicTex.hash = GenerateTextureHash(props.materialName + "_metallic", metallicTex.width, metallicTex.height);
-            std::string outputPath = GenerateOutputPath(metallicTex.hash, "_metal");
+        uint64_t metallicHash = GenerateTextureHash(props.materialName + "_metallic", 256, 256);
+        std::string outputPath = GenerateOutputPath(metallicHash, "_metal");
+        
+        // Check if the file already exists
+        if (FileExists(outputPath)) {
+            matInfo.metallicPath = outputPath;
+            m_writtenTexturePaths[metallicHash] = outputPath;
+            skippedCount++;
             
-            if (WriteTextureToDDS(metallicTex, outputPath)) {
-                matInfo.metallicPath = outputPath;
-                m_writtenTexturePaths[metallicTex.hash] = outputPath;
+            if (m_debugOutput) {
+                Msg("[VTFConverter] Skipping existing metallic texture: %s\n", outputPath.c_str());
+            }
+        } else {
+            ConvertedTexture metallicTex;
+            if (GenerateMetallicTexture(props, metallicTex)) {
+                metallicTex.hash = GenerateTextureHash(props.materialName + "_metallic", metallicTex.width, metallicTex.height);
+                outputPath = GenerateOutputPath(metallicTex.hash, "_metal");
                 
-                if (m_debugOutput) {
-                    Msg("[VTFConverter] Wrote metallic texture: %s\n", outputPath.c_str());
+                if (FileExists(outputPath)) {
+                    matInfo.metallicPath = outputPath;
+                    m_writtenTexturePaths[metallicTex.hash] = outputPath;
+                    skippedCount++;
+                    
+                    if (m_debugOutput) {
+                        Msg("[VTFConverter] Skipping existing metallic texture: %s\n", outputPath.c_str());
+                    }
+                } else if (WriteTextureToDDS(metallicTex, outputPath)) {
+                    matInfo.metallicPath = outputPath;
+                    m_writtenTexturePaths[metallicTex.hash] = outputPath;
+                    
+                    if (m_debugOutput) {
+                        Msg("[VTFConverter] Wrote metallic texture: %s\n", outputPath.c_str());
+                    }
                 }
             }
         }
@@ -1415,11 +1465,12 @@ bool VTFTextureConverter::CreatePBRMaterial(const MaterialPBRProperties& props, 
     m_stats.materialsProcessed++;
     
     if (m_debugOutput) {
-        Msg("[VTFConverter] Processed material '%s' (hash 0x%llX): roughness=%.2f, metallic=%.2f%s%s%s\n",
+        Msg("[VTFConverter] Processed material '%s' (hash 0x%llX): roughness=%.2f, metallic=%.2f%s%s%s%s\n",
             props.materialName.c_str(), textureHash, props.roughness, props.metallic,
             !matInfo.normalPath.empty() ? " [normal]" : "",
             !matInfo.roughnessPath.empty() ? " [roughness]" : "",
-            !matInfo.metallicPath.empty() ? " [metallic]" : "");
+            !matInfo.metallicPath.empty() ? " [metallic]" : "",
+            skippedCount > 0 ? " (some textures already existed)" : "");
     }
     
     return true;
@@ -1499,8 +1550,11 @@ int VTFTextureConverter::ProcessAllTrackedMaterials() {
         Msg("[VTFConverter] Stats: %d with normals, %d with roughness textures\n", 
             m_stats.materialsWithNormals, m_stats.materialsWithRoughness);
         
+        m_needsUSDAUpdate = true;
+        
         // Write the USDA mod files
         if (WriteModUSDA()) {
+            m_needsUSDAUpdate = false;
             Msg("[VTFConverter] IMPORTANT: Restart the game for material replacements to take effect.\n");
             Msg("[VTFConverter] The mod is written to: rtx-remix/mods/gmod_topbr/\n");
         }
@@ -1527,9 +1581,118 @@ void VTFTextureConverter::ClearCache() {
     m_processedMaterials.clear();
     m_uploadedTextures.clear();
     m_processedMaterialInfo.clear();
+    m_needsUSDAUpdate = false;
     m_stats = {};
     
     Msg("[VTFConverter] Cache cleared\n");
+}
+
+bool VTFTextureConverter::ProcessSingleMaterial(const std::string& materialName) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    if (!m_initialized) {
+        return false;
+    }
+    
+    // Skip already processed
+    if (m_processedMaterials.find(materialName) != m_processedMaterials.end()) {
+        return true; // Already done
+    }
+    
+    // Skip internal materials
+    if (materialName.find("__") == 0 || materialName.find("vgui") == 0) {
+        return false;
+    }
+    
+    // Extract PBR properties
+    MaterialPBRProperties props;
+    if (!ExtractMaterialPBR(materialName, props)) {
+        return false;
+    }
+    
+    // Only process materials with PBR-relevant data
+    if (!props.hasBumpMap && !props.hasPhong && !props.hasEnvMapMask) {
+        m_processedMaterials.insert(materialName);
+        return false;
+    }
+    
+    // Get the texture hash from the tracker
+    const std::vector<IDirect3DTexture9*>* variants = 
+        D3D9TextureTracker::Instance().GetTextureVariantsForMaterial(materialName.c_str());
+    
+    if (!variants || variants->empty()) {
+        return false;
+    }
+    
+    // Get hash for first variant
+    uint64_t textureHash = 0;
+    for (IDirect3DTexture9* tex : *variants) {
+        if (!tex) continue;
+        auto result = g_remix->dxvk_GetTextureHash(tex);
+        if (result && result.value() != 0) {
+            textureHash = result.value();
+            break;
+        }
+    }
+    
+    if (textureHash == 0) {
+        return false;
+    }
+    
+    props.baseTextureHash = textureHash;
+    
+    // Create PBR material (generates textures and tracks info for USDA)
+    bool success = CreatePBRMaterial(props, textureHash);
+    
+    m_processedMaterials.insert(materialName);
+    
+    if (success) {
+        m_needsUSDAUpdate = true;
+    }
+    
+    return success;
+}
+
+void VTFTextureConverter::OnNewMaterialDetected(const std::string& materialName, uint64_t textureHash) {
+    if (!m_initialized || !m_autoProcessing) {
+        return;
+    }
+    
+    // Skip already processed
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (m_processedMaterials.find(materialName) != m_processedMaterials.end()) {
+            return;
+        }
+    }
+    
+    // Skip internal materials
+    if (materialName.find("__") == 0 || materialName.find("vgui") == 0) {
+        return;
+    }
+    
+    // Process in background (don't hold up rendering)
+    // For now, just mark as needing processing - we'll batch process later
+    // The actual processing happens in ProcessAllTrackedMaterials or ProcessSingleMaterial
+    
+    if (m_debugOutput) {
+        Msg("[VTFConverter] New material detected for auto-processing: %s (hash 0x%llX)\n", 
+            materialName.c_str(), textureHash);
+    }
+}
+
+void VTFTextureConverter::WriteUSDAIfNeeded() {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    if (!m_needsUSDAUpdate || m_processedMaterialInfo.empty()) {
+        return;
+    }
+    
+    if (WriteModUSDA()) {
+        m_needsUSDAUpdate = false;
+        Msg("[VTFConverter] USDA updated with %d materials. Restart game for changes to take effect.\n",
+            (int)m_processedMaterialInfo.size());
+    }
 }
 
 // Helper to convert absolute path to relative path from mod directory
@@ -1844,6 +2007,28 @@ LUA_FUNCTION(VTFConverter_GetOutputDirectory) {
     return 1;
 }
 
+LUA_FUNCTION(VTFConverter_ProcessSingleMaterial) {
+    if (!LUA->IsType(1, Type::String)) {
+        LUA->ThrowError("Expected string for material name");
+        return 0;
+    }
+    
+    const char* matName = LUA->GetString(1);
+    bool result = VTFTextureConverter::Instance().ProcessSingleMaterial(matName);
+    LUA->PushBool(result);
+    return 1;
+}
+
+LUA_FUNCTION(VTFConverter_WriteUSDAIfNeeded) {
+    VTFTextureConverter::Instance().WriteUSDAIfNeeded();
+    return 0;
+}
+
+LUA_FUNCTION(VTFConverter_NeedsUSDAUpdate) {
+    LUA->PushBool(VTFTextureConverter::Instance().NeedsUSDAUpdate());
+    return 1;
+}
+
 void InitializeVTFConverterLuaBindings(GarrysMod::Lua::ILuaBase* LUA) {
     // Create VTFConverter table
     LUA->PushSpecial(SPECIAL_GLOB);
@@ -1857,6 +2042,9 @@ void InitializeVTFConverterLuaBindings(GarrysMod::Lua::ILuaBase* LUA) {
     
     LUA->PushCFunction(VTFConverter_ProcessAllMaterials);
     LUA->SetField(-2, "ProcessAllMaterials");
+    
+    LUA->PushCFunction(VTFConverter_ProcessSingleMaterial);
+    LUA->SetField(-2, "ProcessSingleMaterial");
     
     LUA->PushCFunction(VTFConverter_SetAutoProcessing);
     LUA->SetField(-2, "SetAutoProcessing");
@@ -1881,6 +2069,12 @@ void InitializeVTFConverterLuaBindings(GarrysMod::Lua::ILuaBase* LUA) {
     
     LUA->PushCFunction(VTFConverter_GetOutputDirectory);
     LUA->SetField(-2, "GetOutputDirectory");
+    
+    LUA->PushCFunction(VTFConverter_WriteUSDAIfNeeded);
+    LUA->SetField(-2, "WriteUSDAIfNeeded");
+    
+    LUA->PushCFunction(VTFConverter_NeedsUSDAUpdate);
+    LUA->SetField(-2, "NeedsUSDAUpdate");
     
     LUA->SetField(-2, "VTFConverter");
     LUA->Pop();

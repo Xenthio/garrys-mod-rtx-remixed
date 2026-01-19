@@ -137,6 +137,14 @@ public:
     // Process all materials in the texture tracker cache
     int ProcessAllTrackedMaterials();
     
+    // Process a single material (for auto-processing when new textures appear)
+    // Returns true if the material was processed successfully
+    bool ProcessSingleMaterial(const std::string& materialName);
+    
+    // Called when a new material is detected by the texture tracker
+    // This is for automatic processing when auto-processing is enabled
+    void OnNewMaterialDetected(const std::string& materialName, uint64_t textureHash);
+    
     // Check if a material has already been processed
     bool IsMaterialProcessed(const std::string& materialName) const;
     
@@ -166,6 +174,10 @@ public:
     
     // Check if the converter is initialized
     bool IsInitialized() const { return m_initialized; }
+    
+    // Flag to indicate USDA needs to be rewritten (new materials added since last write)
+    bool NeedsUSDAUpdate() const { return m_needsUSDAUpdate; }
+    void WriteUSDAIfNeeded();
     
 private:
     VTFTextureConverter();
@@ -257,6 +269,9 @@ private:
         float metallicConstant;
     };
     std::unordered_map<uint64_t, ProcessedMaterialInfo> m_processedMaterialInfo;
+    
+    // Flag to indicate USDA needs to be rewritten
+    bool m_needsUSDAUpdate;
     
     // Statistics
     mutable std::mutex m_mutex;
