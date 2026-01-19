@@ -388,6 +388,15 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
     // 4. $envmapmask - use separate envmap mask texture
     // Otherwise, return false and let the USDA use a constant value instead
     
+    if (m_debugOutput) {
+        Msg("[LegacyTextureProcessor] GenerateRoughnessTexture for %s: hasPhongExpTex=%d (%s), normMapAlpha=%d, baseMapAlpha=%d, envMapMask=%d (%s)\n",
+            props.materialName.c_str(),
+            props.hasPhongExponentTexture, props.phongExponentTexturePath.c_str(),
+            props.normalMapAlphaEnvMapMask, 
+            props.hasBaseMapAlphaPhongMask,
+            props.hasEnvMapMask, props.envMapMaskPath.c_str());
+    }
+    
     std::string vtfPath;
     bool useAlphaChannel = false;
     bool isPhongExponentTexture = false;
@@ -1447,11 +1456,18 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
         const char* strVal = pVar->GetStringValue();
         if (strVal && strVal[0] != '\0') {
             texPath = strVal;
+            if (m_debugOutput) {
+                Msg("[LegacyTextureProcessor] %s: $phongexponenttexture raw string = '%s'\n", materialName.c_str(), strVal);
+            }
         }
         if (!IsValidTexturePath(texPath)) {
+            // Also try getting the texture name directly (some materials use texture references)
             ITexture* pTex = pVar->GetTextureValue();
             if (pTex) {
                 texPath = pTex->GetName();
+                if (m_debugOutput) {
+                    Msg("[LegacyTextureProcessor] %s: $phongexponenttexture from texture = '%s'\n", materialName.c_str(), texPath.c_str());
+                }
             }
         }
         if (IsValidTexturePath(texPath)) {
@@ -1460,7 +1476,11 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
             if (m_debugOutput) {
                 Msg("[LegacyTextureProcessor] %s: $phongexponenttexture = %s\n", materialName.c_str(), texPath.c_str());
             }
+        } else if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: $phongexponenttexture FILTERED as invalid path: '%s'\n", materialName.c_str(), texPath.c_str());
         }
+    } else if (m_debugOutput) {
+        Msg("[LegacyTextureProcessor] %s: $phongexponenttexture not found\n", materialName.c_str());
     }
     
     // Get $basemapalphaphongmask - use base texture alpha as phong mask
@@ -1530,6 +1550,12 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     // Calculate PBR values with enhanced logic
     outProps.roughness = CalculateRoughness(outProps);
     outProps.metallic = EstimateMetallic(outProps);
+    
+    if (m_debugOutput) {
+        Msg("[LegacyTextureProcessor] %s extracted: hasPhong=%d, phongExp=%.0f, hasBump=%d, hasEnvMask=%d, hasPhongExpTex=%d\n",
+            materialName.c_str(), outProps.hasPhong, outProps.phongExponent, outProps.hasBumpMap, 
+            outProps.hasEnvMapMask, outProps.hasPhongExponentTexture);
+    }
     
     return true;
 }
