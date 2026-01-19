@@ -1181,7 +1181,7 @@ float TextureProcessor::CalculateRoughness(const MaterialPBRProperties& props) {
         if (tintIntensity < 0.5f) {
             // Very low tint - this material is meant to be mostly matte
             // Increase roughness significantly
-            roughness = std::max(roughness, 0.6f + (0.5f - tintIntensity) * 0.6f);
+            roughness = max(roughness, 0.6f + (0.5f - tintIntensity) * 0.6f);
         } else if (tintIntensity < 1.0f) {
             // Moderate tint - slightly increase roughness
             roughness = roughness + (1.0f - tintIntensity) * 0.2f;
@@ -1198,7 +1198,7 @@ float TextureProcessor::CalculateRoughness(const MaterialPBRProperties& props) {
         float minFresnel = props.phongFresnelRanges[0];
         if (minFresnel < 0.5f) {
             // Low min fresnel = not reflective at normal incidence = more matte
-            roughness = std::max(roughness, 0.5f);
+            roughness = max(roughness, 0.5f);
         }
     }
     
@@ -1207,7 +1207,7 @@ float TextureProcessor::CalculateRoughness(const MaterialPBRProperties& props) {
     // Only use very high boost to slightly decrease roughness
     if (props.phongBoost > 5.0f) {
         // Very high boost suggests intentionally shiny material
-        roughness = std::max(0.35f, roughness - 0.1f);
+        roughness = max(0.35f, roughness - 0.1f);
     }
     
     return std::clamp(roughness, 0.25f, 0.95f);
