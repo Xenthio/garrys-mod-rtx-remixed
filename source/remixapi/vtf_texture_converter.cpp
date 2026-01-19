@@ -1323,37 +1323,29 @@ bool VTFTextureConverter::ExtractMaterialPBR(const std::string& materialName,
 }
 
 bool VTFTextureConverter::CreatePBRMaterial(const MaterialPBRProperties& props, uint64_t textureHash) {
-    if (!m_remixInterface || textureHash == 0) {
+    if (textureHash == 0) {
         return false;
     }
     
     // Check if we've already created a material for this hash
-    if (m_materialHandles.find(textureHash) != m_materialHandles.end()) {
+    if (m_processedMaterialInfo.find(textureHash) != m_processedMaterialInfo.end()) {
         return true; // Already done
     }
     
     // Ensure output directory exists for texture files
     if (!EnsureOutputDirectory()) {
-        Warning("[VTFConverter] Cannot create output directory, falling back to constants\n");
+        Warning("[VTFConverter] Cannot create output directory, skipping material\n");
+        return false;
     }
     
-    // Build material info using C++ wrapper (handles string lifetime properly)
-    remix::MaterialInfo matInfo;
-    matInfo.hash = textureHash;
-    
-    // Build opaque extension for PBR properties using C++ wrapper
-    remix::MaterialInfoOpaqueEXT opaqueExt;
-    opaqueExt.albedoConstant = {1.0f, 1.0f, 1.0f};
-    opaqueExt.opacityConstant = 1.0f;
-    
-    // Track whether we set textures
-    bool hasNormalTexture = false;
-    bool hasRoughnessTexture = false;
-    bool hasMetallicTexture = false;
+    // Track material info for USDA generation
+    ProcessedMaterialInfo matInfo;
+    matInfo.textureHash = textureHash;
+    matInfo.roughnessConstant = props.roughness;
+    matInfo.metallicConstant = props.metallic;
     
     // Write normal map to disk if available
-    if (props.hasBumpMap && !props.bumpMapPath.empty() && !m_outputDirectory.empty()) {
-        // ReadVTFFile adds "materials/" prefix automatically, so just pass the texture path
+    if (props.hasBumpMap && !props.bumpMapPath.empty()) {
         std::string vtfPath = props.bumpMapPath;
         std::vector<uint8_t> fileData;
         
@@ -1367,15 +1359,12 @@ bool VTFTextureConverter::CreatePBRMaterial(const MaterialPBRProperties& props, 
                     std::string outputPath = GenerateOutputPath(normalTex.hash, "_normal");
                     
                     if (WriteTextureToDDS(normalTex, outputPath)) {
-                        // Use set_normalTexture to properly handle string lifetime
-                        // Remix AssetDataManager expects absolute paths (it normalizes them internally)
-                        matInfo.set_normalTexture(outputPath);
+                        matInfo.normalPath = outputPath;
                         m_writtenTexturePaths[normalTex.hash] = outputPath;
                         m_stats.materialsWithNormals++;
-                        hasNormalTexture = true;
                         
                         if (m_debugOutput) {
-                            Msg("[VTFConverter] Set normal texture: %s\n", outputPath.c_str());
+                            Msg("[VTFConverter] Wrote normal texture: %s\n", outputPath.c_str());
                         }
                     } else if (m_debugOutput) {
                         Msg("[VTFConverter] Failed to write normal DDS for %s\n", props.bumpMapPath.c_str());
@@ -1389,89 +1378,55 @@ bool VTFTextureConverter::CreatePBRMaterial(const MaterialPBRProperties& props, 
         } else if (m_debugOutput) {
             Msg("[VTFConverter] Failed to read VTF file for bump map: %s\n", props.bumpMapPath.c_str());
         }
-    } else if (m_debugOutput && props.hasBumpMap) {
-        Msg("[VTFConverter] Skipping bump map - path empty or no output dir: '%s'\n", props.bumpMapPath.c_str());
     }
     
     // Generate and write roughness texture
-    if (!m_outputDirectory.empty()) {
+    {
         ConvertedTexture roughnessTex;
         if (GenerateRoughnessTexture(props, roughnessTex)) {
             roughnessTex.hash = GenerateTextureHash(props.materialName + "_roughness", roughnessTex.width, roughnessTex.height);
             std::string outputPath = GenerateOutputPath(roughnessTex.hash, "_rough");
             
             if (WriteTextureToDDS(roughnessTex, outputPath)) {
-                // Use set_roughnessTexture to properly handle string lifetime
-                // Remix AssetDataManager expects absolute paths (it normalizes them internally)
-                opaqueExt.set_roughnessTexture(outputPath);
+                matInfo.roughnessPath = outputPath;
                 m_writtenTexturePaths[roughnessTex.hash] = outputPath;
                 m_stats.materialsWithRoughness++;
-                hasRoughnessTexture = true;
                 
                 if (m_debugOutput) {
-                    Msg("[VTFConverter] Set roughness texture: %s\n", outputPath.c_str());
+                    Msg("[VTFConverter] Wrote roughness texture: %s\n", outputPath.c_str());
                 }
-            } else {
-                // Fall back to constant
-                opaqueExt.roughnessConstant = props.roughness;
             }
-        } else {
-            opaqueExt.roughnessConstant = props.roughness;
         }
-    } else {
-        opaqueExt.roughnessConstant = props.roughness;
     }
     
     // Generate and write metallic texture if significant
-    if (!m_outputDirectory.empty() && props.metallic > 0.05f) {
+    if (props.metallic > 0.05f) {
         ConvertedTexture metallicTex;
         if (GenerateMetallicTexture(props, metallicTex)) {
             metallicTex.hash = GenerateTextureHash(props.materialName + "_metallic", metallicTex.width, metallicTex.height);
             std::string outputPath = GenerateOutputPath(metallicTex.hash, "_metal");
             
             if (WriteTextureToDDS(metallicTex, outputPath)) {
-                // Use set_metallicTexture to properly handle string lifetime
-                // Remix AssetDataManager expects absolute paths (it normalizes them internally)
-                opaqueExt.set_metallicTexture(outputPath);
+                matInfo.metallicPath = outputPath;
                 m_writtenTexturePaths[metallicTex.hash] = outputPath;
-                hasMetallicTexture = true;
                 
                 if (m_debugOutput) {
-                    Msg("[VTFConverter] Set metallic texture: %s\n", outputPath.c_str());
+                    Msg("[VTFConverter] Wrote metallic texture: %s\n", outputPath.c_str());
                 }
-            } else {
-                opaqueExt.metallicConstant = props.metallic;
             }
-        } else {
-            opaqueExt.metallicConstant = props.metallic;
         }
-    } else {
-        opaqueExt.metallicConstant = props.metallic;
     }
     
-    // Chain the extension
-    matInfo.pNext = &opaqueExt;
-    
-    // Create the material
-    auto result = m_remixInterface->CreateMaterial(matInfo);
-    
-    if (!result) {
-        if (m_debugOutput) {
-            Warning("[VTFConverter] Failed to create material for hash 0x%llX: error %d\n", 
-                    textureHash, result.status());
-        }
-        return false;
-    }
-    
-    m_materialHandles[textureHash] = result.value();
+    // Store for USDA generation
+    m_processedMaterialInfo[textureHash] = matInfo;
     m_stats.materialsProcessed++;
     
     if (m_debugOutput) {
-        Msg("[VTFConverter] Created PBR material for '%s': roughness=%.2f, metallic=%.2f%s%s%s\n",
-            props.materialName.c_str(), props.roughness, props.metallic,
-            hasNormalTexture ? " [normal]" : "",
-            hasRoughnessTexture ? " [roughness]" : "",
-            hasMetallicTexture ? " [metallic]" : "");
+        Msg("[VTFConverter] Processed material '%s' (hash 0x%llX): roughness=%.2f, metallic=%.2f%s%s%s\n",
+            props.materialName.c_str(), textureHash, props.roughness, props.metallic,
+            !matInfo.normalPath.empty() ? " [normal]" : "",
+            !matInfo.roughnessPath.empty() ? " [roughness]" : "",
+            !matInfo.metallicPath.empty() ? " [metallic]" : "");
     }
     
     return true;
@@ -1538,7 +1493,7 @@ int VTFTextureConverter::ProcessAllTrackedMaterials() {
         
         props.baseTextureHash = textureHash;
         
-        // Create PBR material
+        // Create PBR material (generates textures and tracks info for USDA)
         if (CreatePBRMaterial(props, textureHash)) {
             processedCount++;
         }
@@ -1550,9 +1505,11 @@ int VTFTextureConverter::ProcessAllTrackedMaterials() {
         Msg("[VTFConverter] Processed %d materials with PBR properties\n", processedCount);
         Msg("[VTFConverter] Stats: %d with normals, %d with roughness textures\n", 
             m_stats.materialsWithNormals, m_stats.materialsWithRoughness);
-        if (m_stats.materialsProcessed > m_stats.materialsWithNormals) {
-            Msg("[VTFConverter] Note: %d materials fell back to constant roughness (enable debug with rtx_topbr_debug 1 for details)\n",
-                m_stats.materialsProcessed - m_stats.materialsWithNormals);
+        
+        // Write the USDA mod files
+        if (WriteModUSDA()) {
+            Msg("[VTFConverter] IMPORTANT: Restart the game for material replacements to take effect.\n");
+            Msg("[VTFConverter] The mod is written to: rtx-remix/mods/gmod_topbr/\n");
         }
     }
     
@@ -1578,9 +1535,146 @@ void VTFTextureConverter::ClearCache() {
     // previously uploaded resources available.
     m_processedMaterials.clear();
     m_uploadedTextures.clear();
+    m_processedMaterialInfo.clear();
     m_stats = {};
     
     Msg("[VTFConverter] Cache cleared\n");
+}
+
+// Helper to convert absolute path to relative path from mod directory
+static std::string GetRelativeTexturePath(const std::string& absolutePath, const std::string& outputDir) {
+    // We want a path relative to the mod directory like "./textures/HASH_type.dds"
+    size_t texturesPos = absolutePath.find("textures");
+    if (texturesPos != std::string::npos) {
+        return "./" + absolutePath.substr(texturesPos);
+    }
+    // Fallback: just use filename
+    size_t lastSlash = absolutePath.find_last_of("/\\");
+    if (lastSlash != std::string::npos) {
+        return "./textures/" + absolutePath.substr(lastSlash + 1);
+    }
+    return absolutePath;
+}
+
+bool VTFTextureConverter::WriteModUSDA() {
+    if (m_outputDirectory.empty() || m_processedMaterialInfo.empty()) {
+        return false;
+    }
+    
+    // Get the mod directory (parent of textures directory)
+    std::string modDir = m_outputDirectory;
+    size_t texturesPos = modDir.find("textures");
+    if (texturesPos != std::string::npos && texturesPos > 0) {
+        modDir = modDir.substr(0, texturesPos);
+        // Remove trailing slash
+        while (!modDir.empty() && (modDir.back() == '/' || modDir.back() == '\\')) {
+            modDir.pop_back();
+        }
+    }
+    
+    // Write mod.usda
+    std::string modUsdaPath = modDir + "/mod.usda";
+    std::ofstream modUsda(modUsdaPath);
+    if (!modUsda.is_open()) {
+        Warning("[VTFConverter] Failed to create mod.usda at %s\n", modUsdaPath.c_str());
+        return false;
+    }
+    
+    // Write USDA header
+    modUsda << "#usda 1.0\n";
+    modUsda << "(\n";
+    modUsda << "    customLayerData = {\n";
+    modUsda << "        string lightspeed_game_name = \"Garry's Mod (x64)\"\n";
+    modUsda << "        string lightspeed_layer_type = \"replacement\"\n";
+    modUsda << "    }\n";
+    modUsda << "    metersPerUnit = 0.01\n";
+    modUsda << "    subLayers = [\n";
+    modUsda << "        @./materials.usda@\n";
+    modUsda << "    ]\n";
+    modUsda << "    timeCodesPerSecond = 24\n";
+    modUsda << "    upAxis = \"Z\"\n";
+    modUsda << ")\n\n";
+    modUsda.close();
+    
+    // Write materials.usda with all the material definitions
+    std::string materialsUsdaPath = modDir + "/materials.usda";
+    std::ofstream materialsUsda(materialsUsdaPath);
+    if (!materialsUsda.is_open()) {
+        Warning("[VTFConverter] Failed to create materials.usda at %s\n", materialsUsdaPath.c_str());
+        return false;
+    }
+    
+    // Write USDA header for materials
+    materialsUsda << "#usda 1.0\n";
+    materialsUsda << "(\n";
+    materialsUsda << "    upAxis = \"Z\"\n";
+    materialsUsda << ")\n\n";
+    
+    // Write material overrides
+    materialsUsda << "over \"RootNode\"\n";
+    materialsUsda << "{\n";
+    materialsUsda << "    over \"Looks\"\n";
+    materialsUsda << "    {\n";
+    
+    for (const auto& pair : m_processedMaterialInfo) {
+        const ProcessedMaterialInfo& info = pair.second;
+        uint64_t hash = info.textureHash;
+        
+        // Write material override
+        // Format the hash as uppercase hex without leading zeros
+        char hashStr[32];
+        snprintf(hashStr, sizeof(hashStr), "%llX", (unsigned long long)hash);
+        
+        materialsUsda << "        over \"mat_" << hashStr << "\"\n";
+        materialsUsda << "        {\n";
+        materialsUsda << "            over \"Shader\"\n";
+        materialsUsda << "            {\n";
+        
+        // Source asset - use AperturePBR_Opaque for standard materials
+        materialsUsda << "                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@\n";
+        
+        // Normal map encoding - octahedral for 2-channel textures
+        if (!info.normalPath.empty()) {
+            std::string relPath = GetRelativeTexturePath(info.normalPath, m_outputDirectory);
+            materialsUsda << "                int inputs:encoding = 0\n";  // 0 = octahedral
+            materialsUsda << "                asset inputs:normalmap_texture = @" << relPath << "@ (\n";
+            materialsUsda << "                    colorSpace = \"raw\"\n";
+            materialsUsda << "                )\n";
+        }
+        
+        // Roughness
+        if (!info.roughnessPath.empty()) {
+            std::string relPath = GetRelativeTexturePath(info.roughnessPath, m_outputDirectory);
+            materialsUsda << "                asset inputs:reflectionroughness_texture = @" << relPath << "@ (\n";
+            materialsUsda << "                    colorSpace = \"raw\"\n";
+            materialsUsda << "                )\n";
+        } else {
+            materialsUsda << "                float inputs:reflection_roughness_constant = " << info.roughnessConstant << "\n";
+        }
+        
+        // Metallic
+        if (!info.metallicPath.empty()) {
+            std::string relPath = GetRelativeTexturePath(info.metallicPath, m_outputDirectory);
+            materialsUsda << "                asset inputs:metallic_texture = @" << relPath << "@ (\n";
+            materialsUsda << "                    colorSpace = \"raw\"\n";
+            materialsUsda << "                )\n";
+        } else {
+            materialsUsda << "                float inputs:metallic_constant = " << info.metallicConstant << "\n";
+        }
+        
+        materialsUsda << "            }\n";  // Close Shader
+        materialsUsda << "        }\n\n";  // Close material
+    }
+    
+    materialsUsda << "    }\n";  // Close Looks
+    materialsUsda << "}\n";  // Close RootNode
+    
+    materialsUsda.close();
+    
+    Msg("[VTFConverter] Wrote mod.usda and materials.usda with %d materials to %s\n", 
+        (int)m_processedMaterialInfo.size(), modDir.c_str());
+    
+    return true;
 }
 
 //=============================================================================

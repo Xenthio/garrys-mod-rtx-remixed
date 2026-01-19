@@ -216,6 +216,9 @@ private:
     // Convert normal map from DirectX format to octahedral format for RTX Remix
     void ConvertNormalMapToOctahedral(ConvertedTexture& texture);
     
+    // Write the mod.usda file with all processed materials
+    bool WriteModUSDA();
+    
     // Calculate roughness from phong exponent
     float PhongToRoughness(float phongExponent);
     
@@ -246,6 +249,17 @@ private:
     
     // Cache of written DDS file paths (hash -> path)
     std::unordered_map<uint64_t, std::string> m_writtenTexturePaths;
+    
+    // Track material data for USDA generation
+    struct ProcessedMaterialInfo {
+        uint64_t textureHash;
+        std::string normalPath;
+        std::string roughnessPath;
+        std::string metallicPath;
+        float roughnessConstant;
+        float metallicConstant;
+    };
+    std::unordered_map<uint64_t, ProcessedMaterialInfo> m_processedMaterialInfo;
     
     // Statistics
     mutable std::mutex m_mutex;
