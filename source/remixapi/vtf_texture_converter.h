@@ -155,6 +155,10 @@ public:
     // Debug output control
     void SetDebugOutput(bool enabled) { m_debugOutput = enabled; }
     
+    // Set output directory for generated textures
+    void SetOutputDirectory(const std::string& path);
+    std::string GetOutputDirectory() const { return m_outputDirectory; }
+    
 private:
     VTFTextureConverter();
     ~VTFTextureConverter();
@@ -185,6 +189,22 @@ private:
     // Upload texture to Remix
     bool UploadTextureToRemix(const ConvertedTexture& texture, remixapi_TextureHandle* outHandle);
     
+    // Write texture to DDS file
+    bool WriteTextureToDDS(const ConvertedTexture& texture, const std::string& outputPath);
+    bool WriteDDSHeader(std::ofstream& file, uint32_t width, uint32_t height, bool hasAlpha);
+    
+    // Generate roughness texture from envmap mask or phong constant
+    bool GenerateRoughnessTexture(const MaterialPBRProperties& props, ConvertedTexture& outTexture);
+    
+    // Generate metallic texture from material properties
+    bool GenerateMetallicTexture(const MaterialPBRProperties& props, ConvertedTexture& outTexture);
+    
+    // Ensure output directory exists
+    bool EnsureOutputDirectory();
+    
+    // Generate output filename for a texture type
+    std::string GenerateOutputPath(uint64_t hash, const std::string& suffix);
+    
     // Calculate roughness from phong exponent
     float PhongToRoughness(float phongExponent);
     
@@ -199,6 +219,7 @@ private:
     bool m_initialized;
     bool m_autoProcessing;
     bool m_debugOutput;
+    std::string m_outputDirectory;  // Output directory for generated DDS files
     
     // Cache of processed materials
     std::unordered_set<std::string> m_processedMaterials;
@@ -211,6 +232,9 @@ private:
     
     // Cache of material handles for cleanup
     std::unordered_map<uint64_t, remixapi_MaterialHandle> m_materialHandles;
+    
+    // Cache of written DDS file paths (hash -> path)
+    std::unordered_map<uint64_t, std::string> m_writtenTexturePaths;
     
     // Statistics
     mutable std::mutex m_mutex;

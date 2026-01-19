@@ -6,9 +6,9 @@
     - Change all water textures to a single one to simplify replacements in Remix
     - **Runtime ToPBR Conversion**: Automatically converts Source Engine materials to PBR at runtime:
         - Reads VTF texture files directly from Source Engine filesystem
-        - Uploads normal maps to RTX Remix via CreateTexture API
-        - Calculates roughness from `$phongexponent` values
-        - Estimates metallic from `$envmapmask` and `$phongboost`
+        - Writes PBR textures (normal, roughness, metallic) to `rtx-remix/mods/gmod_topbr/textures/`
+        - Generates roughness textures from `$envmapmask` or `$phongexponent`
+        - Estimates metallic from `$phongboost` values
         - Auto-processes materials on map load
 - Model fixes
     - Fixes some props having unstable hashes in RTX Remix so they can be replaced in the Remix Toolkit
