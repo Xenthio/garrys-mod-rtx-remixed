@@ -10,7 +10,7 @@
 #include <d3d9.h>
 #include <Windows.h>
 #include "../d3d9_texture_tracker.h"
-#include "vtf_texture_converter.h"
+#include "legacy_texture_processor.h"
 
 #include <algorithm>
 #include <cstring>
@@ -23,7 +23,7 @@
 extern IMaterialSystem* materials;
 extern remix::Interface* g_remix;
 
-namespace VTFConverter {
+namespace LegacyTextureProcessor {
 
 // Constants for VTF processing
 constexpr int VTF_MAJOR_VERSION_SUPPORTED = 7;
@@ -104,15 +104,15 @@ static IFileSystem* GetFileSystemInterface() {
 }
 
 //=============================================================================
-// VTFTextureConverter Implementation
+// TextureProcessor Implementation
 //=============================================================================
 
-VTFTextureConverter& VTFTextureConverter::Instance() {
-    static VTFTextureConverter instance;
+TextureProcessor& TextureProcessor::Instance() {
+    static TextureProcessor instance;
     return instance;
 }
 
-VTFTextureConverter::VTFTextureConverter()
+TextureProcessor::TextureProcessor()
     : m_remixInterface(nullptr)
     , m_fileSystem(nullptr)
     , m_initialized(false)
@@ -122,18 +122,18 @@ VTFTextureConverter::VTFTextureConverter()
     m_stats = {};
 }
 
-VTFTextureConverter::~VTFTextureConverter() {
+TextureProcessor::~TextureProcessor() {
     Shutdown();
 }
 
-bool VTFTextureConverter::Initialize(remix::Interface* remixInterface) {
+bool TextureProcessor::Initialize(remix::Interface* remixInterface) {
     if (m_initialized) {
         // Already initialized - this is success, not failure
         return true;
     }
     
     if (!remixInterface) {
-        Warning("[VTFConverter] Invalid Remix interface\n");
+        Warning("[LegacyTextureProcessor] Invalid Remix interface\n");
         return false;
     }
     
@@ -141,7 +141,7 @@ bool VTFTextureConverter::Initialize(remix::Interface* remixInterface) {
     m_fileSystem = GetFileSystemInterface();
     
     if (!m_fileSystem) {
-        Warning("[VTFConverter] Could not get filesystem interface\n");
+        Warning("[LegacyTextureProcessor] Could not get filesystem interface\n");
         return false;
     }
     
@@ -170,12 +170,12 @@ bool VTFTextureConverter::Initialize(remix::Interface* remixInterface) {
     }
     
     m_initialized = true;
-    Msg("[VTFConverter] Initialized successfully\n");
-    Msg("[VTFConverter] Output directory: %s\n", m_outputDirectory.c_str());
+    Msg("[LegacyTextureProcessor] Initialized successfully\n");
+    Msg("[LegacyTextureProcessor] Output directory: %s\n", m_outputDirectory.c_str());
     return true;
 }
 
-void VTFTextureConverter::Shutdown() {
+void TextureProcessor::Shutdown() {
     if (!m_initialized) return;
     
     // Destroy all uploaded textures
@@ -194,23 +194,23 @@ void VTFTextureConverter::Shutdown() {
     m_remixInterface = nullptr;
     m_initialized = false;
     
-    Msg("[VTFConverter] Shutdown complete\n");
+    Msg("[LegacyTextureProcessor] Shutdown complete\n");
 }
 
-void VTFTextureConverter::SetOutputDirectory(const std::string& path) {
+void TextureProcessor::SetOutputDirectory(const std::string& path) {
     m_outputDirectory = path;
     if (m_debugOutput) {
-        Msg("[VTFConverter] Output directory set to: %s\n", path.c_str());
+        Msg("[LegacyTextureProcessor] Output directory set to: %s\n", path.c_str());
     }
 }
 
-IFileSystem* VTFTextureConverter::GetFileSystem() {
+IFileSystem* TextureProcessor::GetFileSystem() {
     return m_fileSystem;
 }
 
-bool VTFTextureConverter::EnsureOutputDirectory() {
+bool TextureProcessor::EnsureOutputDirectory() {
     if (m_outputDirectory.empty()) {
-        Warning("[VTFConverter] Output directory not set\n");
+        Warning("[LegacyTextureProcessor] Output directory not set\n");
         return false;
     }
     
@@ -233,14 +233,14 @@ bool VTFTextureConverter::EnsureOutputDirectory() {
     // Check if directory exists now
     DWORD attrib = GetFileAttributesA(m_outputDirectory.c_str());
     if (attrib == INVALID_FILE_ATTRIBUTES || !(attrib & FILE_ATTRIBUTE_DIRECTORY)) {
-        Warning("[VTFConverter] Failed to create output directory: %s\n", m_outputDirectory.c_str());
+        Warning("[LegacyTextureProcessor] Failed to create output directory: %s\n", m_outputDirectory.c_str());
         return false;
     }
     
     return true;
 }
 
-std::string VTFTextureConverter::GenerateOutputPath(uint64_t hash, const std::string& suffix) {
+std::string TextureProcessor::GenerateOutputPath(uint64_t hash, const std::string& suffix) {
     std::ostringstream oss;
     oss << m_outputDirectory << "\\" << std::hex << std::uppercase << hash << suffix << ".dds";
     return oss.str();
@@ -257,7 +257,7 @@ static uint32_t CalculateMipLevels(uint32_t width, uint32_t height) {
     return levels;
 }
 
-bool VTFTextureConverter::WriteDDSHeader(std::ofstream& file, uint32_t width, uint32_t height, bool hasAlpha, uint32_t mipCount) {
+bool TextureProcessor::WriteDDSHeader(std::ofstream& file, uint32_t width, uint32_t height, bool hasAlpha, uint32_t mipCount) {
     DDSHeader header = {};
     
     header.magic = DDS_MAGIC;
@@ -284,15 +284,15 @@ bool VTFTextureConverter::WriteDDSHeader(std::ofstream& file, uint32_t width, ui
     return file.good();
 }
 
-bool VTFTextureConverter::WriteTextureToDDS(const ConvertedTexture& texture, const std::string& outputPath) {
+bool TextureProcessor::WriteTextureToDDS(const ConvertedTexture& texture, const std::string& outputPath) {
     if (texture.pixelData.empty()) {
-        Warning("[VTFConverter] Cannot write empty texture\n");
+        Warning("[LegacyTextureProcessor] Cannot write empty texture\n");
         return false;
     }
     
     std::ofstream file(outputPath, std::ios::binary);
     if (!file.is_open()) {
-        Warning("[VTFConverter] Failed to open file for writing: %s\n", outputPath.c_str());
+        Warning("[LegacyTextureProcessor] Failed to open file for writing: %s\n", outputPath.c_str());
         return false;
     }
     
@@ -301,7 +301,7 @@ bool VTFTextureConverter::WriteTextureToDDS(const ConvertedTexture& texture, con
     
     // Write DDS header with mipmap info
     if (!WriteDDSHeader(file, texture.width, texture.height, true, mipCount)) {
-        Warning("[VTFConverter] Failed to write DDS header\n");
+        Warning("[LegacyTextureProcessor] Failed to write DDS header\n");
         return false;
     }
     
@@ -367,27 +367,27 @@ bool VTFTextureConverter::WriteTextureToDDS(const ConvertedTexture& texture, con
     }
     
     if (!file.good()) {
-        Warning("[VTFConverter] Failed to write texture data\n");
+        Warning("[LegacyTextureProcessor] Failed to write texture data\n");
         return false;
     }
     
     file.close();
     
     if (m_debugOutput) {
-        Msg("[VTFConverter] Wrote DDS file: %s (%dx%d, %d mips)\n", outputPath.c_str(), texture.width, texture.height, mipCount);
+        Msg("[LegacyTextureProcessor] Wrote DDS file: %s (%dx%d, %d mips)\n", outputPath.c_str(), texture.width, texture.height, mipCount);
     }
     
     return true;
 }
 
-bool VTFTextureConverter::GenerateRoughnessTexture(const MaterialPBRProperties& props, ConvertedTexture& outTexture) {
+bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& props, ConvertedTexture& outTexture) {
     // Only generate a roughness texture if we have an actual envmap mask texture
     // Otherwise, return false and let the USDA use a constant value instead
     
     if (!props.hasEnvMapMask || props.envMapMaskPath.empty()) {
         // No envmap mask - use constant in USDA instead of generating a texture
         if (m_debugOutput) {
-            Msg("[VTFConverter] No envmap mask for %s, will use roughness constant %.2f\n",
+            Msg("[LegacyTextureProcessor] No envmap mask for %s, will use roughness constant %.2f\n",
                 props.materialName.c_str(), props.roughness);
         }
         return false;
@@ -399,12 +399,12 @@ bool VTFTextureConverter::GenerateRoughnessTexture(const MaterialPBRProperties& 
     std::vector<uint8_t> fileData;
     
     if (m_debugOutput) {
-        Msg("[VTFConverter] Attempting to read envmap mask: %s\n", vtfPath.c_str());
+        Msg("[LegacyTextureProcessor] Attempting to read envmap mask: %s\n", vtfPath.c_str());
     }
     
     if (!ReadVTFFile(vtfPath, fileData)) {
         if (m_debugOutput) {
-            Msg("[VTFConverter] Failed to read envmap mask VTF: %s (will use constant)\n", vtfPath.c_str());
+            Msg("[LegacyTextureProcessor] Failed to read envmap mask VTF: %s (will use constant)\n", vtfPath.c_str());
         }
         return false;
     }
@@ -412,7 +412,7 @@ bool VTFTextureConverter::GenerateRoughnessTexture(const MaterialPBRProperties& 
     VTFFileHeader header;
     if (!ParseVTFHeader(fileData, header)) {
         if (m_debugOutput) {
-            Msg("[VTFConverter] Failed to parse VTF header for envmap mask: %s\n", vtfPath.c_str());
+            Msg("[LegacyTextureProcessor] Failed to parse VTF header for envmap mask: %s\n", vtfPath.c_str());
         }
         return false;
     }
@@ -420,7 +420,7 @@ bool VTFTextureConverter::GenerateRoughnessTexture(const MaterialPBRProperties& 
     ConvertedTexture envMapTex;
     if (!ExtractVTFPixelData(fileData, header, envMapTex, false)) {
         if (m_debugOutput) {
-            Msg("[VTFConverter] Failed to extract pixel data from envmap mask: %s\n", vtfPath.c_str());
+            Msg("[LegacyTextureProcessor] Failed to extract pixel data from envmap mask: %s\n", vtfPath.c_str());
         }
         return false;
     }
@@ -451,26 +451,26 @@ bool VTFTextureConverter::GenerateRoughnessTexture(const MaterialPBRProperties& 
     outTexture.mipLevels = 1;
     
     if (m_debugOutput) {
-        Msg("[VTFConverter] Generated roughness from envmap mask: %s (%dx%d)\n",
+        Msg("[LegacyTextureProcessor] Generated roughness from envmap mask: %s (%dx%d)\n",
             props.envMapMaskPath.c_str(), outTexture.width, outTexture.height);
     }
     return true;
 }
 
-bool VTFTextureConverter::GenerateMetallicTexture(const MaterialPBRProperties& props, ConvertedTexture& outTexture) {
+bool TextureProcessor::GenerateMetallicTexture(const MaterialPBRProperties& props, ConvertedTexture& outTexture) {
     // Source Engine materials don't have actual metallic texture data
     // We only have estimated constants from phongboost, so always use constants in USDA
     // Return false to indicate no texture should be written
     if (m_debugOutput) {
-        Msg("[VTFConverter] No metallic texture for %s, will use metallic constant %.2f\n",
+        Msg("[LegacyTextureProcessor] No metallic texture for %s, will use metallic constant %.2f\n",
             props.materialName.c_str(), props.metallic);
     }
     return false;
 }
 
-bool VTFTextureConverter::ReadVTFFile(const std::string& path, std::vector<uint8_t>& outData) {
+bool TextureProcessor::ReadVTFFile(const std::string& path, std::vector<uint8_t>& outData) {
     if (!m_fileSystem) {
-        Warning("[VTFConverter] Filesystem not available\n");
+        Warning("[LegacyTextureProcessor] Filesystem not available\n");
         return false;
     }
     
@@ -487,7 +487,7 @@ bool VTFTextureConverter::ReadVTFFile(const std::string& path, std::vector<uint8
         file = m_fileSystem->Open(path.c_str(), "rb", "GAME");
         if (!file) {
             if (m_debugOutput) {
-                Msg("[VTFConverter] Could not open VTF: %s\n", fullPath.c_str());
+                Msg("[LegacyTextureProcessor] Could not open VTF: %s\n", fullPath.c_str());
             }
             return false;
         }
@@ -497,7 +497,7 @@ bool VTFTextureConverter::ReadVTFFile(const std::string& path, std::vector<uint8
     int fileSize = m_fileSystem->Size(file);
     if (fileSize <= 0 || static_cast<size_t>(fileSize) > MAX_VTF_FILE_SIZE) {
         m_fileSystem->Close(file);
-        Warning("[VTFConverter] Invalid file size for %s: %d\n", fullPath.c_str(), fileSize);
+        Warning("[LegacyTextureProcessor] Invalid file size for %s: %d\n", fullPath.c_str(), fileSize);
         return false;
     }
     
@@ -507,7 +507,7 @@ bool VTFTextureConverter::ReadVTFFile(const std::string& path, std::vector<uint8
     m_fileSystem->Close(file);
     
     if (bytesRead != fileSize) {
-        Warning("[VTFConverter] Read error for %s: expected %d, got %d\n", 
+        Warning("[LegacyTextureProcessor] Read error for %s: expected %d, got %d\n", 
                 fullPath.c_str(), fileSize, bytesRead);
         return false;
     }
@@ -515,9 +515,9 @@ bool VTFTextureConverter::ReadVTFFile(const std::string& path, std::vector<uint8
     return true;
 }
 
-bool VTFTextureConverter::ParseVTFHeader(const std::vector<uint8_t>& fileData, VTFFileHeader& outHeader) {
+bool TextureProcessor::ParseVTFHeader(const std::vector<uint8_t>& fileData, VTFFileHeader& outHeader) {
     if (fileData.size() < sizeof(VTFFileHeader)) {
-        Warning("[VTFConverter] File too small for VTF header\n");
+        Warning("[LegacyTextureProcessor] File too small for VTF header\n");
         return false;
     }
     
@@ -525,19 +525,19 @@ bool VTFTextureConverter::ParseVTFHeader(const std::vector<uint8_t>& fileData, V
     
     // Verify signature
     if (memcmp(outHeader.signature, "VTF\0", 4) != 0) {
-        Warning("[VTFConverter] Invalid VTF signature\n");
+        Warning("[LegacyTextureProcessor] Invalid VTF signature\n");
         return false;
     }
     
     // Verify version (support 7.0 - 7.5)
     if (outHeader.version[0] != VTF_MAJOR_VERSION_SUPPORTED || outHeader.version[1] > VTF_MAX_MINOR_VERSION) {
-        Warning("[VTFConverter] Unsupported VTF version %d.%d\n", 
+        Warning("[LegacyTextureProcessor] Unsupported VTF version %d.%d\n", 
                 outHeader.version[0], outHeader.version[1]);
         return false;
     }
     
     if (m_debugOutput) {
-        Msg("[VTFConverter] VTF: %dx%d, format %d, %d mips\n",
+        Msg("[LegacyTextureProcessor] VTF: %dx%d, format %d, %d mips\n",
             outHeader.width, outHeader.height, outHeader.imageFormat, outHeader.mipmapCount);
     }
     
@@ -644,7 +644,7 @@ static void DecompressDXT5AlphaBlock(const uint8_t* block, uint8_t* output, int 
     }
 }
 
-bool VTFTextureConverter::DecompressDXT1(const uint8_t* compressedData, uint32_t width, uint32_t height,
+bool TextureProcessor::DecompressDXT1(const uint8_t* compressedData, uint32_t width, uint32_t height,
                                           std::vector<uint8_t>& outRGBA) {
     uint32_t blocksX = (width + 3) / 4;
     uint32_t blocksY = (height + 3) / 4;
@@ -683,7 +683,7 @@ bool VTFTextureConverter::DecompressDXT1(const uint8_t* compressedData, uint32_t
     return true;
 }
 
-bool VTFTextureConverter::DecompressDXT5(const uint8_t* compressedData, uint32_t width, uint32_t height,
+bool TextureProcessor::DecompressDXT5(const uint8_t* compressedData, uint32_t width, uint32_t height,
                                           std::vector<uint8_t>& outRGBA) {
     uint32_t blocksX = (width + 3) / 4;
     uint32_t blocksY = (height + 3) / 4;
@@ -788,7 +788,7 @@ static size_t GetTotalMipmapSize(uint32_t width, uint32_t height, uint8_t mipmap
     return totalSize;
 }
 
-bool VTFTextureConverter::ExtractVTFPixelData(const std::vector<uint8_t>& fileData, 
+bool TextureProcessor::ExtractVTFPixelData(const std::vector<uint8_t>& fileData, 
                                                const VTFFileHeader& header,
                                                ConvertedTexture& outTexture, 
                                                bool isNormalMap) {
@@ -849,7 +849,7 @@ bool VTFTextureConverter::ExtractVTFPixelData(const std::vector<uint8_t>& fileDa
         
         if (dataOffset + largestMipSize > fileData.size()) {
             if (m_debugOutput) {
-                Msg("[VTFConverter] VTF data too small: offset %zu + size %zu > total %zu\n",
+                Msg("[LegacyTextureProcessor] VTF data too small: offset %zu + size %zu > total %zu\n",
                     dataOffset, largestMipSize, fileData.size());
             }
             return false;
@@ -912,7 +912,7 @@ bool VTFTextureConverter::ExtractVTFPixelData(const std::vector<uint8_t>& fileDa
             
         default:
             if (m_debugOutput) {
-                Msg("[VTFConverter] Unsupported VTF format: %d\n", srcFormat);
+                Msg("[LegacyTextureProcessor] Unsupported VTF format: %d\n", srcFormat);
             }
             return false;
     }
@@ -930,7 +930,7 @@ bool VTFTextureConverter::ExtractVTFPixelData(const std::vector<uint8_t>& fileDa
 // Convert DirectX-style normal map to hemispherical octahedral format for RTX Remix
 // Based on NVIDIA's LightspeedOctahedralConverter
 // See: https://github.com/NVIDIAGameWorks/dxvk-remix
-void VTFTextureConverter::ConvertNormalMapToOctahedral(ConvertedTexture& texture) {
+void TextureProcessor::ConvertNormalMapToOctahedral(ConvertedTexture& texture) {
     if (texture.pixelData.empty()) return;
     
     uint32_t width = texture.width;
@@ -1002,11 +1002,11 @@ void VTFTextureConverter::ConvertNormalMapToOctahedral(ConvertedTexture& texture
     texture.pixelData = std::move(octahedralData);
     
     if (m_debugOutput) {
-        Msg("[VTFConverter] Converted normal map to octahedral format (%dx%d)\n", width, height);
+        Msg("[LegacyTextureProcessor] Converted normal map to octahedral format (%dx%d)\n", width, height);
     }
 }
 
-uint64_t VTFTextureConverter::GenerateTextureHash(const std::string& path, uint32_t width, uint32_t height) {
+uint64_t TextureProcessor::GenerateTextureHash(const std::string& path, uint32_t width, uint32_t height) {
     // Simple FNV-1a hash
     uint64_t hash = 14695981039346656037ULL;
     
@@ -1027,10 +1027,10 @@ uint64_t VTFTextureConverter::GenerateTextureHash(const std::string& path, uint3
     return hash;
 }
 
-bool VTFTextureConverter::UploadTextureToRemix(const ConvertedTexture& texture, 
+bool TextureProcessor::UploadTextureToRemix(const ConvertedTexture& texture, 
                                                 remixapi_TextureHandle* outHandle) {
     if (!m_remixInterface) {
-        Warning("[VTFConverter] Remix interface not available\n");
+        Warning("[LegacyTextureProcessor] Remix interface not available\n");
         return false;
     }
     
@@ -1048,7 +1048,7 @@ bool VTFTextureConverter::UploadTextureToRemix(const ConvertedTexture& texture,
     
     auto result = m_remixInterface->CreateTexture(texInfo);
     if (!result) {
-        Warning("[VTFConverter] Failed to create texture: error %d\n", result.status());
+        Warning("[LegacyTextureProcessor] Failed to create texture: error %d\n", result.status());
         return false;
     }
     
@@ -1057,14 +1057,14 @@ bool VTFTextureConverter::UploadTextureToRemix(const ConvertedTexture& texture,
     }
     
     if (m_debugOutput) {
-        Msg("[VTFConverter] Uploaded texture: %dx%d, hash 0x%llX\n", 
+        Msg("[LegacyTextureProcessor] Uploaded texture: %dx%d, hash 0x%llX\n", 
             texture.width, texture.height, texture.hash);
     }
     
     return true;
 }
 
-uint64_t VTFTextureConverter::ConvertAndUploadTexture(const std::string& vtfPath, bool isNormalMap) {
+uint64_t TextureProcessor::ConvertAndUploadTexture(const std::string& vtfPath, bool isNormalMap) {
     std::lock_guard<std::mutex> lock(m_mutex);
     
     // Check cache
@@ -1110,7 +1110,7 @@ uint64_t VTFTextureConverter::ConvertAndUploadTexture(const std::string& vtfPath
     return texture.hash;
 }
 
-float VTFTextureConverter::PhongToRoughness(float phongExponent) {
+float TextureProcessor::PhongToRoughness(float phongExponent) {
     if (phongExponent <= 0) return 1.0f;  // Default to max roughness (matte)
     
     // Clamp to reasonable range
@@ -1122,7 +1122,7 @@ float VTFTextureConverter::PhongToRoughness(float phongExponent) {
     return std::clamp(roughness, 0.05f, 0.95f);
 }
 
-float VTFTextureConverter::EstimateMetallic(const MaterialPBRProperties& props) {
+float TextureProcessor::EstimateMetallic(const MaterialPBRProperties& props) {
     float metallic = 0.0f;
     
     // High phong boost suggests metal-like reflections
@@ -1138,17 +1138,17 @@ float VTFTextureConverter::EstimateMetallic(const MaterialPBRProperties& props) 
     return metallic;
 }
 
-bool VTFTextureConverter::ExtractMaterialPBR(const std::string& materialName, 
+bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName, 
                                               MaterialPBRProperties& outProps) {
     if (!materials) {
-        Warning("[VTFConverter] Material system not available\n");
+        Warning("[LegacyTextureProcessor] Material system not available\n");
         return false;
     }
     
     IMaterial* pMaterial = materials->FindMaterial(materialName.c_str(), TEXTURE_GROUP_OTHER, false);
     if (!pMaterial || pMaterial->IsErrorMaterial()) {
         if (m_debugOutput) {
-            Msg("[VTFConverter] Material not found: %s\n", materialName.c_str());
+            Msg("[LegacyTextureProcessor] Material not found: %s\n", materialName.c_str());
         }
         return false;
     }
@@ -1200,9 +1200,9 @@ bool VTFTextureConverter::ExtractMaterialPBR(const std::string& materialName,
             outProps.baseTexturePath = texPath;
         }
         if (m_debugOutput && !outProps.baseTexturePath.empty()) {
-            Msg("[VTFConverter] %s: $basetexture = %s\n", materialName.c_str(), outProps.baseTexturePath.c_str());
+            Msg("[LegacyTextureProcessor] %s: $basetexture = %s\n", materialName.c_str(), outProps.baseTexturePath.c_str());
         } else if (m_debugOutput && strVal) {
-            Msg("[VTFConverter] %s: $basetexture filtered (invalid path: '%s')\n", materialName.c_str(), strVal);
+            Msg("[LegacyTextureProcessor] %s: $basetexture filtered (invalid path: '%s')\n", materialName.c_str(), strVal);
         }
     }
     
@@ -1225,9 +1225,9 @@ bool VTFTextureConverter::ExtractMaterialPBR(const std::string& materialName,
             outProps.hasBumpMap = true;
         }
         if (m_debugOutput && outProps.hasBumpMap) {
-            Msg("[VTFConverter] %s: $bumpmap = %s\n", materialName.c_str(), outProps.bumpMapPath.c_str());
+            Msg("[LegacyTextureProcessor] %s: $bumpmap = %s\n", materialName.c_str(), outProps.bumpMapPath.c_str());
         } else if (m_debugOutput && strVal) {
-            Msg("[VTFConverter] %s: $bumpmap filtered (invalid path: '%s')\n", materialName.c_str(), strVal);
+            Msg("[LegacyTextureProcessor] %s: $bumpmap filtered (invalid path: '%s')\n", materialName.c_str(), strVal);
         }
     }
     
@@ -1250,9 +1250,9 @@ bool VTFTextureConverter::ExtractMaterialPBR(const std::string& materialName,
             outProps.hasEnvMapMask = true;
         }
         if (m_debugOutput && outProps.hasEnvMapMask) {
-            Msg("[VTFConverter] %s: $envmapmask = %s\n", materialName.c_str(), outProps.envMapMaskPath.c_str());
+            Msg("[LegacyTextureProcessor] %s: $envmapmask = %s\n", materialName.c_str(), outProps.envMapMaskPath.c_str());
         } else if (m_debugOutput && strVal) {
-            Msg("[VTFConverter] %s: $envmapmask filtered (invalid path: '%s')\n", materialName.c_str(), strVal);
+            Msg("[LegacyTextureProcessor] %s: $envmapmask filtered (invalid path: '%s')\n", materialName.c_str(), strVal);
         }
     }
     
@@ -1294,7 +1294,7 @@ static bool FileExists(const std::string& path) {
     return file.good();
 }
 
-bool VTFTextureConverter::CreatePBRMaterial(const MaterialPBRProperties& props, uint64_t textureHash) {
+bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uint64_t textureHash) {
     if (textureHash == 0) {
         return false;
     }
@@ -1306,7 +1306,7 @@ bool VTFTextureConverter::CreatePBRMaterial(const MaterialPBRProperties& props, 
     
     // Ensure output directory exists for texture files
     if (!EnsureOutputDirectory()) {
-        Warning("[VTFConverter] Cannot create output directory, skipping material\n");
+        Warning("[LegacyTextureProcessor] Cannot create output directory, skipping material\n");
         return false;
     }
     
@@ -1332,7 +1332,7 @@ bool VTFTextureConverter::CreatePBRMaterial(const MaterialPBRProperties& props, 
             skippedCount++;
             
             if (m_debugOutput) {
-                Msg("[VTFConverter] Skipping existing normal texture: %s\n", expectedOutputPath.c_str());
+                Msg("[LegacyTextureProcessor] Skipping existing normal texture: %s\n", expectedOutputPath.c_str());
             }
         } else {
             std::string vtfPath = props.bumpMapPath;
@@ -1354,7 +1354,7 @@ bool VTFTextureConverter::CreatePBRMaterial(const MaterialPBRProperties& props, 
                             skippedCount++;
                             
                             if (m_debugOutput) {
-                                Msg("[VTFConverter] Skipping existing normal texture: %s\n", outputPath.c_str());
+                                Msg("[LegacyTextureProcessor] Skipping existing normal texture: %s\n", outputPath.c_str());
                             }
                         } else if (WriteTextureToDDS(normalTex, outputPath)) {
                             matInfo.normalPath = outputPath;
@@ -1362,19 +1362,19 @@ bool VTFTextureConverter::CreatePBRMaterial(const MaterialPBRProperties& props, 
                             m_stats.materialsWithNormals++;
                             
                             if (m_debugOutput) {
-                                Msg("[VTFConverter] Wrote normal texture: %s\n", outputPath.c_str());
+                                Msg("[LegacyTextureProcessor] Wrote normal texture: %s\n", outputPath.c_str());
                             }
                         } else if (m_debugOutput) {
-                            Msg("[VTFConverter] Failed to write normal DDS for %s\n", props.bumpMapPath.c_str());
+                            Msg("[LegacyTextureProcessor] Failed to write normal DDS for %s\n", props.bumpMapPath.c_str());
                         }
                     } else if (m_debugOutput) {
-                        Msg("[VTFConverter] Failed to extract pixel data for %s\n", props.bumpMapPath.c_str());
+                        Msg("[LegacyTextureProcessor] Failed to extract pixel data for %s\n", props.bumpMapPath.c_str());
                     }
                 } else if (m_debugOutput) {
-                    Msg("[VTFConverter] Failed to parse VTF header for %s\n", props.bumpMapPath.c_str());
+                    Msg("[LegacyTextureProcessor] Failed to parse VTF header for %s\n", props.bumpMapPath.c_str());
                 }
             } else if (m_debugOutput) {
-                Msg("[VTFConverter] Failed to read VTF file for bump map: %s\n", props.bumpMapPath.c_str());
+                Msg("[LegacyTextureProcessor] Failed to read VTF file for bump map: %s\n", props.bumpMapPath.c_str());
             }
         }
     }
@@ -1391,7 +1391,7 @@ bool VTFTextureConverter::CreatePBRMaterial(const MaterialPBRProperties& props, 
             skippedCount++;
             
             if (m_debugOutput) {
-                Msg("[VTFConverter] Skipping existing roughness texture: %s\n", outputPath.c_str());
+                Msg("[LegacyTextureProcessor] Skipping existing roughness texture: %s\n", outputPath.c_str());
             }
         } else {
             ConvertedTexture roughnessTex;
@@ -1405,7 +1405,7 @@ bool VTFTextureConverter::CreatePBRMaterial(const MaterialPBRProperties& props, 
                     skippedCount++;
                     
                     if (m_debugOutput) {
-                        Msg("[VTFConverter] Skipping existing roughness texture: %s\n", outputPath.c_str());
+                        Msg("[LegacyTextureProcessor] Skipping existing roughness texture: %s\n", outputPath.c_str());
                     }
                 } else if (WriteTextureToDDS(roughnessTex, outputPath)) {
                     matInfo.roughnessPath = outputPath;
@@ -1413,7 +1413,7 @@ bool VTFTextureConverter::CreatePBRMaterial(const MaterialPBRProperties& props, 
                     m_stats.materialsWithRoughness++;
                     
                     if (m_debugOutput) {
-                        Msg("[VTFConverter] Wrote roughness texture: %s\n", outputPath.c_str());
+                        Msg("[LegacyTextureProcessor] Wrote roughness texture: %s\n", outputPath.c_str());
                     }
                 }
             }
@@ -1432,7 +1432,7 @@ bool VTFTextureConverter::CreatePBRMaterial(const MaterialPBRProperties& props, 
             skippedCount++;
             
             if (m_debugOutput) {
-                Msg("[VTFConverter] Skipping existing metallic texture: %s\n", outputPath.c_str());
+                Msg("[LegacyTextureProcessor] Skipping existing metallic texture: %s\n", outputPath.c_str());
             }
         } else {
             ConvertedTexture metallicTex;
@@ -1446,14 +1446,14 @@ bool VTFTextureConverter::CreatePBRMaterial(const MaterialPBRProperties& props, 
                     skippedCount++;
                     
                     if (m_debugOutput) {
-                        Msg("[VTFConverter] Skipping existing metallic texture: %s\n", outputPath.c_str());
+                        Msg("[LegacyTextureProcessor] Skipping existing metallic texture: %s\n", outputPath.c_str());
                     }
                 } else if (WriteTextureToDDS(metallicTex, outputPath)) {
                     matInfo.metallicPath = outputPath;
                     m_writtenTexturePaths[metallicTex.hash] = outputPath;
                     
                     if (m_debugOutput) {
-                        Msg("[VTFConverter] Wrote metallic texture: %s\n", outputPath.c_str());
+                        Msg("[LegacyTextureProcessor] Wrote metallic texture: %s\n", outputPath.c_str());
                     }
                 }
             }
@@ -1465,7 +1465,7 @@ bool VTFTextureConverter::CreatePBRMaterial(const MaterialPBRProperties& props, 
     m_stats.materialsProcessed++;
     
     if (m_debugOutput) {
-        Msg("[VTFConverter] Processed material '%s' (hash 0x%llX): roughness=%.2f, metallic=%.2f%s%s%s%s\n",
+        Msg("[LegacyTextureProcessor] Processed material '%s' (hash 0x%llX): roughness=%.2f, metallic=%.2f%s%s%s%s\n",
             props.materialName.c_str(), textureHash, props.roughness, props.metallic,
             !matInfo.normalPath.empty() ? " [normal]" : "",
             !matInfo.roughnessPath.empty() ? " [roughness]" : "",
@@ -1476,11 +1476,11 @@ bool VTFTextureConverter::CreatePBRMaterial(const MaterialPBRProperties& props, 
     return true;
 }
 
-int VTFTextureConverter::ProcessAllTrackedMaterials() {
+int TextureProcessor::ProcessAllTrackedMaterials() {
     std::lock_guard<std::mutex> lock(m_mutex);
     
     if (!m_initialized) {
-        Warning("[VTFConverter] Not initialized\n");
+        Warning("[LegacyTextureProcessor] Not initialized\n");
         return 0;
     }
     
@@ -1546,8 +1546,8 @@ int VTFTextureConverter::ProcessAllTrackedMaterials() {
     }
     
     if (processedCount > 0) {
-        Msg("[VTFConverter] Processed %d materials with PBR properties\n", processedCount);
-        Msg("[VTFConverter] Stats: %d with normals, %d with roughness textures\n", 
+        Msg("[LegacyTextureProcessor] Processed %d materials with PBR properties\n", processedCount);
+        Msg("[LegacyTextureProcessor] Stats: %d with normals, %d with roughness textures\n", 
             m_stats.materialsWithNormals, m_stats.materialsWithRoughness);
         
         m_needsUSDAUpdate = true;
@@ -1555,25 +1555,25 @@ int VTFTextureConverter::ProcessAllTrackedMaterials() {
         // Write the USDA mod files
         if (WriteModUSDA()) {
             m_needsUSDAUpdate = false;
-            Msg("[VTFConverter] IMPORTANT: Restart the game for material replacements to take effect.\n");
-            Msg("[VTFConverter] The mod is written to: rtx-remix/mods/gmod_topbr/\n");
+            Msg("[LegacyTextureProcessor] IMPORTANT: Restart the game for material replacements to take effect.\n");
+            Msg("[LegacyTextureProcessor] The mod is written to: rtx-remix/mods/gmod_topbr/\n");
         }
     }
     
     return processedCount;
 }
 
-bool VTFTextureConverter::IsMaterialProcessed(const std::string& materialName) const {
+bool TextureProcessor::IsMaterialProcessed(const std::string& materialName) const {
     std::lock_guard<std::mutex> lock(m_mutex);
     return m_processedMaterials.find(materialName) != m_processedMaterials.end();
 }
 
-VTFTextureConverter::Stats VTFTextureConverter::GetStats() const {
+TextureProcessor::Stats TextureProcessor::GetStats() const {
     std::lock_guard<std::mutex> lock(m_mutex);
     return m_stats;
 }
 
-void VTFTextureConverter::ClearCache() {
+void TextureProcessor::ClearCache() {
     std::lock_guard<std::mutex> lock(m_mutex);
     
     // Clear all tracking data for reprocessing.
@@ -1584,10 +1584,10 @@ void VTFTextureConverter::ClearCache() {
     m_needsUSDAUpdate = false;
     m_stats = {};
     
-    Msg("[VTFConverter] Cache cleared\n");
+    Msg("[LegacyTextureProcessor] Cache cleared\n");
 }
 
-bool VTFTextureConverter::ProcessSingleMaterial(const std::string& materialName) {
+bool TextureProcessor::ProcessSingleMaterial(const std::string& materialName) {
     std::lock_guard<std::mutex> lock(m_mutex);
     
     if (!m_initialized) {
@@ -1653,7 +1653,7 @@ bool VTFTextureConverter::ProcessSingleMaterial(const std::string& materialName)
     return success;
 }
 
-void VTFTextureConverter::OnNewMaterialDetected(const std::string& materialName, uint64_t textureHash) {
+void TextureProcessor::OnNewMaterialDetected(const std::string& materialName, uint64_t textureHash) {
     if (!m_initialized || !m_autoProcessing) {
         return;
     }
@@ -1676,12 +1676,12 @@ void VTFTextureConverter::OnNewMaterialDetected(const std::string& materialName,
     // The actual processing happens in ProcessAllTrackedMaterials or ProcessSingleMaterial
     
     if (m_debugOutput) {
-        Msg("[VTFConverter] New material detected for auto-processing: %s (hash 0x%llX)\n", 
+        Msg("[LegacyTextureProcessor] New material detected for auto-processing: %s (hash 0x%llX)\n", 
             materialName.c_str(), textureHash);
     }
 }
 
-void VTFTextureConverter::WriteUSDAIfNeeded() {
+void TextureProcessor::WriteUSDAIfNeeded() {
     std::lock_guard<std::mutex> lock(m_mutex);
     
     if (!m_needsUSDAUpdate || m_processedMaterialInfo.empty()) {
@@ -1690,7 +1690,7 @@ void VTFTextureConverter::WriteUSDAIfNeeded() {
     
     if (WriteModUSDA()) {
         m_needsUSDAUpdate = false;
-        Msg("[VTFConverter] USDA updated with %d materials. Restart game for changes to take effect.\n",
+        Msg("[LegacyTextureProcessor] USDA updated with %d materials. Restart game for changes to take effect.\n",
             (int)m_processedMaterialInfo.size());
     }
 }
@@ -1710,7 +1710,7 @@ static std::string GetRelativeTexturePath(const std::string& absolutePath, const
     return absolutePath;
 }
 
-bool VTFTextureConverter::WriteModUSDA() {
+bool TextureProcessor::WriteModUSDA() {
     if (m_outputDirectory.empty() || m_processedMaterialInfo.empty()) {
         return false;
     }
@@ -1730,7 +1730,7 @@ bool VTFTextureConverter::WriteModUSDA() {
     std::string modUsdaPath = modDir + "/mod.usda";
     std::ofstream modUsda(modUsdaPath);
     if (!modUsda.is_open()) {
-        Warning("[VTFConverter] Failed to create mod.usda at %s\n", modUsdaPath.c_str());
+        Warning("[LegacyTextureProcessor] Failed to create mod.usda at %s\n", modUsdaPath.c_str());
         return false;
     }
     
@@ -1754,7 +1754,7 @@ bool VTFTextureConverter::WriteModUSDA() {
     std::string materialsUsdaPath = modDir + "/materials.usda";
     std::ofstream materialsUsda(materialsUsdaPath);
     if (!materialsUsda.is_open()) {
-        Warning("[VTFConverter] Failed to create materials.usda at %s\n", materialsUsdaPath.c_str());
+        Warning("[LegacyTextureProcessor] Failed to create materials.usda at %s\n", materialsUsdaPath.c_str());
         return false;
     }
     
@@ -1825,7 +1825,7 @@ bool VTFTextureConverter::WriteModUSDA() {
     
     materialsUsda.close();
     
-    Msg("[VTFConverter] Wrote mod.usda and materials.usda with %d materials to %s\n", 
+    Msg("[LegacyTextureProcessor] Wrote mod.usda and materials.usda with %d materials to %s\n", 
         (int)m_processedMaterialInfo.size(), modDir.c_str());
     
     return true;
@@ -1837,9 +1837,9 @@ bool VTFTextureConverter::WriteModUSDA() {
 
 using namespace GarrysMod::Lua;
 
-LUA_FUNCTION(VTFConverter_Initialize) {
+LUA_FUNCTION(LegacyTextureProcessor_Initialize) {
     // If already initialized (by C++ during RemixAPI init), return success
-    if (VTFTextureConverter::Instance().IsInitialized()) {
+    if (TextureProcessor::Instance().IsInitialized()) {
         LUA->PushBool(true);
         return 1;
     }
@@ -1850,44 +1850,44 @@ LUA_FUNCTION(VTFConverter_Initialize) {
         return 1;
     }
     
-    bool result = VTFTextureConverter::Instance().Initialize(g_remix);
+    bool result = TextureProcessor::Instance().Initialize(g_remix);
     LUA->PushBool(result);
     return 1;
 }
 
-LUA_FUNCTION(VTFConverter_IsInitialized) {
-    LUA->PushBool(VTFTextureConverter::Instance().IsInitialized());
+LUA_FUNCTION(LegacyTextureProcessor_IsInitialized) {
+    LUA->PushBool(TextureProcessor::Instance().IsInitialized());
     return 1;
 }
 
-LUA_FUNCTION(VTFConverter_ProcessAllMaterials) {
-    int count = VTFTextureConverter::Instance().ProcessAllTrackedMaterials();
+LUA_FUNCTION(LegacyTextureProcessor_ProcessAllMaterials) {
+    int count = TextureProcessor::Instance().ProcessAllTrackedMaterials();
     LUA->PushNumber(count);
     return 1;
 }
 
-LUA_FUNCTION(VTFConverter_SetAutoProcessing) {
+LUA_FUNCTION(LegacyTextureProcessor_SetAutoProcessing) {
     if (!LUA->IsType(1, Type::Bool)) {
         LUA->ThrowError("Expected boolean for auto processing");
         return 0;
     }
     
-    VTFTextureConverter::Instance().SetAutoProcessing(LUA->GetBool(1));
+    TextureProcessor::Instance().SetAutoProcessing(LUA->GetBool(1));
     return 0;
 }
 
-LUA_FUNCTION(VTFConverter_SetDebugOutput) {
+LUA_FUNCTION(LegacyTextureProcessor_SetDebugOutput) {
     if (!LUA->IsType(1, Type::Bool)) {
         LUA->ThrowError("Expected boolean for debug output");
         return 0;
     }
     
-    VTFTextureConverter::Instance().SetDebugOutput(LUA->GetBool(1));
+    TextureProcessor::Instance().SetDebugOutput(LUA->GetBool(1));
     return 0;
 }
 
-LUA_FUNCTION(VTFConverter_GetStats) {
-    auto stats = VTFTextureConverter::Instance().GetStats();
+LUA_FUNCTION(LegacyTextureProcessor_GetStats) {
+    auto stats = TextureProcessor::Instance().GetStats();
     
     LUA->CreateTable();
     
@@ -1909,12 +1909,12 @@ LUA_FUNCTION(VTFConverter_GetStats) {
     return 1;
 }
 
-LUA_FUNCTION(VTFConverter_ClearCache) {
-    VTFTextureConverter::Instance().ClearCache();
+LUA_FUNCTION(LegacyTextureProcessor_ClearCache) {
+    TextureProcessor::Instance().ClearCache();
     return 0;
 }
 
-LUA_FUNCTION(VTFConverter_ConvertTexture) {
+LUA_FUNCTION(LegacyTextureProcessor_ConvertTexture) {
     if (!LUA->IsType(1, Type::String)) {
         LUA->ThrowError("Expected string for texture path");
         return 0;
@@ -1923,7 +1923,7 @@ LUA_FUNCTION(VTFConverter_ConvertTexture) {
     const char* path = LUA->GetString(1);
     bool isNormalMap = LUA->IsType(2, Type::Bool) ? LUA->GetBool(2) : false;
     
-    uint64_t hash = VTFTextureConverter::Instance().ConvertAndUploadTexture(path, isNormalMap);
+    uint64_t hash = TextureProcessor::Instance().ConvertAndUploadTexture(path, isNormalMap);
     
     // Return hash as string to preserve precision
     char hashStr[32];
@@ -1933,7 +1933,7 @@ LUA_FUNCTION(VTFConverter_ConvertTexture) {
     return 1;
 }
 
-LUA_FUNCTION(VTFConverter_InspectMaterial) {
+LUA_FUNCTION(LegacyTextureProcessor_InspectMaterial) {
     if (!LUA->IsType(1, Type::String)) {
         LUA->ThrowError("Expected string for material name");
         return 0;
@@ -1942,7 +1942,7 @@ LUA_FUNCTION(VTFConverter_InspectMaterial) {
     const char* matName = LUA->GetString(1);
     
     MaterialPBRProperties props;
-    if (!VTFTextureConverter::Instance().ExtractMaterialPBR(matName, props)) {
+    if (!TextureProcessor::Instance().ExtractMaterialPBR(matName, props)) {
         LUA->PushNil();
         return 1;
     }
@@ -1991,97 +1991,144 @@ LUA_FUNCTION(VTFConverter_InspectMaterial) {
     return 1;
 }
 
-LUA_FUNCTION(VTFConverter_SetOutputDirectory) {
+LUA_FUNCTION(LegacyTextureProcessor_SetOutputDirectory) {
     if (!LUA->IsType(1, Type::String)) {
         LUA->ThrowError("Expected string for output directory path");
         return 0;
     }
     
     const char* path = LUA->GetString(1);
-    VTFTextureConverter::Instance().SetOutputDirectory(path);
+    TextureProcessor::Instance().SetOutputDirectory(path);
     return 0;
 }
 
-LUA_FUNCTION(VTFConverter_GetOutputDirectory) {
-    LUA->PushString(VTFTextureConverter::Instance().GetOutputDirectory().c_str());
+LUA_FUNCTION(LegacyTextureProcessor_GetOutputDirectory) {
+    LUA->PushString(TextureProcessor::Instance().GetOutputDirectory().c_str());
     return 1;
 }
 
-LUA_FUNCTION(VTFConverter_ProcessSingleMaterial) {
+LUA_FUNCTION(LegacyTextureProcessor_ProcessSingleMaterial) {
     if (!LUA->IsType(1, Type::String)) {
         LUA->ThrowError("Expected string for material name");
         return 0;
     }
     
     const char* matName = LUA->GetString(1);
-    bool result = VTFTextureConverter::Instance().ProcessSingleMaterial(matName);
+    bool result = TextureProcessor::Instance().ProcessSingleMaterial(matName);
     LUA->PushBool(result);
     return 1;
 }
 
-LUA_FUNCTION(VTFConverter_WriteUSDAIfNeeded) {
-    VTFTextureConverter::Instance().WriteUSDAIfNeeded();
+LUA_FUNCTION(LegacyTextureProcessor_WriteUSDAIfNeeded) {
+    TextureProcessor::Instance().WriteUSDAIfNeeded();
     return 0;
 }
 
-LUA_FUNCTION(VTFConverter_NeedsUSDAUpdate) {
-    LUA->PushBool(VTFTextureConverter::Instance().NeedsUSDAUpdate());
+LUA_FUNCTION(LegacyTextureProcessor_NeedsUSDAUpdate) {
+    LUA->PushBool(TextureProcessor::Instance().NeedsUSDAUpdate());
     return 1;
 }
 
-void InitializeVTFConverterLuaBindings(GarrysMod::Lua::ILuaBase* LUA) {
-    // Create VTFConverter table
+void InitializeLegacyTextureProcessorLuaBindings(GarrysMod::Lua::ILuaBase* LUA) {
+    // Create LegacyTextureProcessor table
     LUA->PushSpecial(SPECIAL_GLOB);
     LUA->CreateTable();
     
-    LUA->PushCFunction(VTFConverter_Initialize);
+    LUA->PushCFunction(LegacyTextureProcessor_Initialize);
     LUA->SetField(-2, "Initialize");
     
-    LUA->PushCFunction(VTFConverter_IsInitialized);
+    LUA->PushCFunction(LegacyTextureProcessor_IsInitialized);
     LUA->SetField(-2, "IsInitialized");
     
-    LUA->PushCFunction(VTFConverter_ProcessAllMaterials);
+    LUA->PushCFunction(LegacyTextureProcessor_ProcessAllMaterials);
     LUA->SetField(-2, "ProcessAllMaterials");
     
-    LUA->PushCFunction(VTFConverter_ProcessSingleMaterial);
+    LUA->PushCFunction(LegacyTextureProcessor_ProcessSingleMaterial);
     LUA->SetField(-2, "ProcessSingleMaterial");
     
-    LUA->PushCFunction(VTFConverter_SetAutoProcessing);
+    LUA->PushCFunction(LegacyTextureProcessor_SetAutoProcessing);
     LUA->SetField(-2, "SetAutoProcessing");
     
-    LUA->PushCFunction(VTFConverter_SetDebugOutput);
+    LUA->PushCFunction(LegacyTextureProcessor_SetDebugOutput);
     LUA->SetField(-2, "SetDebugOutput");
     
-    LUA->PushCFunction(VTFConverter_GetStats);
+    LUA->PushCFunction(LegacyTextureProcessor_GetStats);
     LUA->SetField(-2, "GetStats");
     
-    LUA->PushCFunction(VTFConverter_ClearCache);
+    LUA->PushCFunction(LegacyTextureProcessor_ClearCache);
     LUA->SetField(-2, "ClearCache");
     
-    LUA->PushCFunction(VTFConverter_ConvertTexture);
+    LUA->PushCFunction(LegacyTextureProcessor_ConvertTexture);
     LUA->SetField(-2, "ConvertTexture");
     
-    LUA->PushCFunction(VTFConverter_InspectMaterial);
+    LUA->PushCFunction(LegacyTextureProcessor_InspectMaterial);
     LUA->SetField(-2, "InspectMaterial");
     
-    LUA->PushCFunction(VTFConverter_SetOutputDirectory);
+    LUA->PushCFunction(LegacyTextureProcessor_SetOutputDirectory);
     LUA->SetField(-2, "SetOutputDirectory");
     
-    LUA->PushCFunction(VTFConverter_GetOutputDirectory);
+    LUA->PushCFunction(LegacyTextureProcessor_GetOutputDirectory);
     LUA->SetField(-2, "GetOutputDirectory");
     
-    LUA->PushCFunction(VTFConverter_WriteUSDAIfNeeded);
+    LUA->PushCFunction(LegacyTextureProcessor_WriteUSDAIfNeeded);
     LUA->SetField(-2, "WriteUSDAIfNeeded");
     
-    LUA->PushCFunction(VTFConverter_NeedsUSDAUpdate);
+    LUA->PushCFunction(LegacyTextureProcessor_NeedsUSDAUpdate);
+    LUA->SetField(-2, "NeedsUSDAUpdate");
+    
+    LUA->SetField(-2, "LegacyTextureProcessor");
+    
+    // Also create an alias as VTFConverter for backwards compatibility
+    LUA->CreateTable();
+    
+    LUA->PushCFunction(LegacyTextureProcessor_Initialize);
+    LUA->SetField(-2, "Initialize");
+    
+    LUA->PushCFunction(LegacyTextureProcessor_IsInitialized);
+    LUA->SetField(-2, "IsInitialized");
+    
+    LUA->PushCFunction(LegacyTextureProcessor_ProcessAllMaterials);
+    LUA->SetField(-2, "ProcessAllMaterials");
+    
+    LUA->PushCFunction(LegacyTextureProcessor_ProcessSingleMaterial);
+    LUA->SetField(-2, "ProcessSingleMaterial");
+    
+    LUA->PushCFunction(LegacyTextureProcessor_SetAutoProcessing);
+    LUA->SetField(-2, "SetAutoProcessing");
+    
+    LUA->PushCFunction(LegacyTextureProcessor_SetDebugOutput);
+    LUA->SetField(-2, "SetDebugOutput");
+    
+    LUA->PushCFunction(LegacyTextureProcessor_GetStats);
+    LUA->SetField(-2, "GetStats");
+    
+    LUA->PushCFunction(LegacyTextureProcessor_ClearCache);
+    LUA->SetField(-2, "ClearCache");
+    
+    LUA->PushCFunction(LegacyTextureProcessor_ConvertTexture);
+    LUA->SetField(-2, "ConvertTexture");
+    
+    LUA->PushCFunction(LegacyTextureProcessor_InspectMaterial);
+    LUA->SetField(-2, "InspectMaterial");
+    
+    LUA->PushCFunction(LegacyTextureProcessor_SetOutputDirectory);
+    LUA->SetField(-2, "SetOutputDirectory");
+    
+    LUA->PushCFunction(LegacyTextureProcessor_GetOutputDirectory);
+    LUA->SetField(-2, "GetOutputDirectory");
+    
+    LUA->PushCFunction(LegacyTextureProcessor_WriteUSDAIfNeeded);
+    LUA->SetField(-2, "WriteUSDAIfNeeded");
+    
+    LUA->PushCFunction(LegacyTextureProcessor_NeedsUSDAUpdate);
     LUA->SetField(-2, "NeedsUSDAUpdate");
     
     LUA->SetField(-2, "VTFConverter");
     LUA->Pop();
     
-    Msg("[VTFConverter] Lua bindings initialized\n");
+    Msg("[LegacyTextureProcessor] Lua bindings initialized\n");
 }
 
-} // namespace VTFConverter
+} // namespace LegacyTextureProcessor
 
 #endif // _WIN64

@@ -1,7 +1,7 @@
 -- RTX Remix ToPBR Material Converter
 -- Automatically converts Source Engine material properties to PBR materials in RTX Remix.
 --
--- This module uses C++ VTFConverter to:
+-- This module uses C++ LegacyTextureProcessor module to:
 -- - Read VTF texture files from Source Engine filesystem
 -- - Extract pixel data and convert to Remix-compatible format
 -- - Upload textures via RemixAPI CreateTexture
@@ -56,41 +56,48 @@ local function DebugPrint(...)
 end
 
 --[[
-    Initialize the VTFConverter C++ module
+    Initialize the LegacyTextureProcessor C++ module
 ]]--
 function RTXToPBR.Initialize()
     if isInitialized then
         return true
     end
     
-    -- Check if VTFConverter is available (from C++ module)
-    if not VTFConverter then
-        MsgC(Color(255, 100, 100), "[RTX ToPBR] VTFConverter not available - C++ module not loaded\n")
+    -- Check if LegacyTextureProcessor is available (from C++ module)
+    -- Also check for backwards compatible VTFConverter alias
+    local processor = LegacyTextureProcessor or VTFConverter
+    if not processor then
+        MsgC(Color(255, 100, 100), "[RTX ToPBR] LegacyTextureProcessor not available - C++ module not loaded\n")
         return false
     end
     
     -- Check if already initialized by C++ (during RemixAPI init)
-    if VTFConverter.IsInitialized and VTFConverter.IsInitialized() then
+    if processor.IsInitialized and processor.IsInitialized() then
         isInitialized = true
-        MsgC(Color(100, 255, 100), "[RTX ToPBR] VTFConverter already initialized by C++\n")
+        MsgC(Color(100, 255, 100), "[RTX ToPBR] LegacyTextureProcessor already initialized by C++\n")
         -- Set debug output based on ConVar
-        VTFConverter.SetDebugOutput(GetConVarBoolSafe("rtx_topbr_debug", false))
+        processor.SetDebugOutput(GetConVarBoolSafe("rtx_topbr_debug", false))
         return true
     end
     
     -- Initialize the C++ converter (fallback if not already done)
-    local success = VTFConverter.Initialize()
+    local success = processor.Initialize()
     if not success then
-        MsgC(Color(255, 100, 100), "[RTX ToPBR] Failed to initialize VTFConverter\n")
+        MsgC(Color(255, 100, 100), "[RTX ToPBR] Failed to initialize LegacyTextureProcessor\n")
         return false
     end
     
     -- Set debug output based on ConVar
-    VTFConverter.SetDebugOutput(GetConVarBoolSafe("rtx_topbr_debug", false))
+    processor.SetDebugOutput(GetConVarBoolSafe("rtx_topbr_debug", false))
     
     isInitialized = true
     MsgC(Color(100, 255, 100), "[RTX ToPBR] Initialized successfully\n")
     return true
+end
+
+-- Helper to get the processor (LegacyTextureProcessor or VTFConverter)
+local function GetProcessor()
+    return LegacyTextureProcessor or VTFConverter
 end
 
 --[[
@@ -108,7 +115,8 @@ function RTXToPBR.ProcessAllMaterials()
     
     MsgC(Color(100, 200, 255), "[RTX ToPBR] Processing tracked materials...\n")
     
-    local count = VTFConverter.ProcessAllMaterials()
+    local processor = GetProcessor()
+    local count = processor.ProcessAllMaterials()
     
     if count > 0 then
         MsgC(Color(100, 255, 100), string.format("[RTX ToPBR] Processed %d materials with PBR properties\n", count))
@@ -132,7 +140,8 @@ function RTXToPBR.InspectMaterial(materialName)
         return nil
     end
     
-    local props = VTFConverter.InspectMaterial(materialName)
+    local processor = GetProcessor()
+    local props = processor.InspectMaterial(materialName)
     
     MsgC(Color(100, 200, 255), string.format("\n[RTX ToPBR] Material: %s\n", materialName))
     MsgC(Color(100, 200, 255), string.rep("=", 60) .. "\n")
@@ -194,7 +203,8 @@ end
     Get conversion statistics
 ]]--
 function RTXToPBR.GetStats()
-    if not VTFConverter then
+    local processor = GetProcessor()
+    if not processor then
         return {
             materialsProcessed = 0,
             texturesUploaded = 0,
@@ -204,15 +214,16 @@ function RTXToPBR.GetStats()
         }
     end
     
-    return VTFConverter.GetStats()
+    return processor.GetStats()
 end
 
 --[[
     Clear conversion cache
 ]]--
 function RTXToPBR.ClearCache()
-    if VTFConverter then
-        VTFConverter.ClearCache()
+    local processor = GetProcessor()
+    if processor then
+        processor.ClearCache()
     end
     MsgC(Color(100, 255, 100), "[RTX ToPBR] Cache cleared\n")
 end
@@ -221,8 +232,9 @@ end
     Set debug output
 ]]--
 function RTXToPBR.SetDebugOutput(enabled)
-    if VTFConverter then
-        VTFConverter.SetDebugOutput(enabled)
+    local processor = GetProcessor()
+    if processor then
+        processor.SetDebugOutput(enabled)
     end
 end
 
@@ -326,10 +338,10 @@ end)
 
 -- Startup message
 MsgC(Color(100, 255, 100), "[RTX ToPBR] Runtime PBR Converter loaded.\n")
-if VTFConverter then
-    MsgC(Color(200, 200, 200), "  C++ VTFConverter available - runtime conversion enabled.\n")
+if LegacyTextureProcessor or VTFConverter then
+    MsgC(Color(200, 200, 200), "  C++ LegacyTextureProcessor module available - runtime conversion enabled.\n")
 else
-    MsgC(Color(255, 200, 100), "  C++ VTFConverter not loaded - waiting for binary module.\n")
+    MsgC(Color(255, 200, 100), "  C++ LegacyTextureProcessor module not loaded - waiting for binary module.\n")
 end
 MsgC(Color(200, 200, 200), "  Use 'rtx_topbr_help' for usage information.\n")
 

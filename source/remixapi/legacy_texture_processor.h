@@ -8,6 +8,7 @@
 #include <unordered_set>
 #include <mutex>
 #include <cstdint>
+#include <functional>
 
 #include <remix/remix.h>
 #include <remix/remix_c.h>
@@ -22,7 +23,9 @@ class ILuaBase;
 }
 }
 
-namespace VTFConverter {
+// LegacyTextureProcessor namespace - handles conversion of Source Engine textures to RTX Remix PBR format
+// This system can be extended with custom processors for different texture/material types
+namespace LegacyTextureProcessor {
 
 // VTF file format structures
 #pragma pack(push, 1)
@@ -114,10 +117,10 @@ struct MaterialPBRProperties {
     uint64_t baseTextureHash;  // Hash from rendered texture
 };
 
-// Main converter class
-class VTFTextureConverter {
+// Main converter class - core VTF to DDS/PBR conversion
+class TextureProcessor {
 public:
-    static VTFTextureConverter& Instance();
+    static TextureProcessor& Instance();
     
     // Initialize with Remix interface
     bool Initialize(remix::Interface* remixInterface);
@@ -180,12 +183,12 @@ public:
     void WriteUSDAIfNeeded();
     
 private:
-    VTFTextureConverter();
-    ~VTFTextureConverter();
+    TextureProcessor();
+    ~TextureProcessor();
     
     // Prevent copying
-    VTFTextureConverter(const VTFTextureConverter&) = delete;
-    VTFTextureConverter& operator=(const VTFTextureConverter&) = delete;
+    TextureProcessor(const TextureProcessor&) = delete;
+    TextureProcessor& operator=(const TextureProcessor&) = delete;
     
     // Read a VTF file from the Source Engine filesystem
     bool ReadVTFFile(const std::string& path, std::vector<uint8_t>& outData);
@@ -279,8 +282,14 @@ private:
 };
 
 // Lua bindings initialization
-void InitializeVTFConverterLuaBindings(GarrysMod::Lua::ILuaBase* LUA);
+void InitializeLegacyTextureProcessorLuaBindings(GarrysMod::Lua::ILuaBase* LUA);
 
-} // namespace VTFConverter
+// Backwards compatibility alias
+using VTFTextureConverter = TextureProcessor;
+
+} // namespace LegacyTextureProcessor
+
+// Backwards compatibility - allow old VTFConverter namespace to still work
+namespace VTFConverter = LegacyTextureProcessor;
 
 #endif // _WIN64
