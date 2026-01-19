@@ -1913,10 +1913,11 @@ int TextureProcessor::ProcessAllTrackedMaterials() {
         }
         
         // Only process materials with PBR-relevant data
-        // Include materials with roughness texture sources
+        // Include materials with roughness texture sources OR envmap/envmaptint (which implies reflectivity)
         if (!props.hasBumpMap && !props.hasPhong && !props.hasEnvMapMask && 
             !props.normalMapAlphaEnvMapMask && !props.hasPhongExponentTexture && 
-            !props.hasBaseMapAlphaPhongMask) {
+            !props.hasBaseMapAlphaPhongMask && !props.hasBaseAlphaEnvMapMask &&
+            !props.hasEnvMap && !props.hasEnvMapTint) {
             m_processedMaterials.insert(matName);
             continue;
         }
@@ -2020,10 +2021,11 @@ bool TextureProcessor::ProcessSingleMaterial(const std::string& materialName) {
     }
     
     // Only process materials with PBR-relevant data
-    // Include materials with roughness texture sources
+    // Include materials with roughness texture sources OR envmap/envmaptint (which implies reflectivity)
     if (!props.hasBumpMap && !props.hasPhong && !props.hasEnvMapMask && 
         !props.normalMapAlphaEnvMapMask && !props.hasPhongExponentTexture &&
-        !props.hasBaseMapAlphaPhongMask) {
+        !props.hasBaseMapAlphaPhongMask && !props.hasBaseAlphaEnvMapMask &&
+        !props.hasEnvMap && !props.hasEnvMapTint) {
         m_processedMaterials.insert(materialName);
         return false;
     }
