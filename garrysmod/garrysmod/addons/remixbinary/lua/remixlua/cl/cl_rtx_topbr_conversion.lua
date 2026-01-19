@@ -123,8 +123,8 @@ local function SanitizeMaterialName(materialName)
     sanitized = string.gsub(sanitized, "\\", "/")   -- Normalize slashes
     sanitized = string.gsub(sanitized, "^/+", "")   -- Remove leading slashes
     
-    -- Ensure it doesn't escape materials folder
-    if string.find(sanitized, "^/") or string.find(sanitized, "^%.") then
+    -- Final safety check: reject if it starts with a dot (hidden files/dirs)
+    if string.find(sanitized, "^%.") then
         return nil
     end
     
