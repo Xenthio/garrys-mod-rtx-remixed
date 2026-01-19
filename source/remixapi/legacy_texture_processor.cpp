@@ -1393,6 +1393,9 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
         if (path.find("__") == 0) return false;  // Internal textures like __error
         // Filter out procedural textures
         if (path.find("env_cubemap") != std::string::npos) return false;
+        // Filter out undefined/invalid texture markers (with or without angle brackets)
+        if (path == "UNDEFINED" || path == "<UNDEFINED>") return false;
+        if (path.find("UNDEFINED") != std::string::npos) return false;
         // Filter out paths that are just numbers or very short
         if (path.length() < 3) return false;
         return true;
@@ -1479,12 +1482,14 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     pVar = pMaterial->FindVar("$envmap", &found, false);
     if (found && pVar) {
         const char* strVal = pVar->GetStringValue();
-        // Check if it has any value (env_cubemap, or a texture path)
-        if (strVal && strVal[0] != '\0') {
+        // Check if it has any value (env_cubemap, or a texture path) - but filter UNDEFINED
+        if (strVal && strVal[0] != '\0' && strcmp(strVal, "UNDEFINED") != 0) {
             outProps.hasEnvMap = true;
             if (m_debugOutput) {
                 Msg("[LegacyTextureProcessor] %s: $envmap = %s\n", materialName.c_str(), strVal);
             }
+        } else if (m_debugOutput && strVal && strcmp(strVal, "UNDEFINED") == 0) {
+            Msg("[LegacyTextureProcessor] %s: $envmap = UNDEFINED (ignored)\n", materialName.c_str());
         }
     }
     
@@ -1562,11 +1567,26 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     // Get $basealphaenvmapmask - use base texture alpha as envmap mask (common in LightmappedGeneric)
     pVar = pMaterial->FindVar("$basealphaenvmapmask", &found, false);
     if (found && pVar) {
-        outProps.hasBaseAlphaEnvMapMask = (pVar->GetIntValue() == 1);
-        if (m_debugOutput && outProps.hasBaseAlphaEnvMapMask) {
-            Msg("[LegacyTextureProcessor] %s: $basealphaenvmapmask = 1 (base texture: '%s')\n", 
-                materialName.c_str(), outProps.baseTexturePath.c_str());
+        // Try multiple ways to get the value - Source Engine can be inconsistent
+        int intVal = pVar->GetIntValue();
+        float floatVal = pVar->GetFloatValue();
+        const char* strVal = pVar->GetStringValue();
+        
+        // Accept any truthy value
+        bool isTruthy = (intVal != 0) || (floatVal != 0.0f);
+        if (!isTruthy && strVal && strVal[0] != '\0') {
+            // Try parsing string - could be "1", " 1", "1.0", etc.
+            isTruthy = (atoi(strVal) != 0) || (atof(strVal) != 0.0);
         }
+        
+        outProps.hasBaseAlphaEnvMapMask = isTruthy;
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: $basealphaenvmapmask found (int=%d, float=%.2f, str='%s') -> %d\n", 
+                materialName.c_str(), intVal, floatVal, strVal ? strVal : "null", 
+                outProps.hasBaseAlphaEnvMapMask ? 1 : 0);
+        }
+    } else if (m_debugOutput) {
+        Msg("[LegacyTextureProcessor] %s: $basealphaenvmapmask NOT FOUND\n", materialName.c_str());
     }
     
     // Get $phongfresnelranges "[x y z]"
