@@ -1406,6 +1406,8 @@ struct VMTProperties {
     std::string surfaceProp;
     bool hasEnvMap;
     std::string envMap;
+    std::string refractTintTexture;  // $refracttinttexture - color texture for Refract shader
+    bool hasRefractTintTexture;
 };
 
 // Parse a VMT file and extract properties that FindVar doesn't reliably expose
@@ -1418,6 +1420,7 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
     outProps.hasTranslucent = false;
     outProps.translucent = false;
     outProps.hasEnvMap = false;
+    outProps.hasRefractTintTexture = false;
     
     // Build VMT path
     std::string vmtPath = "materials/" + materialName;
@@ -1537,10 +1540,18 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
         outProps.envMap = findValue("$envmap");
     }
     
+    // Check for $refracttinttexture - the actual color texture for Refract shader
+    size_t refractTintPos = contentLower.find("$refracttinttexture");
+    if (refractTintPos != std::string::npos) {
+        outProps.hasRefractTintTexture = true;
+        outProps.refractTintTexture = findValue("$refracttinttexture");
+    }
+    
     if (debugOutput && (outProps.hasRefractAmount || !outProps.shaderName.empty())) {
-        Msg("[LegacyTextureProcessor] VMT parse: shader='%s', $refractamount=%d (%.2f), $translucent=%d (%d), $surfaceprop='%s', $envmap=%d\n",
+        Msg("[LegacyTextureProcessor] VMT parse: shader='%s', $refractamount=%d (%.2f), $translucent=%d (%d), $surfaceprop='%s', $envmap=%d, $refracttinttexture='%s'\n",
             outProps.shaderName.c_str(), outProps.hasRefractAmount, outProps.refractAmount,
-            outProps.hasTranslucent, outProps.translucent, outProps.surfaceProp.c_str(), outProps.hasEnvMap);
+            outProps.hasTranslucent, outProps.translucent, outProps.surfaceProp.c_str(), outProps.hasEnvMap,
+            outProps.refractTintTexture.c_str());
     }
     
     return true;
@@ -1590,8 +1601,10 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     
     // Glass properties
     outProps.isGlass = false;
+    outProps.isRefractShader = false;
     outProps.shaderName = "";
     outProps.surfaceProp = "";
+    outProps.refractTintTexturePath = "";
     
     // Get the shader name
     const char* shaderName = pMaterial->GetShaderName();
@@ -1997,6 +2010,11 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
             }
             vmtHasRefractAmount = vmtProps.hasRefractAmount;
             
+            // Get $refracttinttexture if present
+            if (vmtProps.hasRefractTintTexture && !vmtProps.refractTintTexture.empty()) {
+                outProps.refractTintTexturePath = vmtProps.refractTintTexture;
+            }
+            
             // Also pick up surfaceprop from VMT if not found via FindVar
             if (outProps.surfaceProp.empty() && !vmtProps.surfaceProp.empty()) {
                 outProps.surfaceProp = vmtProps.surfaceProp;
@@ -2014,6 +2032,11 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
             if (!outProps.hasEnvMap && vmtProps.hasEnvMap && !vmtProps.envMap.empty()) {
                 outProps.hasEnvMap = true;
             }
+        }
+        
+        // Track if this is a Refract shader (important for transmittance texture handling)
+        if (isRefractShader || vmtIsRefract) {
+            outProps.isRefractShader = true;
         }
         
         // Determine if this is a glass material
@@ -2080,6 +2103,7 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
     matInfo.roughnessConstant = props.roughness;
     matInfo.metallicConstant = props.metallic;
     matInfo.isGlass = props.isGlass;
+    matInfo.isRefractShader = props.isRefractShader;
     matInfo.ior = props.isGlass ? 1.5f : 1.0f;  // Default glass IOR is 1.5
     
     int skippedCount = 0;
@@ -2226,57 +2250,79 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
         }
     }
     
-    // For glass materials with a base texture, write it for use as transmittance_texture
-    // This gives colored/tinted glass (like bottles) their texture instead of being clear
-    if (props.isGlass && !props.baseTexturePath.empty()) {
-        uint64_t baseTexHash = GenerateTextureHash(props.baseTexturePath + "_base", 0, 0);
-        std::string expectedOutputPath = GenerateOutputPath(baseTexHash, "_base");
+    // For glass materials, handle transmittance texture
+    // For Refract shaders: ONLY use $refracttinttexture (don't use baseTexture - it might be set to normalmap by fixer)
+    // For non-Refract glass (surfaceprop=glass): use baseTexture as transmittance
+    if (props.isGlass) {
+        std::string transmittanceTexPath;
+        std::string transmittanceSuffix;
         
-        if (FileExists(expectedOutputPath)) {
-            matInfo.baseTexturePath = expectedOutputPath;
-            m_writtenTexturePaths[baseTexHash] = expectedOutputPath;
-            skippedCount++;
-            
+        if (props.isRefractShader && !props.refractTintTexturePath.empty()) {
+            // Refract shader: use $refracttinttexture
+            transmittanceTexPath = props.refractTintTexturePath;
+            transmittanceSuffix = "_refracttint";
             if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] Skipping existing base texture for glass: %s\n", expectedOutputPath.c_str());
+                Msg("[LegacyTextureProcessor] Using $refracttinttexture for Refract glass transmittance: %s\n", transmittanceTexPath.c_str());
             }
-        } else {
-            std::string vtfPath = props.baseTexturePath;
-            std::vector<uint8_t> fileData;
+        } else if (!props.isRefractShader && !props.baseTexturePath.empty()) {
+            // Non-Refract glass (like bottles): use baseTexture
+            transmittanceTexPath = props.baseTexturePath;
+            transmittanceSuffix = "_base";
+            if (m_debugOutput) {
+                Msg("[LegacyTextureProcessor] Using $basetexture for glass transmittance: %s\n", transmittanceTexPath.c_str());
+            }
+        }
+        // Note: If Refract shader has no $refracttinttexture, glass will be clear (no transmittance texture)
+        
+        if (!transmittanceTexPath.empty()) {
+            uint64_t texHash = GenerateTextureHash(transmittanceTexPath + transmittanceSuffix, 0, 0);
+            std::string expectedOutputPath = GenerateOutputPath(texHash, transmittanceSuffix.c_str());
             
-            if (ReadVTFFile(vtfPath, fileData)) {
-                VTFFileHeader header;
-                if (ParseVTFHeader(fileData, header)) {
-                    ConvertedTexture baseTex;
-                    baseTex.isNormalMap = false;
-                    if (ExtractVTFPixelData(fileData, header, baseTex, false)) {
-                        baseTex.hash = GenerateTextureHash(props.baseTexturePath + "_base", baseTex.width, baseTex.height);
-                        std::string outputPath = GenerateOutputPath(baseTex.hash, "_base");
-                        
-                        if (FileExists(outputPath)) {
-                            matInfo.baseTexturePath = outputPath;
-                            m_writtenTexturePaths[baseTex.hash] = outputPath;
-                            skippedCount++;
+            if (FileExists(expectedOutputPath)) {
+                matInfo.transmittancePath = expectedOutputPath;
+                m_writtenTexturePaths[texHash] = expectedOutputPath;
+                skippedCount++;
+                
+                if (m_debugOutput) {
+                    Msg("[LegacyTextureProcessor] Skipping existing transmittance texture for glass: %s\n", expectedOutputPath.c_str());
+                }
+            } else {
+                std::vector<uint8_t> fileData;
+                
+                if (ReadVTFFile(transmittanceTexPath, fileData)) {
+                    VTFFileHeader header;
+                    if (ParseVTFHeader(fileData, header)) {
+                        ConvertedTexture tex;
+                        tex.isNormalMap = false;
+                        if (ExtractVTFPixelData(fileData, header, tex, false)) {
+                            tex.hash = GenerateTextureHash(transmittanceTexPath + transmittanceSuffix, tex.width, tex.height);
+                            std::string outputPath = GenerateOutputPath(tex.hash, transmittanceSuffix.c_str());
                             
-                            if (m_debugOutput) {
-                                Msg("[LegacyTextureProcessor] Skipping existing base texture: %s\n", outputPath.c_str());
-                            }
-                        } else if (WriteTextureToDDS(baseTex, outputPath)) {
-                            matInfo.baseTexturePath = outputPath;
-                            m_writtenTexturePaths[baseTex.hash] = outputPath;
-                            
-                            if (m_debugOutput) {
-                                Msg("[LegacyTextureProcessor] Wrote base texture for glass: %s\n", outputPath.c_str());
+                            if (FileExists(outputPath)) {
+                                matInfo.transmittancePath = outputPath;
+                                m_writtenTexturePaths[tex.hash] = outputPath;
+                                skippedCount++;
+                                
+                                if (m_debugOutput) {
+                                    Msg("[LegacyTextureProcessor] Skipping existing transmittance texture: %s\n", outputPath.c_str());
+                                }
+                            } else if (WriteTextureToDDS(tex, outputPath)) {
+                                matInfo.transmittancePath = outputPath;
+                                m_writtenTexturePaths[tex.hash] = outputPath;
+                                
+                                if (m_debugOutput) {
+                                    Msg("[LegacyTextureProcessor] Wrote transmittance texture for glass: %s\n", outputPath.c_str());
+                                }
+                            } else if (m_debugOutput) {
+                                Msg("[LegacyTextureProcessor] Failed to write transmittance DDS for glass: %s\n", transmittanceTexPath.c_str());
                             }
                         } else if (m_debugOutput) {
-                            Msg("[LegacyTextureProcessor] Failed to write base DDS for glass: %s\n", props.baseTexturePath.c_str());
+                            Msg("[LegacyTextureProcessor] Failed to extract transmittance texture data for glass: %s\n", transmittanceTexPath.c_str());
                         }
-                    } else if (m_debugOutput) {
-                        Msg("[LegacyTextureProcessor] Failed to extract base texture data for glass: %s\n", props.baseTexturePath.c_str());
                     }
+                } else if (m_debugOutput) {
+                    Msg("[LegacyTextureProcessor] Failed to read VTF file for glass transmittance texture: %s\n", transmittanceTexPath.c_str());
                 }
-            } else if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] Failed to read VTF file for glass base texture: %s\n", props.baseTexturePath.c_str());
             }
         }
     }
@@ -2682,15 +2728,20 @@ bool TextureProcessor::WriteModUSDA() {
                 materialsUsda << "                float inputs:reflection_roughness_constant = " << glassRoughness << "\n";
             }
             
-            // If we have a base texture, use it as the transmittance texture to color/tint the glass
-            // This is important for things like colored glass bottles
-            if (!info.baseTexturePath.empty()) {
-                std::string relPath = GetRelativeTexturePath(info.baseTexturePath, m_outputDirectory);
+            // Transmittance texture for colored/tinted glass
+            // For Refract shaders: use $refracttinttexture if present
+            // For non-Refract glass (like bottles): use base texture
+            // Note: We DON'T use baseTexture for Refract because the Lua fixer may have set it to normalmap
+            if (!info.transmittancePath.empty()) {
+                std::string relPath = GetRelativeTexturePath(info.transmittancePath, m_outputDirectory);
                 materialsUsda << "                asset inputs:transmittance_texture = @" << relPath << "@ (\n";
                 materialsUsda << "                    colorSpace = \"srgb\"\n";
                 materialsUsda << "                )\n";
-                // Use diffuse layer to show the texture on the glass
-                materialsUsda << "                bool inputs:use_diffuse_layer = 1\n";
+                // Only use diffuse layer for non-Refract glass (like bottles that need to show their texture)
+                // Refract glass should be purely transparent, not show a solid texture layer
+                if (!info.isRefractShader) {
+                    materialsUsda << "                bool inputs:use_diffuse_layer = 1\n";
+                }
             }
             
             // Add normal map support for glass (for frosted/textured glass)

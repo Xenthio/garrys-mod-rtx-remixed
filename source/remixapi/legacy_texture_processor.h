@@ -131,8 +131,10 @@ struct MaterialPBRProperties {
     
     // Glass material detection
     bool isGlass;                   // Material detected as glass (translucent + glass surfaceprop or Refract shader)
+    bool isRefractShader;           // Material uses Refract shader (important: baseTexture may be set to normalmap by fixer)
     std::string shaderName;         // The shader name (VertexLitGeneric, LightmappedGeneric, Refract, etc.)
     std::string surfaceProp;        // $surfaceprop value
+    std::string refractTintTexturePath;  // $refracttinttexture - color texture for Refract shader
 };
 
 // Main converter class - core VTF to DDS/PBR conversion
@@ -289,10 +291,12 @@ private:
         std::string normalPath;
         std::string roughnessPath;
         std::string metallicPath;
-        std::string baseTexturePath;  // For glass: used as transmittance_texture to color the glass
+        std::string baseTexturePath;  // For non-Refract glass: used as transmittance_texture to color the glass
+        std::string transmittancePath;  // For Refract glass: $refracttinttexture converted to DDS
         float roughnessConstant;
         float metallicConstant;
         bool isGlass;               // Whether this material should use the translucent glass shader
+        bool isRefractShader;       // Whether this is a Refract shader (don't use baseTexture for transmittance)
         float ior;                  // Index of Refraction (for glass, default 1.5)
     };
     std::unordered_map<uint64_t, ProcessedMaterialInfo> m_processedMaterialInfo;
