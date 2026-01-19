@@ -248,7 +248,7 @@ std::string VTFTextureConverter::GenerateOutputPath(uint64_t hash, const std::st
 // Calculate number of mipmap levels for a given dimension
 static uint32_t CalculateMipLevels(uint32_t width, uint32_t height) {
     uint32_t levels = 1;
-    uint32_t size = std::max(width, height);
+    uint32_t size = max(width, height);
     while (size > 1) {
         size /= 2;
         levels++;
@@ -322,8 +322,8 @@ bool VTFTextureConverter::WriteTextureToDDS(const ConvertedTexture& texture, con
     std::vector<uint8_t> currentMip = bgraData;
     
     for (uint32_t mip = 1; mip < mipCount; mip++) {
-        uint32_t newWidth = std::max(1u, mipWidth / 2);
-        uint32_t newHeight = std::max(1u, mipHeight / 2);
+        uint32_t newWidth = max(1u, mipWidth / 2);
+        uint32_t newHeight = max(1u, mipHeight / 2);
         
         std::vector<uint8_t> newMip(newWidth * newHeight * 4);
         
