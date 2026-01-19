@@ -4,6 +4,10 @@
 - Material fixes
     - Fixes some broken UI/game materials and removes detail textures
     - Change all water textures to a single one to simplify replacements in Remix
+    - **ToPBR Conversion**: Automatically forwards Source Engine material properties to RTX Remix:
+        - Normal maps (`$bumpmap`) forwarded as PBR normal textures
+        - Phong exponent converted to roughness values
+        - Envmap masks can be preserved for roughness/metallic approximation
 - Model fixes
     - Fixes some props having unstable hashes in RTX Remix so they can be replaced in the Remix Toolkit
     - Allows most HL2 RTX mesh replacements to load correctly

@@ -9,6 +9,8 @@ end
 local enable_addon = CreateConVar("rtx_rdt_enabled", "1", FCVAR_ARCHIVE, "Enable/disable the Detail Texture Remover addon")
 local apply_delay = CreateConVar("rtx_rdt_delay", "0", FCVAR_ARCHIVE, "Delay before initial removal (seconds)")
 local debug_mode = CreateConVar("rtx_rdt_debug", "0", FCVAR_ARCHIVE, "Enable debugging output")
+local preserve_envmapmask = CreateConVar("rtx_rdt_preserve_envmapmask", "0", FCVAR_ARCHIVE, "Preserve $envmapmask for ToPBR conversion (1 = preserve, 0 = remove)")
+local preserve_bumpmap = CreateConVar("rtx_rdt_preserve_bumpmap", "1", FCVAR_ARCHIVE, "Preserve $bumpmap for ToPBR conversion (1 = preserve, 0 = remove)")
 
 -- The replacement texture - using the error texture
 local replacementTexture = "rtx/ignore"
@@ -61,15 +63,21 @@ local function ProcessMaterial(matName)
         modified = true
     end
     
-    -- Check for $envmapmask
+    -- Check for $envmapmask (optionally preserve for ToPBR conversion)
     local envmapmask = mat:GetString("$envmapmask")
     if envmapmask and envmapmask ~= "" then
-        if runningFromCommand or debug_mode:GetBool() then
+        if not preserve_envmapmask:GetBool() then
+            if runningFromCommand or debug_mode:GetBool() then
+            end
+            
+            -- Replace the envmapmask with our error texture
+            mat:SetTexture("$envmapmask", replacementTexture)
+            modified = true
+        else
+            if runningFromCommand or debug_mode:GetBool() then
+                DebugPrint("Preserving $envmapmask for ToPBR: " .. matName)
+            end
         end
-        
-        -- Replace the envmapmask with our error texture
-        mat:SetTexture("$envmapmask", replacementTexture)
-        modified = true
     end
     
     -- Check for $envmap
@@ -287,10 +295,12 @@ local function ForceReapply()
                 -- Reapply our replacements
                 mat:SetTexture("$detail", replacementTexture)
                 
-                -- Check for $envmapmask
-                local envmapmask = mat:GetString("$envmapmask")
-                if envmapmask and envmapmask ~= "" then
-                    mat:SetTexture("$envmapmask", replacementTexture)
+                -- Check for $envmapmask (respect preserve setting)
+                if not preserve_envmapmask:GetBool() then
+                    local envmapmask = mat:GetString("$envmapmask")
+                    if envmapmask and envmapmask ~= "" then
+                        mat:SetTexture("$envmapmask", replacementTexture)
+                    end
                 end
                 
                 -- Check for $envmap
