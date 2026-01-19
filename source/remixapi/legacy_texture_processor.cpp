@@ -1260,20 +1260,24 @@ float TextureProcessor::PhongToRoughness(float phongExponent) {
     if (phongExponent <= 0) return 1.0f;
     
     // Clamp to reasonable range
-    phongExponent = std::clamp(phongExponent, 1.0f, 256.0f);
+    phongExponent = std::clamp(phongExponent, 1.0f, 512.0f);
     
-    // Source Engine phong materials have specular highlights, but they're not mirrors.
-    // PBR roughness 0.35-0.40 is "smooth plastic" territory - appropriate for game assets.
+    // Standard formula to convert Phong exponent to PBR roughness:
+    // roughness = sqrt(2 / (phongExponent + 2))
     // 
-    // phongExponent 1 -> roughness ~0.75 (fairly broad highlight)
-    // phongExponent 25 -> roughness ~0.55 (moderate)
-    // phongExponent 50 -> roughness ~0.45 (fairly smooth)
-    // phongExponent 150 -> roughness ~0.35 (smooth plastic)
-    // phongExponent 256 -> roughness ~0.30 (very smooth, but not mirror)
+    // This is derived from the relationship between Phong specular and PBR GGX:
+    // phongExponent 1   -> roughness ~0.82 (very broad highlight)
+    // phongExponent 10  -> roughness ~0.41 (moderate)
+    // phongExponent 25  -> roughness ~0.27 (fairly smooth)
+    // phongExponent 50  -> roughness ~0.19 (smooth, like glossy plastic)
+    // phongExponent 150 -> roughness ~0.11 (very smooth, like polished metal)
+    // phongExponent 256 -> roughness ~0.09 (highly glossy)
     
-    float roughness = 0.8f - (std::log(phongExponent) / std::log(300.0f)) * 0.5f;
+    float roughness = sqrtf(2.0f / (phongExponent + 2.0f));
     
-    return std::clamp(roughness, 0.30f, 0.85f);
+    // Clamp minimum to avoid perfectly mirror-like reflections (which can look broken)
+    // and maximum to ensure some specular response for phong materials
+    return std::clamp(roughness, 0.05f, 0.90f);
 }
 
 float TextureProcessor::CalculateRoughness(const MaterialPBRProperties& props) {
