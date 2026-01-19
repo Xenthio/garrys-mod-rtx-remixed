@@ -193,6 +193,15 @@ function RTXToPBR.InspectMaterial(materialName)
     if props.isTranslucent then
         MsgC(Color(255, 200, 100), "  ! Translucent material\n")
     end
+    if props.isGlass then
+        MsgC(Color(100, 200, 255), "  ✓ GLASS MATERIAL (will use RTX Translucent shader with IOR 1.5)\n")
+    end
+    if props.shaderName and props.shaderName ~= "" then
+        MsgC(Color(150, 150, 150), string.format("  Shader: %s\n", props.shaderName))
+    end
+    if props.surfaceProp and props.surfaceProp ~= "" then
+        MsgC(Color(150, 150, 150), string.format("  Surface Prop: %s\n", props.surfaceProp))
+    end
     
     MsgC(Color(100, 200, 255), string.rep("=", 60) .. "\n\n")
     

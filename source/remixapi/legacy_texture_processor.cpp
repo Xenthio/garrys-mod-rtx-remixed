@@ -1432,6 +1432,17 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     outProps.baseMapAlphaPhongMask = 0.0f;
     outProps.hasBaseAlphaEnvMapMask = false;  // $basealphaenvmapmask for LightmappedGeneric
     
+    // Glass properties
+    outProps.isGlass = false;
+    outProps.shaderName = "";
+    outProps.surfaceProp = "";
+    
+    // Get the shader name
+    const char* shaderName = pMaterial->GetShaderName();
+    if (shaderName && shaderName[0] != '\0') {
+        outProps.shaderName = shaderName;
+    }
+    
     // Helper lambda to check if a texture path is valid (not a placeholder/internal texture)
     auto IsValidTexturePath = [](const std::string& path) -> bool {
         if (path.empty()) return false;
@@ -1755,14 +1766,59 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
         outProps.isTranslucent = (pVar->GetIntValue() == 1);
     }
     
+    // Get $surfaceprop
+    pVar = pMaterial->FindVar("$surfaceprop", &found, false);
+    if (found && pVar) {
+        const char* surfaceVal = pVar->GetStringValue();
+        if (surfaceVal && surfaceVal[0] != '\0') {
+            outProps.surfaceProp = surfaceVal;
+        }
+    }
+    
+    // Glass detection: Material is considered glass if:
+    // 1. Shader is "Refract" (always glass), OR
+    // 2. $translucent = 1 AND ($surfaceprop = "glass" OR material has envmap + reflective properties)
+    {
+        // Check if shader name indicates glass/refraction
+        bool isRefractShader = false;
+        if (!outProps.shaderName.empty()) {
+            std::string shaderLower = outProps.shaderName;
+            std::transform(shaderLower.begin(), shaderLower.end(), shaderLower.begin(), ::tolower);
+            isRefractShader = (shaderLower.find("refract") != std::string::npos);
+        }
+        
+        // Check if surfaceprop is glass
+        bool isSurfaceGlass = false;
+        if (!outProps.surfaceProp.empty()) {
+            std::string surfaceLower = outProps.surfaceProp;
+            std::transform(surfaceLower.begin(), surfaceLower.end(), surfaceLower.begin(), ::tolower);
+            isSurfaceGlass = (surfaceLower == "glass" || surfaceLower.find("glass") != std::string::npos);
+        }
+        
+        // Determine if this is a glass material
+        if (isRefractShader) {
+            outProps.isGlass = true;  // Refract shader is always glass
+        } else if (outProps.isTranslucent && isSurfaceGlass) {
+            outProps.isGlass = true;  // Translucent + glass surfaceprop = glass
+        } else if (outProps.isTranslucent && outProps.hasEnvMap) {
+            // Translucent + envmap is likely glass (like the phoenix_storms glass example)
+            outProps.isGlass = true;
+        }
+        
+        if (m_debugOutput && outProps.isGlass) {
+            Msg("[LegacyTextureProcessor] %s: DETECTED AS GLASS (shader=%s, translucent=%d, surfaceprop=%s, hasEnvMap=%d)\n",
+                materialName.c_str(), outProps.shaderName.c_str(), outProps.isTranslucent, outProps.surfaceProp.c_str(), outProps.hasEnvMap);
+        }
+    }
+    
     // Calculate PBR values with enhanced logic
     outProps.roughness = CalculateRoughness(outProps);
     outProps.metallic = EstimateMetallic(outProps);
     
     if (m_debugOutput) {
-        Msg("[LegacyTextureProcessor] %s extracted: hasPhong=%d, phongExp=%.0f, hasBump=%d, hasEnvMask=%d, hasPhongExpTex=%d, hasEnvMapTint=%d, hasEnvMap=%d, normMapAlpha=%d\n",
+        Msg("[LegacyTextureProcessor] %s extracted: hasPhong=%d, phongExp=%.0f, hasBump=%d, hasEnvMask=%d, hasPhongExpTex=%d, hasEnvMapTint=%d, hasEnvMap=%d, normMapAlpha=%d, isGlass=%d\n",
             materialName.c_str(), outProps.hasPhong, outProps.phongExponent, outProps.hasBumpMap, 
-            outProps.hasEnvMapMask, outProps.hasPhongExponentTexture, outProps.hasEnvMapTint, outProps.hasEnvMap, outProps.normalMapAlphaEnvMapMask);
+            outProps.hasEnvMapMask, outProps.hasPhongExponentTexture, outProps.hasEnvMapTint, outProps.hasEnvMap, outProps.normalMapAlphaEnvMapMask, outProps.isGlass);
     }
     
     return true;
@@ -1796,6 +1852,8 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
     matInfo.textureHash = textureHash;
     matInfo.roughnessConstant = props.roughness;
     matInfo.metallicConstant = props.metallic;
+    matInfo.isGlass = props.isGlass;
+    matInfo.ior = props.isGlass ? 1.5f : 1.0f;  // Default glass IOR is 1.5
     
     int skippedCount = 0;
     
@@ -1992,7 +2050,7 @@ int TextureProcessor::ProcessAllTrackedMaterials() {
         if (!props.hasBumpMap && !props.hasPhong && !props.hasEnvMapMask && 
             !props.normalMapAlphaEnvMapMask && !props.hasPhongExponentTexture && 
             !props.hasBaseMapAlphaPhongMask && !props.hasBaseAlphaEnvMapMask &&
-            !props.hasEnvMap && !props.hasEnvMapTint) {
+            !props.hasEnvMap && !props.hasEnvMapTint && !props.isGlass) {
             m_processedMaterials.insert(matName);
             continue;
         }
@@ -2097,10 +2155,11 @@ bool TextureProcessor::ProcessSingleMaterial(const std::string& materialName) {
     
     // Only process materials with PBR-relevant data
     // Include materials with roughness texture sources OR envmap/envmaptint (which implies reflectivity)
+    // OR glass materials (which need special shader)
     if (!props.hasBumpMap && !props.hasPhong && !props.hasEnvMapMask && 
         !props.normalMapAlphaEnvMapMask && !props.hasPhongExponentTexture &&
         !props.hasBaseMapAlphaPhongMask && !props.hasBaseAlphaEnvMapMask &&
-        !props.hasEnvMap && !props.hasEnvMapTint) {
+        !props.hasEnvMap && !props.hasEnvMapTint && !props.isGlass) {
         m_processedMaterials.insert(materialName);
         return false;
     }
@@ -2318,36 +2377,49 @@ bool TextureProcessor::WriteModUSDA() {
         materialsUsda << "            over \"Shader\"\n";
         materialsUsda << "            {\n";
         
-        // Source asset - use AperturePBR_Opaque for standard materials
-        materialsUsda << "                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@\n";
-        
-        // Normal map encoding - octahedral for 2-channel textures
-        if (!info.normalPath.empty()) {
-            std::string relPath = GetRelativeTexturePath(info.normalPath, m_outputDirectory);
-            materialsUsda << "                int inputs:encoding = 0\n";  // 0 = octahedral
-            materialsUsda << "                asset inputs:normalmap_texture = @" << relPath << "@ (\n";
-            materialsUsda << "                    colorSpace = \"raw\"\n";
-            materialsUsda << "                )\n";
-        }
-        
-        // Roughness
-        if (!info.roughnessPath.empty()) {
-            std::string relPath = GetRelativeTexturePath(info.roughnessPath, m_outputDirectory);
-            materialsUsda << "                asset inputs:reflectionroughness_texture = @" << relPath << "@ (\n";
-            materialsUsda << "                    colorSpace = \"raw\"\n";
-            materialsUsda << "                )\n";
+        if (info.isGlass) {
+            // Glass materials use AperturePBR_Translucent shader
+            materialsUsda << "                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@\n";
+            materialsUsda << "                uniform token info:mdl:sourceAsset:subIdentifier = \"AperturePBR_Translucent\"\n";
+            
+            // Glass-specific properties
+            materialsUsda << "                float inputs:ior_constant = " << info.ior << "\n";
+            materialsUsda << "                bool inputs:thin_walled = 1\n";  // Most game glass is thin-walled
+            
+            // Low roughness for clear glass
+            materialsUsda << "                float inputs:reflection_roughness_constant = 0.05\n";
         } else {
-            materialsUsda << "                float inputs:reflection_roughness_constant = " << info.roughnessConstant << "\n";
-        }
+            // Standard opaque materials use AperturePBR_Opaque shader
+            materialsUsda << "                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@\n";
         
-        // Metallic
-        if (!info.metallicPath.empty()) {
-            std::string relPath = GetRelativeTexturePath(info.metallicPath, m_outputDirectory);
-            materialsUsda << "                asset inputs:metallic_texture = @" << relPath << "@ (\n";
-            materialsUsda << "                    colorSpace = \"raw\"\n";
-            materialsUsda << "                )\n";
-        } else {
-            materialsUsda << "                float inputs:metallic_constant = " << info.metallicConstant << "\n";
+            // Normal map encoding - octahedral for 2-channel textures
+            if (!info.normalPath.empty()) {
+                std::string relPath = GetRelativeTexturePath(info.normalPath, m_outputDirectory);
+                materialsUsda << "                int inputs:encoding = 0\n";  // 0 = octahedral
+                materialsUsda << "                asset inputs:normalmap_texture = @" << relPath << "@ (\n";
+                materialsUsda << "                    colorSpace = \"raw\"\n";
+                materialsUsda << "                )\n";
+            }
+            
+            // Roughness
+            if (!info.roughnessPath.empty()) {
+                std::string relPath = GetRelativeTexturePath(info.roughnessPath, m_outputDirectory);
+                materialsUsda << "                asset inputs:reflectionroughness_texture = @" << relPath << "@ (\n";
+                materialsUsda << "                    colorSpace = \"raw\"\n";
+                materialsUsda << "                )\n";
+            } else {
+                materialsUsda << "                float inputs:reflection_roughness_constant = " << info.roughnessConstant << "\n";
+            }
+            
+            // Metallic
+            if (!info.metallicPath.empty()) {
+                std::string relPath = GetRelativeTexturePath(info.metallicPath, m_outputDirectory);
+                materialsUsda << "                asset inputs:metallic_texture = @" << relPath << "@ (\n";
+                materialsUsda << "                    colorSpace = \"raw\"\n";
+                materialsUsda << "                )\n";
+            } else {
+                materialsUsda << "                float inputs:metallic_constant = " << info.metallicConstant << "\n";
+            }
         }
         
         materialsUsda << "            }\n";  // Close Shader
@@ -2533,6 +2605,15 @@ LUA_FUNCTION(LegacyTextureProcessor_InspectMaterial) {
     
     LUA->PushBool(props.isTranslucent);
     LUA->SetField(-2, "isTranslucent");
+    
+    LUA->PushBool(props.isGlass);
+    LUA->SetField(-2, "isGlass");
+    
+    LUA->PushString(props.shaderName.c_str());
+    LUA->SetField(-2, "shaderName");
+    
+    LUA->PushString(props.surfaceProp.c_str());
+    LUA->SetField(-2, "surfaceProp");
     
     return 1;
 }

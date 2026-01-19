@@ -128,6 +128,11 @@ struct MaterialPBRProperties {
     float baseMapAlphaPhongMask;    // $basemapalphaphongmask - use base texture alpha as phong mask
     bool hasBaseMapAlphaPhongMask;
     bool hasBaseAlphaEnvMapMask;    // $basealphaenvmapmask - use base texture alpha as envmap mask (LightmappedGeneric)
+    
+    // Glass material detection
+    bool isGlass;                   // Material detected as glass (translucent + glass surfaceprop or Refract shader)
+    std::string shaderName;         // The shader name (VertexLitGeneric, LightmappedGeneric, Refract, etc.)
+    std::string surfaceProp;        // $surfaceprop value
 };
 
 // Main converter class - core VTF to DDS/PBR conversion
@@ -286,6 +291,8 @@ private:
         std::string metallicPath;
         float roughnessConstant;
         float metallicConstant;
+        bool isGlass;               // Whether this material should use the translucent glass shader
+        float ior;                  // Index of Refraction (for glass, default 1.5)
     };
     std::unordered_map<uint64_t, ProcessedMaterialInfo> m_processedMaterialInfo;
     
