@@ -725,8 +725,8 @@ static size_t GetTotalMipmapSize(uint32_t width, uint32_t height, uint8_t mipmap
     
     for (int i = 0; i < mipmapCount; i++) {
         totalSize += GetImageDataSize(w, h, format);
-        w = std::max(1u, w / 2);
-        h = std::max(1u, h / 2);
+        w = max(1u, w / 2);
+        h = max(1u, h / 2);
     }
     
     return totalSize;
@@ -762,14 +762,14 @@ bool VTFTextureConverter::ExtractVTFPixelData(const std::vector<uint8_t>& fileDa
     uint32_t w = header.width;
     uint32_t h = header.height;
     for (int i = 0; i < mipmapCount - 1; i++) {
-        w = std::max(1u, w / 2);
-        h = std::max(1u, h / 2);
+        w = max(1u, w / 2);
+        h = max(1u, h / 2);
     }
     // Now accumulate from smallest to second-largest
     for (int i = mipmapCount - 1; i > 0; i--) {
         smallerMipsSize += GetImageDataSize(w, h, srcFormat);
-        w = std::min(header.width, w * 2);
-        h = std::min(header.height, h * 2);
+        w = min(header.width, w * 2);
+        h = min(header.height, h * 2);
     }
     
     dataOffset += smallerMipsSize;
@@ -974,7 +974,7 @@ float VTFTextureConverter::EstimateMetallic(const MaterialPBRProperties& props) 
     
     // Having an envmap mask suggests reflective surface
     if (props.hasEnvMapMask) {
-        metallic = std::max(metallic, 0.2f);
+        metallic = max(metallic, 0.2f);
     }
     
     return metallic;
