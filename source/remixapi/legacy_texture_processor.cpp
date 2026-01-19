@@ -486,6 +486,26 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
         return false;
     }
     
+    // If using alpha channel, check if the alpha actually has variation
+    // DXT1 textures only have 1-bit alpha (0 or 255), so they're not useful for masks
+    if (useAlphaChannel) {
+        bool hasAlphaVariation = false;
+        uint8_t firstAlpha = sourceTex.pixelData.size() >= 4 ? sourceTex.pixelData[3] : 255;
+        for (size_t i = 3; i < sourceTex.pixelData.size(); i += 4) {
+            if (sourceTex.pixelData[i] != firstAlpha) {
+                hasAlphaVariation = true;
+                break;
+            }
+        }
+        if (!hasAlphaVariation) {
+            if (m_debugOutput) {
+                Msg("[LegacyTextureProcessor] %s: Alpha channel has no variation (all %d), will use constant roughness\n", 
+                    vtfPath.c_str(), firstAlpha);
+            }
+            return false;
+        }
+    }
+    
     // Convert source texture to roughness
     outTexture.width = sourceTex.width;
     outTexture.height = sourceTex.height;
@@ -1544,7 +1564,8 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     if (found && pVar) {
         outProps.hasBaseAlphaEnvMapMask = (pVar->GetIntValue() == 1);
         if (m_debugOutput && outProps.hasBaseAlphaEnvMapMask) {
-            Msg("[LegacyTextureProcessor] %s: $basealphaenvmapmask = 1 (will use base alpha for roughness)\n", materialName.c_str());
+            Msg("[LegacyTextureProcessor] %s: $basealphaenvmapmask = 1 (base texture: '%s')\n", 
+                materialName.c_str(), outProps.baseTexturePath.c_str());
         }
     }
     
