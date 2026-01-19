@@ -69,7 +69,16 @@ function RTXToPBR.Initialize()
         return false
     end
     
-    -- Initialize the C++ converter
+    -- Check if already initialized by C++ (during RemixAPI init)
+    if VTFConverter.IsInitialized and VTFConverter.IsInitialized() then
+        isInitialized = true
+        MsgC(Color(100, 255, 100), "[RTX ToPBR] VTFConverter already initialized by C++\n")
+        -- Set debug output based on ConVar
+        VTFConverter.SetDebugOutput(GetConVarBoolSafe("rtx_topbr_debug", false))
+        return true
+    end
+    
+    -- Initialize the C++ converter (fallback if not already done)
     local success = VTFConverter.Initialize()
     if not success then
         MsgC(Color(255, 100, 100), "[RTX ToPBR] Failed to initialize VTFConverter\n")

@@ -164,6 +164,9 @@ public:
     void SetOutputDirectory(const std::string& path);
     std::string GetOutputDirectory() const { return m_outputDirectory; }
     
+    // Check if the converter is initialized
+    bool IsInitialized() const { return m_initialized; }
+    
 private:
     VTFTextureConverter();
     ~VTFTextureConverter();

@@ -124,7 +124,8 @@ VTFTextureConverter::~VTFTextureConverter() {
 
 bool VTFTextureConverter::Initialize(remix::Interface* remixInterface) {
     if (m_initialized) {
-        return false;
+        // Already initialized - this is success, not failure
+        return true;
     }
     
     if (!remixInterface) {
@@ -1326,6 +1327,11 @@ LUA_FUNCTION(VTFConverter_Initialize) {
     return 1;
 }
 
+LUA_FUNCTION(VTFConverter_IsInitialized) {
+    LUA->PushBool(VTFTextureConverter::Instance().IsInitialized());
+    return 1;
+}
+
 LUA_FUNCTION(VTFConverter_ProcessAllMaterials) {
     int count = VTFTextureConverter::Instance().ProcessAllTrackedMaterials();
     LUA->PushNumber(count);
@@ -1480,6 +1486,9 @@ void InitializeVTFConverterLuaBindings(GarrysMod::Lua::ILuaBase* LUA) {
     
     LUA->PushCFunction(VTFConverter_Initialize);
     LUA->SetField(-2, "Initialize");
+    
+    LUA->PushCFunction(VTFConverter_IsInitialized);
+    LUA->SetField(-2, "IsInitialized");
     
     LUA->PushCFunction(VTFConverter_ProcessAllMaterials);
     LUA->SetField(-2, "ProcessAllMaterials");
