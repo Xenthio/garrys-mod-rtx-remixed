@@ -1256,8 +1256,8 @@ uint64_t TextureProcessor::ConvertAndUploadTexture(const std::string& vtfPath, b
 }
 
 float TextureProcessor::PhongToRoughness(float phongExponent) {
-    // Default to fairly rough (most Source materials without phong are matte)
-    if (phongExponent <= 0) return 0.75f;
+    // Default to max roughness (most Source materials without phong are fully matte photoscans)
+    if (phongExponent <= 0) return 1.0f;
     
     // Clamp to reasonable range
     phongExponent = std::clamp(phongExponent, 1.0f, 256.0f);
@@ -1307,8 +1307,8 @@ float TextureProcessor::CalculateRoughness(const MaterialPBRProperties& props) {
             
             return std::clamp(roughness, 0.30f, 0.75f);
         }
-        // No phong and no envmap - just a matte surface
-        return 0.85f;
+        // No phong and no envmap - just a matte photoscanned surface
+        return 1.0f;
     }
     
     // If there's an envmap with tint, the tint controls reflection intensity
