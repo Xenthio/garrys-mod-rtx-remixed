@@ -1498,14 +1498,22 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     pVar = pMaterial->FindVar("$envmap", &found, false);
     if (found && pVar) {
         const char* strVal = pVar->GetStringValue();
-        // Check if it has any value (env_cubemap, or a texture path) - but filter UNDEFINED
-        if (strVal && strVal[0] != '\0' && strcmp(strVal, "UNDEFINED") != 0) {
+        // Check if it has any value (env_cubemap, or a texture path) - but filter UNDEFINED and <UNDEFINED>
+        bool isUndefined = false;
+        if (strVal) {
+            if (strcmp(strVal, "UNDEFINED") == 0 || strcmp(strVal, "<UNDEFINED>") == 0) {
+                isUndefined = true;
+            } else if (strstr(strVal, "UNDEFINED") != nullptr) {
+                isUndefined = true;  // Also catch partial matches
+            }
+        }
+        if (strVal && strVal[0] != '\0' && !isUndefined) {
             outProps.hasEnvMap = true;
             if (m_debugOutput) {
                 Msg("[LegacyTextureProcessor] %s: $envmap = %s\n", materialName.c_str(), strVal);
             }
-        } else if (m_debugOutput && strVal && strcmp(strVal, "UNDEFINED") == 0) {
-            Msg("[LegacyTextureProcessor] %s: $envmap = UNDEFINED (ignored)\n", materialName.c_str());
+        } else if (m_debugOutput && strVal && isUndefined) {
+            Msg("[LegacyTextureProcessor] %s: $envmap = %s (ignored)\n", materialName.c_str(), strVal);
         }
     }
     
