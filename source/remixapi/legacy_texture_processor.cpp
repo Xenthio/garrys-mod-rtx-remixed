@@ -1640,10 +1640,22 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     if (found && pVar) {
         const char* strVal = pVar->GetStringValue();
         if (strVal && strVal[0] != '\0') {
-            // Parse "[r g b]" format
+            // Parse "[r g b]" or "r g b" or single float format
             float r = 1, g = 1, b = 1;
+            bool parsed = false;
+            
             if (sscanf(strVal, "[%f %f %f]", &r, &g, &b) == 3 ||
                 sscanf(strVal, "%f %f %f", &r, &g, &b) == 3) {
+                parsed = true;
+            } else if (sscanf(strVal, "%f", &r) == 1) {
+                // Single float value - Source Engine sometimes returns this for "$envmaptint .2 .2 .2" 
+                // Treat as uniform tint
+                g = r;
+                b = r;
+                parsed = true;
+            }
+            
+            if (parsed) {
                 outProps.envMapTint[0] = r;
                 outProps.envMapTint[1] = g;
                 outProps.envMapTint[2] = b;
