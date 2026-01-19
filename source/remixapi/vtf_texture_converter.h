@@ -213,6 +213,9 @@ private:
     // Generate output filename for a texture type
     std::string GenerateOutputPath(uint64_t hash, const std::string& suffix);
     
+    // Convert normal map from DirectX format to octahedral format for RTX Remix
+    void ConvertNormalMapToOctahedral(ConvertedTexture& texture);
+    
     // Calculate roughness from phong exponent
     float PhongToRoughness(float phongExponent);
     

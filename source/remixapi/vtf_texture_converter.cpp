@@ -869,7 +869,92 @@ bool VTFTextureConverter::ExtractVTFPixelData(const std::vector<uint8_t>& fileDa
     }
     
     outTexture.pixelData = std::move(rgba);
+    
+    // If this is a normal map, convert to octahedral format for RTX Remix
+    if (isNormalMap) {
+        ConvertNormalMapToOctahedral(outTexture);
+    }
+    
     return true;
+}
+
+// Convert DirectX-style normal map to hemispherical octahedral format for RTX Remix
+// Based on NVIDIA's LightspeedOctahedralConverter
+// See: https://github.com/NVIDIAGameWorks/dxvk-remix
+void VTFTextureConverter::ConvertNormalMapToOctahedral(ConvertedTexture& texture) {
+    if (texture.pixelData.empty()) return;
+    
+    uint32_t width = texture.width;
+    uint32_t height = texture.height;
+    size_t pixelCount = width * height;
+    
+    std::vector<uint8_t> octahedralData(pixelCount * 4);
+    
+    for (size_t i = 0; i < pixelCount; i++) {
+        size_t srcIdx = i * 4;
+        size_t dstIdx = i * 4;
+        
+        // Read RGB as normal components
+        uint8_t r = texture.pixelData[srcIdx + 0];
+        uint8_t g = texture.pixelData[srcIdx + 1];
+        uint8_t b = texture.pixelData[srcIdx + 2];
+        
+        // Check for inward-pointing normals (z < 0, b < 128) and flip them
+        // RTX Remix only supports hemispherical normals pointing away from surface
+        if (b < 128) {
+            b = 255 - b;
+        }
+        
+        // Convert from [0, 255] to [-1, 1] range
+        float nx = (r / 255.0f) * 2.0f - 1.0f;
+        float ny = (g / 255.0f) * 2.0f - 1.0f;
+        float nz = (b / 255.0f) * 2.0f - 1.0f;
+        
+        // Normalize the vector
+        float len = std::sqrt(nx * nx + ny * ny + nz * nz);
+        if (len > 0.0001f) {
+            nx /= len;
+            ny /= len;
+            nz /= len;
+        } else {
+            // Default to straight up if invalid
+            nx = 0.0f;
+            ny = 0.0f;
+            nz = 1.0f;
+        }
+        
+        // Convert to octahedral encoding
+        // snorm_octahedral = xy / (|x| + |y| + |z|)
+        float absSum = std::abs(nx) + std::abs(ny) + std::abs(nz);
+        float octX = nx / absSum;
+        float octY = ny / absSum;
+        
+        // Hemispherical encoding (for normals pointing outward, z >= 0)
+        // result.x = octX + octY
+        // result.y = octX - octY
+        float resultX = octX + octY;
+        float resultY = octX - octY;
+        
+        // Convert from [-1, 1] to [0, 1]
+        resultX = resultX * 0.5f + 0.5f;
+        resultY = resultY * 0.5f + 0.5f;
+        
+        // Convert to [0, 255] with rounding
+        uint8_t outR = static_cast<uint8_t>(std::clamp(resultX * 255.0f + 0.5f, 0.0f, 255.0f));
+        uint8_t outG = static_cast<uint8_t>(std::clamp(resultY * 255.0f + 0.5f, 0.0f, 255.0f));
+        
+        // Store as RGB with B=0 (octahedral only uses 2 channels)
+        octahedralData[dstIdx + 0] = outR;
+        octahedralData[dstIdx + 1] = outG;
+        octahedralData[dstIdx + 2] = 0;
+        octahedralData[dstIdx + 3] = 255;
+    }
+    
+    texture.pixelData = std::move(octahedralData);
+    
+    if (m_debugOutput) {
+        Msg("[VTFConverter] Converted normal map to octahedral format (%dx%d)\n", width, height);
+    }
 }
 
 uint64_t VTFTextureConverter::GenerateTextureHash(const std::string& path, uint32_t width, uint32_t height) {
