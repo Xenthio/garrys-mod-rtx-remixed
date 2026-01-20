@@ -625,14 +625,87 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
 }
 
 bool TextureProcessor::GenerateMetallicTexture(const MaterialPBRProperties& props, ConvertedTexture& outTexture) {
-    // Source Engine materials don't have actual metallic texture data
-    // We only have estimated constants from phongboost, so always use constants in USDA
-    // Return false to indicate no texture should be written
-    if (m_debugOutput) {
-        Msg("[LegacyTextureProcessor] No metallic texture for %s, will use metallic constant %.2f\n",
-            props.materialName.c_str(), props.metallic);
+    // Generate per-pixel metallic maps from base texture brightness
+    // In Source Engine, dark areas + envmap = metallic (like chrome/metal parts)
+    // Brighter areas = non-metallic (diffuse surfaces)
+    
+    // Only generate metallic map if material has envmap and average brightness suggests some metallic areas
+    if (!props.hasEnvMap || props.baseTextureBrightness >= 0.4f || props.metallic <= 0.05f) {
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: No metallic texture needed (hasEnvMap=%d, avgBrightness=%.2f, metallic=%.2f)\n",
+                props.materialName.c_str(), props.hasEnvMap ? 1 : 0, props.baseTextureBrightness, props.metallic);
+        }
+        return false;
     }
-    return false;
+    
+    // Read the base texture VTF
+    std::vector<uint8_t> vtfData;
+    if (!ReadVTFFile(props.baseTexturePath, vtfData)) {
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: Could not read base texture for metallic map generation\n",
+                props.materialName.c_str());
+        }
+        return false;
+    }
+    
+    // Parse VTF
+    std::vector<uint8_t> rgbaData;
+    int width, height;
+    if (!ParseVTFToRGBA(vtfData, rgbaData, width, height)) {
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: Could not parse base texture VTF for metallic map\n",
+                props.materialName.c_str());
+        }
+        return false;
+    }
+    
+    // Generate metallic map from per-pixel brightness
+    // Dark pixels (brightness < 0.3) = metallic (scaled), bright pixels = non-metallic
+    outTexture.width = width;
+    outTexture.height = height;
+    outTexture.data.resize(width * height * 4);
+    
+    // Metallic map: store metallic value in R channel (grayscale)
+    // Pixels darker than threshold become metallic, brighter = non-metallic
+    constexpr float METALLIC_THRESHOLD = 0.30f;  // Brightness below this is considered metallic
+    
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            int srcIdx = (y * width + x) * 4;
+            int dstIdx = (y * width + x) * 4;
+            
+            uint8_t r = rgbaData[srcIdx];
+            uint8_t g = rgbaData[srcIdx + 1];
+            uint8_t b = rgbaData[srcIdx + 2];
+            
+            // Calculate per-pixel brightness (luminance)
+            float brightness = (0.299f * r + 0.587f * g + 0.114f * b) / 255.0f;
+            
+            // Calculate metallic value: darker = more metallic
+            // brightness 0.0 -> metallic 1.0
+            // brightness 0.3 -> metallic 0.0
+            // brightness 0.3+ -> metallic 0.0
+            float metallic = 0.0f;
+            if (brightness < METALLIC_THRESHOLD) {
+                metallic = std::clamp(1.0f - (brightness / METALLIC_THRESHOLD), 0.0f, 1.0f);
+            }
+            
+            uint8_t metallicByte = static_cast<uint8_t>(metallic * 255.0f);
+            
+            // Store as grayscale (R=G=B=metallic, A=255)
+            outTexture.data[dstIdx] = metallicByte;
+            outTexture.data[dstIdx + 1] = metallicByte;
+            outTexture.data[dstIdx + 2] = metallicByte;
+            outTexture.data[dstIdx + 3] = 255;
+        }
+    }
+    
+    if (m_debugOutput) {
+        Msg("[LegacyTextureProcessor] %s: Generated %dx%d per-pixel metallic map from base texture brightness\n",
+            props.materialName.c_str(), width, height);
+    }
+    
+    return true;
 }
 
 bool TextureProcessor::ReadVTFFile(const std::string& path, std::vector<uint8_t>& outData) {
