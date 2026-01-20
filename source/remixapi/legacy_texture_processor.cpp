@@ -118,6 +118,7 @@ TextureProcessor::TextureProcessor()
     , m_initialized(false)
     , m_autoProcessing(true)
     , m_debugOutput(false)
+    , m_metallicGenerationEnabled(false)  // Disabled by default - experimental feature
     , m_needsUSDAUpdate(false) {
     m_stats = {};
 }
@@ -1473,10 +1474,14 @@ float TextureProcessor::CalculateRoughness(const MaterialPBRProperties& props) {
 float TextureProcessor::EstimateMetallic(const MaterialPBRProperties& props) {
     float metallic = 0.0f;
     
-    // NEW: If material has envmap and we analyzed the base texture brightness,
-    // use that to determine metallic. Black texture + envmap = metallic metal.
-    // Grey/colored texture + envmap = non-metallic with reflections.
-    if (props.hasEnvMap && props.hasBaseTextureBrightness) {
+    // NEW: Experimental metallic detection from base texture brightness
+    // This feature is DISABLED by default because:
+    // - In Source Engine: black texture + envmap = chrome look (envmap provides reflections)
+    // - In PBR: metallic = 1 means "use base color as reflection color", so black = no reflections
+    // The correct approach for most Source Engine materials is to use low roughness, not metallic.
+    //
+    // Enable with rtx_topbr_metallic 1 for experimentation
+    if (m_metallicGenerationEnabled && props.hasEnvMap && props.hasBaseTextureBrightness) {
         // Brightness threshold for metallic detection:
         // Very dark textures (brightness < 0.1) with strong envmap = highly metallic
         // The metallic value decreases as brightness increases
@@ -1495,20 +1500,20 @@ float TextureProcessor::EstimateMetallic(const MaterialPBRProperties& props) {
             }
             
             if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] %s: Metallic from base texture darkness: brightness=%.3f -> metallic=%.2f\n",
+                Msg("[LegacyTextureProcessor] %s: [EXPERIMENTAL] Metallic from base texture darkness: brightness=%.3f -> metallic=%.2f\n",
                     props.materialName.c_str(), props.baseTextureBrightness, metallic);
             }
         }
     }
     
-    // High phong boost suggests metal-like reflections (fallback)
-    if (props.phongBoost > 2.0f) {
+    // High phong boost suggests metal-like reflections (fallback, only if metallic generation enabled)
+    if (m_metallicGenerationEnabled && props.phongBoost > 2.0f) {
         float phongMetallic = std::clamp((props.phongBoost - 2.0f) / 8.0f, 0.0f, 0.5f);
         metallic = max(metallic, phongMetallic);
     }
     
-    // Having an envmap mask suggests reflective surface
-    if (props.hasEnvMapMask) {
+    // Having an envmap mask suggests reflective surface (only if metallic generation enabled)
+    if (m_metallicGenerationEnabled && props.hasEnvMapMask) {
         metallic = max(metallic, 0.2f);
     }
     
@@ -3066,6 +3071,31 @@ LUA_FUNCTION(LegacyTextureProcessor_SetDebugOutput) {
     return 0;
 }
 
+LUA_FUNCTION(LegacyTextureProcessor_SetMetallicGeneration) {
+    if (!LUA->IsType(1, Type::Bool)) {
+        LUA->ThrowError("Expected boolean for metallic generation");
+        return 0;
+    }
+    
+    bool enabled = LUA->GetBool(1);
+    TextureProcessor::Instance().SetMetallicGeneration(enabled);
+    
+    if (enabled) {
+        Msg("[LegacyTextureProcessor] Experimental metallic generation ENABLED\n");
+        Msg("[LegacyTextureProcessor] WARNING: This may cause dark envmap materials to appear black.\n");
+        Msg("[LegacyTextureProcessor] In PBR, metallic surfaces reflect their base color - black base = no reflections.\n");
+    } else {
+        Msg("[LegacyTextureProcessor] Metallic generation DISABLED (default)\n");
+        Msg("[LegacyTextureProcessor] Dark envmap materials will use low roughness for reflections instead.\n");
+    }
+    return 0;
+}
+
+LUA_FUNCTION(LegacyTextureProcessor_IsMetallicGenerationEnabled) {
+    LUA->PushBool(TextureProcessor::Instance().IsMetallicGenerationEnabled());
+    return 1;
+}
+
 LUA_FUNCTION(LegacyTextureProcessor_GetStats) {
     auto stats = TextureProcessor::Instance().GetStats();
     
@@ -3260,6 +3290,12 @@ void InitializeLegacyTextureProcessorLuaBindings(GarrysMod::Lua::ILuaBase* LUA) 
     LUA->PushCFunction(LegacyTextureProcessor_SetDebugOutput);
     LUA->SetField(-2, "SetDebugOutput");
     
+    LUA->PushCFunction(LegacyTextureProcessor_SetMetallicGeneration);
+    LUA->SetField(-2, "SetMetallicGeneration");
+    
+    LUA->PushCFunction(LegacyTextureProcessor_IsMetallicGenerationEnabled);
+    LUA->SetField(-2, "IsMetallicGenerationEnabled");
+    
     LUA->PushCFunction(LegacyTextureProcessor_GetStats);
     LUA->SetField(-2, "GetStats");
     
@@ -3306,6 +3342,12 @@ void InitializeLegacyTextureProcessorLuaBindings(GarrysMod::Lua::ILuaBase* LUA) 
     
     LUA->PushCFunction(LegacyTextureProcessor_SetDebugOutput);
     LUA->SetField(-2, "SetDebugOutput");
+    
+    LUA->PushCFunction(LegacyTextureProcessor_SetMetallicGeneration);
+    LUA->SetField(-2, "SetMetallicGeneration");
+    
+    LUA->PushCFunction(LegacyTextureProcessor_IsMetallicGenerationEnabled);
+    LUA->SetField(-2, "IsMetallicGenerationEnabled");
     
     LUA->PushCFunction(LegacyTextureProcessor_GetStats);
     LUA->SetField(-2, "GetStats");

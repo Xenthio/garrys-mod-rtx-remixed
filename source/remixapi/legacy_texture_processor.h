@@ -195,6 +195,12 @@ public:
     // Debug output control
     void SetDebugOutput(bool enabled) { m_debugOutput = enabled; }
     
+    // Enable/disable experimental metallic generation from base texture brightness
+    // WARNING: This is experimental and may not look correct for all materials
+    // Default: disabled - dark envmap materials will use low roughness instead
+    void SetMetallicGeneration(bool enabled) { m_metallicGenerationEnabled = enabled; }
+    bool IsMetallicGenerationEnabled() const { return m_metallicGenerationEnabled; }
+    
     // Set output directory for generated textures
     void SetOutputDirectory(const std::string& path);
     std::string GetOutputDirectory() const { return m_outputDirectory; }
@@ -279,6 +285,7 @@ private:
     bool m_initialized;
     bool m_autoProcessing;
     bool m_debugOutput;
+    bool m_metallicGenerationEnabled;  // Experimental metallic generation from base texture brightness (default: false)
     std::string m_outputDirectory;       // Absolute output directory for writing DDS files
     
     // Cache of processed materials

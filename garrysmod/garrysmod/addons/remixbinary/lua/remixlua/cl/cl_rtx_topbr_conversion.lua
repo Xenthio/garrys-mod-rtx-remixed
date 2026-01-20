@@ -22,6 +22,7 @@ CreateClientConVar("rtx_topbr_enabled", "1", true, false, "Enable automatic ToPB
 CreateClientConVar("rtx_topbr_auto", "1", true, false, "Auto-process materials on map load")
 CreateClientConVar("rtx_topbr_debug", "0", true, false, "Enable debug output")
 CreateClientConVar("rtx_topbr_delay", "5", true, false, "Delay before auto-processing (seconds)")
+CreateClientConVar("rtx_topbr_metallic", "0", true, false, "Enable experimental metallic generation from base texture brightness (may cause black materials)")
 
 -- Module table
 RTXToPBR = RTXToPBR or {}
@@ -283,6 +284,17 @@ concommand.Add("rtx_topbr_debug", function(ply, cmd, args)
     MsgC(Color(100, 255, 100), string.format("[RTX ToPBR] Debug output %s\n", enabled and "enabled" or "disabled"))
 end, nil, "Enable/disable debug output")
 
+concommand.Add("rtx_topbr_metallic", function(ply, cmd, args)
+    local enabled = args[1] == "1" or args[1] == "true"
+    local processor = GetProcessor()
+    if processor and processor.SetMetallicGeneration then
+        processor.SetMetallicGeneration(enabled)
+        RunConsoleCommand("rtx_topbr_metallic", enabled and "1" or "0")
+    else
+        MsgC(Color(255, 100, 100), "[RTX ToPBR] Metallic generation not available (module not loaded)\n")
+    end
+end, nil, "Enable/disable experimental metallic generation (WARNING: may cause dark materials to appear black)")
+
 concommand.Add("rtx_topbr_help", function()
     MsgC(Color(100, 200, 255), "\n[RTX ToPBR] Runtime PBR Material Converter\n")
     MsgC(Color(100, 200, 255), string.rep("=", 60) .. "\n")
@@ -297,18 +309,26 @@ It uses C++ code to:
 - Create PBR materials with calculated roughness/metallic
 
 Commands:
-  rtx_topbr_process   - Process all tracked materials now
-  rtx_topbr_inspect   - Inspect a specific material
-  rtx_topbr_stats     - Show conversion statistics
-  rtx_topbr_clear     - Clear conversion cache
-  rtx_topbr_debug 1/0 - Enable/disable debug output
-  rtx_topbr_help      - Show this help
+  rtx_topbr_process    - Process all tracked materials now
+  rtx_topbr_inspect    - Inspect a specific material
+  rtx_topbr_stats      - Show conversion statistics
+  rtx_topbr_clear      - Clear conversion cache
+  rtx_topbr_debug 1/0  - Enable/disable debug output
+  rtx_topbr_metallic 1/0 - Enable/disable experimental metallic
+                          generation (WARNING: may cause black materials)
+  rtx_topbr_help       - Show this help
 
 ConVars:
   rtx_topbr_enabled   - Enable/disable conversion (default: 1)
   rtx_topbr_auto      - Auto-process on map load (default: 1)
   rtx_topbr_delay     - Delay before auto-processing (default: 5)
   rtx_topbr_debug     - Debug output (default: 0)
+  rtx_topbr_metallic  - Experimental metallic generation (default: 0)
+
+Note: Dark envmap materials (chrome balls, etc.) use low roughness
+for reflections by default. The experimental metallic mode attempts
+to make them metallic but may cause them to appear black since
+PBR metallic surfaces reflect their base color.
 
 ]])
     MsgC(Color(100, 200, 255), string.rep("=", 60) .. "\n\n")
