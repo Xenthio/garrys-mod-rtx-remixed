@@ -1300,6 +1300,10 @@ void TextureProcessor::ConvertSSBumpToNormal(ConvertedTexture& texture) {
     const float basisT2_y = OO_SQRT_3;
     const float basisT2_z = OO_SQRT_3;
     
+    // Normal strength boost factor for SSBump conversion
+    // SSBump normals tend to be subtle, so we boost them for better PBR appearance
+    const float normalStrength = 1.5f;
+    
     for (size_t i = 0; i < pixelCount; i++) {
         size_t srcIdx = i * 4;
         size_t dstIdx = i * 4;
@@ -1318,6 +1322,19 @@ void TextureProcessor::ConvertSSBumpToNormal(ConvertedTexture& texture) {
         float ny = r * basisT1_x + g * basisT1_y + b * basisT1_z;
         float nz = r * basisT2_x + g * basisT2_y + b * basisT2_z;
         
+        // Boost normal strength by scaling X and Y components away from center (0)
+        // This makes the surface bumps more pronounced
+        nx *= normalStrength;
+        ny *= normalStrength;
+        
+        // Renormalize the vector to maintain unit length
+        float len = sqrtf(nx * nx + ny * ny + nz * nz);
+        if (len > 0.0001f) {
+            nx /= len;
+            ny /= len;
+            nz /= len;
+        }
+        
         // Convert from [-1, 1] to [0, 255] with 0.5 bias (standard normal map encoding)
         // The formula is: output = (normal * 0.5 + 0.5) * 255
         uint8_t outR = static_cast<uint8_t>(std::clamp((nx * 0.5f + 0.5f) * 255.0f + 0.5f, 0.0f, 255.0f));
@@ -1333,7 +1350,7 @@ void TextureProcessor::ConvertSSBumpToNormal(ConvertedTexture& texture) {
     texture.pixelData = std::move(normalData);
     
     if (m_debugOutput) {
-        Msg("[LegacyTextureProcessor] Converted SSBump to normal map (%dx%d)\n", width, height);
+        Msg("[LegacyTextureProcessor] Converted SSBump to normal map (%dx%d) with strength %.1fx\n", width, height, normalStrength);
     }
 }
 
