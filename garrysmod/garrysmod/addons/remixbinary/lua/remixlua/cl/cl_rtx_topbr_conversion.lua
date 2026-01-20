@@ -157,7 +157,11 @@ function RTXToPBR.InspectMaterial(materialName)
     
     -- Bumpmap/Normal
     if props.hasBumpMap then
-        MsgC(Color(100, 255, 100), string.format("  ✓ Bumpmap: %s\n", props.bumpMap))
+        local ssbumpStr = ""
+        if props.isSSBump then
+            ssbumpStr = " [SSBump→Normal]"
+        end
+        MsgC(Color(100, 255, 100), string.format("  ✓ Bumpmap: %s%s\n", props.bumpMap, ssbumpStr))
     else
         MsgC(Color(255, 200, 100), "  ✗ Bumpmap: (none)\n")
     end

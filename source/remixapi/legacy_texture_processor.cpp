@@ -1267,6 +1267,89 @@ void TextureProcessor::ConvertNormalMapToOctahedral(ConvertedTexture& texture) {
     }
 }
 
+// Convert SSBump texture to standard tangent-space normal map
+// SSBump stores directional occlusion in 3 basis directions, not XYZ normal components
+// Based on Valve's SIGGRAPH 2007 paper: "Efficient Self-Shadowed Radiosity Normal Mapping"
+// The basis vectors are at 120-degree angles on the XY plane (like Mercedes star)
+void TextureProcessor::ConvertSSBumpToNormal(ConvertedTexture& texture) {
+    if (texture.pixelData.empty()) return;
+    
+    uint32_t width = texture.width;
+    uint32_t height = texture.height;
+    size_t pixelCount = width * height;
+    
+    std::vector<uint8_t> normalData(pixelCount * 4);
+    
+    // SSBump basis vectors (3 directions at 120 degrees apart on XY plane)
+    // These are the directions light comes from in the Source Engine SSBump format
+    // Basis 0: pointing roughly toward +X
+    // Basis 1: pointing roughly toward -X+Y (120 degrees from basis 0)
+    // Basis 2: pointing roughly toward -X-Y (240 degrees from basis 0)
+    const float sqrt3_2 = 0.866025403784f;  // sqrt(3)/2
+    const float basis0_x = 1.0f;
+    const float basis0_y = 0.0f;
+    const float basis1_x = -0.5f;
+    const float basis1_y = sqrt3_2;
+    const float basis2_x = -0.5f;
+    const float basis2_y = -sqrt3_2;
+    
+    for (size_t i = 0; i < pixelCount; i++) {
+        size_t srcIdx = i * 4;
+        size_t dstIdx = i * 4;
+        
+        // Read SSBump values (light response in 3 basis directions)
+        // These represent how much light bounces in each basis direction
+        float r0 = texture.pixelData[srcIdx + 0] / 255.0f;  // Basis 0 response
+        float r1 = texture.pixelData[srcIdx + 1] / 255.0f;  // Basis 1 response
+        float r2 = texture.pixelData[srcIdx + 2] / 255.0f;  // Basis 2 response
+        
+        // Reconstruct normal from basis responses
+        // The normal points in the direction that maximizes light response
+        // We sum the weighted basis vectors to get the normal direction
+        float nx = r0 * basis0_x + r1 * basis1_x + r2 * basis2_x;
+        float ny = r0 * basis0_y + r1 * basis1_y + r2 * basis2_y;
+        
+        // The Z component is derived from the average response
+        // Higher average = normal pointing more toward viewer (higher Z)
+        float avgResponse = (r0 + r1 + r2) / 3.0f;
+        float nz = avgResponse * 2.0f;  // Scale to get reasonable Z values
+        
+        // Normalize the resulting vector
+        float len = std::sqrt(nx * nx + ny * ny + nz * nz);
+        if (len > 0.0001f) {
+            nx /= len;
+            ny /= len;
+            nz /= len;
+        } else {
+            // Default to flat surface (pointing straight up)
+            nx = 0.0f;
+            ny = 0.0f;
+            nz = 1.0f;
+        }
+        
+        // Ensure Z is positive (normal pointing away from surface)
+        if (nz < 0.0f) {
+            nz = -nz;
+        }
+        
+        // Convert from [-1, 1] to [0, 255]
+        uint8_t outR = static_cast<uint8_t>(std::clamp((nx * 0.5f + 0.5f) * 255.0f + 0.5f, 0.0f, 255.0f));
+        uint8_t outG = static_cast<uint8_t>(std::clamp((ny * 0.5f + 0.5f) * 255.0f + 0.5f, 0.0f, 255.0f));
+        uint8_t outB = static_cast<uint8_t>(std::clamp((nz * 0.5f + 0.5f) * 255.0f + 0.5f, 0.0f, 255.0f));
+        
+        normalData[dstIdx + 0] = outR;
+        normalData[dstIdx + 1] = outG;
+        normalData[dstIdx + 2] = outB;
+        normalData[dstIdx + 3] = 255;
+    }
+    
+    texture.pixelData = std::move(normalData);
+    
+    if (m_debugOutput) {
+        Msg("[LegacyTextureProcessor] Converted SSBump to normal map (%dx%d)\n", width, height);
+    }
+}
+
 uint64_t TextureProcessor::GenerateTextureHash(const std::string& path, uint32_t width, uint32_t height) {
     // Simple FNV-1a hash
     uint64_t hash = 14695981039346656037ULL;
@@ -1767,6 +1850,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     outProps.materialName = materialName;
     outProps.hasPhong = false;
     outProps.hasBumpMap = false;
+    outProps.isSSBump = false;
     outProps.hasEnvMapMask = false;
     outProps.hasPhongExponentTexture = false;
     outProps.isSelfIllum = false;
@@ -1877,6 +1961,18 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
             Msg("[LegacyTextureProcessor] %s: $bumpmap = %s\n", materialName.c_str(), outProps.bumpMapPath.c_str());
         } else if (m_debugOutput && strVal) {
             Msg("[LegacyTextureProcessor] %s: $bumpmap filtered (invalid path: '%s')\n", materialName.c_str(), strVal);
+        }
+    }
+    
+    // Check for $ssbump flag - indicates SSBump format that needs conversion to standard normal map
+    pVar = pMaterial->FindVar("$ssbump", &found, false);
+    if (found && pVar) {
+        int ssbumpValue = pVar->GetIntValue();
+        if (ssbumpValue != 0) {
+            outProps.isSSBump = true;
+            if (m_debugOutput) {
+                Msg("[LegacyTextureProcessor] %s: $ssbump = 1 (will convert to normal map)\n", materialName.c_str());
+            }
         }
     }
     
@@ -2345,32 +2441,71 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
                 if (ParseVTFHeader(fileData, header)) {
                     ConvertedTexture normalTex;
                     normalTex.isNormalMap = true;
-                    if (ExtractVTFPixelData(fileData, header, normalTex, true)) {
-                        normalTex.hash = GenerateTextureHash(props.bumpMapPath + "_normal", normalTex.width, normalTex.height);
-                        std::string outputPath = GenerateOutputPath(normalTex.hash, "_normal");
-                        
-                        // Double-check with actual dimensions hash
-                        if (FileExists(outputPath)) {
-                            matInfo.normalPath = outputPath;
-                            m_writtenTexturePaths[normalTex.hash] = outputPath;
-                            skippedCount++;
+                    
+                    // For SSBump textures, extract raw data first then convert
+                    if (props.isSSBump) {
+                        // Extract without octahedral conversion
+                        if (ExtractVTFPixelData(fileData, header, normalTex, false)) {
+                            // Convert SSBump to standard normal map
+                            ConvertSSBumpToNormal(normalTex);
+                            // Then convert to octahedral for RTX Remix
+                            ConvertNormalMapToOctahedral(normalTex);
                             
-                            if (m_debugOutput) {
-                                Msg("[LegacyTextureProcessor] Skipping existing normal texture: %s\n", outputPath.c_str());
-                            }
-                        } else if (WriteTextureToDDS(normalTex, outputPath)) {
-                            matInfo.normalPath = outputPath;
-                            m_writtenTexturePaths[normalTex.hash] = outputPath;
-                            m_stats.materialsWithNormals++;
+                            normalTex.hash = GenerateTextureHash(props.bumpMapPath + "_normal", normalTex.width, normalTex.height);
+                            std::string outputPath = GenerateOutputPath(normalTex.hash, "_normal");
                             
-                            if (m_debugOutput) {
-                                Msg("[LegacyTextureProcessor] Wrote normal texture: %s\n", outputPath.c_str());
+                            // Double-check with actual dimensions hash
+                            if (FileExists(outputPath)) {
+                                matInfo.normalPath = outputPath;
+                                m_writtenTexturePaths[normalTex.hash] = outputPath;
+                                skippedCount++;
+                                
+                                if (m_debugOutput) {
+                                    Msg("[LegacyTextureProcessor] Skipping existing SSBump-converted normal: %s\n", outputPath.c_str());
+                                }
+                            } else if (WriteTextureToDDS(normalTex, outputPath)) {
+                                matInfo.normalPath = outputPath;
+                                m_writtenTexturePaths[normalTex.hash] = outputPath;
+                                m_stats.materialsWithNormals++;
+                                
+                                if (m_debugOutput) {
+                                    Msg("[LegacyTextureProcessor] Wrote SSBump-converted normal: %s\n", outputPath.c_str());
+                                }
+                            } else if (m_debugOutput) {
+                                Msg("[LegacyTextureProcessor] Failed to write SSBump DDS for %s\n", props.bumpMapPath.c_str());
                             }
                         } else if (m_debugOutput) {
-                            Msg("[LegacyTextureProcessor] Failed to write normal DDS for %s\n", props.bumpMapPath.c_str());
+                            Msg("[LegacyTextureProcessor] Failed to extract SSBump pixel data for %s\n", props.bumpMapPath.c_str());
                         }
-                    } else if (m_debugOutput) {
-                        Msg("[LegacyTextureProcessor] Failed to extract pixel data for %s\n", props.bumpMapPath.c_str());
+                    } else {
+                        // Standard normal map - extract with octahedral conversion
+                        if (ExtractVTFPixelData(fileData, header, normalTex, true)) {
+                            normalTex.hash = GenerateTextureHash(props.bumpMapPath + "_normal", normalTex.width, normalTex.height);
+                            std::string outputPath = GenerateOutputPath(normalTex.hash, "_normal");
+                            
+                            // Double-check with actual dimensions hash
+                            if (FileExists(outputPath)) {
+                                matInfo.normalPath = outputPath;
+                                m_writtenTexturePaths[normalTex.hash] = outputPath;
+                                skippedCount++;
+                                
+                                if (m_debugOutput) {
+                                    Msg("[LegacyTextureProcessor] Skipping existing normal texture: %s\n", outputPath.c_str());
+                                }
+                            } else if (WriteTextureToDDS(normalTex, outputPath)) {
+                                matInfo.normalPath = outputPath;
+                                m_writtenTexturePaths[normalTex.hash] = outputPath;
+                                m_stats.materialsWithNormals++;
+                                
+                                if (m_debugOutput) {
+                                    Msg("[LegacyTextureProcessor] Wrote normal texture: %s\n", outputPath.c_str());
+                                }
+                            } else if (m_debugOutput) {
+                                Msg("[LegacyTextureProcessor] Failed to write normal DDS for %s\n", props.bumpMapPath.c_str());
+                            }
+                        } else if (m_debugOutput) {
+                            Msg("[LegacyTextureProcessor] Failed to extract pixel data for %s\n", props.bumpMapPath.c_str());
+                        }
                     }
                 } else if (m_debugOutput) {
                     Msg("[LegacyTextureProcessor] Failed to parse VTF header for %s\n", props.bumpMapPath.c_str());
@@ -3185,6 +3320,9 @@ LUA_FUNCTION(LegacyTextureProcessor_InspectMaterial) {
     
     LUA->PushBool(props.hasBumpMap);
     LUA->SetField(-2, "hasBumpMap");
+    
+    LUA->PushBool(props.isSSBump);
+    LUA->SetField(-2, "isSSBump");
     
     LUA->PushBool(props.hasPhong);
     LUA->SetField(-2, "hasPhong");

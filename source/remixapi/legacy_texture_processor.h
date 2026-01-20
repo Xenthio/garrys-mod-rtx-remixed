@@ -104,6 +104,7 @@ struct MaterialPBRProperties {
     std::string materialName;
     std::string baseTexturePath;
     std::string bumpMapPath;
+    bool isSSBump;              // $ssbump=1 - SSBump format requires conversion to normal map
     std::string envMapMaskPath;
     std::string phongExponentTexturePath;  // $phongexponenttexture - per-pixel phong exponent
     float phongExponent;
@@ -260,6 +261,10 @@ private:
     
     // Convert normal map from DirectX format to octahedral format for RTX Remix
     void ConvertNormalMapToOctahedral(ConvertedTexture& texture);
+    
+    // Convert SSBump texture to standard tangent-space normal map
+    // SSBump stores directional occlusion, not normal vectors
+    void ConvertSSBumpToNormal(ConvertedTexture& texture);
     
     // Write the mod.usda file with all processed materials
     bool WriteModUSDA();
