@@ -135,6 +135,10 @@ struct MaterialPBRProperties {
     std::string shaderName;         // The shader name (VertexLitGeneric, LightmappedGeneric, Refract, etc.)
     std::string surfaceProp;        // $surfaceprop value
     std::string refractTintTexturePath;  // $refracttinttexture - color texture for Refract shader
+    
+    // Metallic detection from base texture darkness
+    float baseTextureBrightness;    // Average brightness of base texture (0.0 = black, 1.0 = white)
+    bool hasBaseTextureBrightness;  // Whether we successfully analyzed the base texture
 };
 
 // Main converter class - core VTF to DDS/PBR conversion
@@ -262,6 +266,10 @@ private:
     
     // Calculate metallic hint from material properties
     float EstimateMetallic(const MaterialPBRProperties& props);
+    
+    // Analyze base texture brightness to help detect metallic materials
+    // Black textures + envmap = metallic, grey/colored textures + envmap = non-metallic
+    bool AnalyzeBaseTextureBrightness(const std::string& texturePath, float& outBrightness);
     
     // Get filesystem interface
     IFileSystem* GetFileSystem();

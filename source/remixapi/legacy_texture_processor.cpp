@@ -1342,7 +1342,21 @@ float TextureProcessor::CalculateRoughness(const MaterialPBRProperties& props) {
                 roughness = min(roughness, 0.50f);
             }
             
-            return std::clamp(roughness, 0.30f, 0.75f);
+            // NEW: If we detected metallic from dark base texture, use much lower roughness
+            // Metallic materials like chrome need very low roughness to look right
+            if (props.hasBaseTextureBrightness && props.baseTextureBrightness < 0.20f) {
+                // Very dark base texture = polished metal = low roughness
+                // brightness 0.0 -> roughness 0.05 (perfect chrome)
+                // brightness 0.1 -> roughness 0.10 (polished metal)
+                // brightness 0.2 -> roughness 0.15 (brushed metal)
+                roughness = 0.05f + (props.baseTextureBrightness * 0.50f);
+                if (m_debugOutput) {
+                    Msg("[LegacyTextureProcessor] %s: Metallic roughness from dark texture: brightness=%.3f -> roughness=%.2f\n",
+                        props.materialName.c_str(), props.baseTextureBrightness, roughness);
+                }
+            }
+            
+            return std::clamp(roughness, 0.05f, 0.75f);
         }
         // No phong and no envmap - just a matte photoscanned surface
         return 1.0f;
@@ -1377,9 +1391,38 @@ float TextureProcessor::CalculateRoughness(const MaterialPBRProperties& props) {
 float TextureProcessor::EstimateMetallic(const MaterialPBRProperties& props) {
     float metallic = 0.0f;
     
-    // High phong boost suggests metal-like reflections
+    // NEW: If material has envmap and we analyzed the base texture brightness,
+    // use that to determine metallic. Black texture + envmap = metallic metal.
+    // Grey/colored texture + envmap = non-metallic with reflections.
+    if (props.hasEnvMap && props.hasBaseTextureBrightness) {
+        // Brightness threshold for metallic detection:
+        // Very dark textures (brightness < 0.1) with strong envmap = highly metallic
+        // The metallic value decreases as brightness increases
+        // At brightness 0.3+, we consider it non-metallic (just reflective)
+        if (props.baseTextureBrightness < 0.30f) {
+            // Inverse relationship: darker = more metallic
+            // brightness 0.0 -> metallic 1.0
+            // brightness 0.1 -> metallic 0.8
+            // brightness 0.3 -> metallic 0.0
+            metallic = std::clamp(1.0f - (props.baseTextureBrightness / 0.30f), 0.0f, 1.0f);
+            
+            // Scale by envmap tint intensity if available (brighter envmap = more reflective)
+            if (props.hasEnvMapTint) {
+                float envmapIntensity = (props.envMapTint[0] + props.envMapTint[1] + props.envMapTint[2]) / 3.0f;
+                metallic *= envmapIntensity;
+            }
+            
+            if (m_debugOutput) {
+                Msg("[LegacyTextureProcessor] %s: Metallic from base texture darkness: brightness=%.3f -> metallic=%.2f\n",
+                    props.materialName.c_str(), props.baseTextureBrightness, metallic);
+            }
+        }
+    }
+    
+    // High phong boost suggests metal-like reflections (fallback)
     if (props.phongBoost > 2.0f) {
-        metallic = std::clamp((props.phongBoost - 2.0f) / 8.0f, 0.0f, 0.5f);
+        float phongMetallic = std::clamp((props.phongBoost - 2.0f) / 8.0f, 0.0f, 0.5f);
+        metallic = max(metallic, phongMetallic);
     }
     
     // Having an envmap mask suggests reflective surface
@@ -1388,6 +1431,68 @@ float TextureProcessor::EstimateMetallic(const MaterialPBRProperties& props) {
     }
     
     return metallic;
+}
+
+// Analyze base texture brightness to detect metallic materials
+// Black textures + envmap = metallic, grey/colored textures = non-metallic
+bool TextureProcessor::AnalyzeBaseTextureBrightness(const std::string& texturePath, float& outBrightness) {
+    if (texturePath.empty()) {
+        return false;
+    }
+    
+    // Read the VTF file
+    std::vector<uint8_t> fileData;
+    if (!ReadVTFFile(texturePath, fileData)) {
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] Failed to read base texture for brightness analysis: %s\n", texturePath.c_str());
+        }
+        return false;
+    }
+    
+    VTFFileHeader header;
+    if (!ParseVTFHeader(fileData, header)) {
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] Failed to parse VTF header for brightness analysis: %s\n", texturePath.c_str());
+        }
+        return false;
+    }
+    
+    ConvertedTexture sourceTex;
+    if (!ExtractVTFPixelData(fileData, header, sourceTex, false)) {
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] Failed to extract pixel data for brightness analysis: %s\n", texturePath.c_str());
+        }
+        return false;
+    }
+    
+    // Calculate average brightness (luminance) from the texture
+    // Using standard luminance weights: 0.299*R + 0.587*G + 0.114*B
+    double totalLuminance = 0.0;
+    size_t pixelCount = 0;
+    
+    for (size_t i = 0; i < sourceTex.pixelData.size(); i += 4) {
+        float r = sourceTex.pixelData[i] / 255.0f;
+        float g = sourceTex.pixelData[i + 1] / 255.0f;
+        float b = sourceTex.pixelData[i + 2] / 255.0f;
+        
+        // Standard luminance calculation
+        float luminance = 0.299f * r + 0.587f * g + 0.114f * b;
+        totalLuminance += luminance;
+        pixelCount++;
+    }
+    
+    if (pixelCount == 0) {
+        return false;
+    }
+    
+    outBrightness = static_cast<float>(totalLuminance / pixelCount);
+    
+    if (m_debugOutput) {
+        Msg("[LegacyTextureProcessor] %s: Base texture brightness analyzed: %.3f (pixels=%zu)\n",
+            texturePath.c_str(), outBrightness, pixelCount);
+    }
+    
+    return true;
 }
 
 // Helper function to check if a file exists
@@ -1605,6 +1710,10 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     outProps.shaderName = "";
     outProps.surfaceProp = "";
     outProps.refractTintTexturePath = "";
+    
+    // Metallic detection from base texture brightness
+    outProps.baseTextureBrightness = 0.5f;  // Default to mid-grey (non-metallic)
+    outProps.hasBaseTextureBrightness = false;
     
     // Get the shader name
     const char* shaderName = pMaterial->GetShaderName();
@@ -2063,6 +2172,22 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
                 // This shouldn't happen, but log it for debugging
                 Msg("[LegacyTextureProcessor] %s: GLASS DETECTION FAILED - shader=%s, isRefract=%d, vmtIsRefract=%d, vmtRefract=%d, isSurfaceGlass=%d, translucent=%d, hasEnvMap=%d\n",
                     materialName.c_str(), outProps.shaderName.c_str(), isRefractShader, vmtIsRefract, vmtHasRefractAmount, isSurfaceGlass, outProps.isTranslucent, outProps.hasEnvMap);
+            }
+        }
+    }
+    
+    // Analyze base texture brightness for metallic detection (only if material has envmap)
+    // Black textures + envmap = metallic materials (like chrome)
+    // Grey/colored textures + envmap = non-metallic with reflections
+    if (outProps.hasEnvMap && !outProps.baseTexturePath.empty() && !outProps.isGlass) {
+        float brightness = 0.5f;
+        if (AnalyzeBaseTextureBrightness(outProps.baseTexturePath, brightness)) {
+            outProps.baseTextureBrightness = brightness;
+            outProps.hasBaseTextureBrightness = true;
+            
+            if (m_debugOutput) {
+                Msg("[LegacyTextureProcessor] %s: Base texture brightness=%.3f (for metallic detection)\n",
+                    materialName.c_str(), brightness);
             }
         }
     }
@@ -2981,6 +3106,13 @@ LUA_FUNCTION(LegacyTextureProcessor_InspectMaterial) {
     
     LUA->PushString(props.surfaceProp.c_str());
     LUA->SetField(-2, "surfaceProp");
+    
+    // Metallic detection info
+    LUA->PushNumber(props.baseTextureBrightness);
+    LUA->SetField(-2, "baseTextureBrightness");
+    
+    LUA->PushBool(props.hasBaseTextureBrightness);
+    LUA->SetField(-2, "hasBaseTextureBrightness");
     
     return 1;
 }
