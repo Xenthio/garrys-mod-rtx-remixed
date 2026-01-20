@@ -639,8 +639,8 @@ bool TextureProcessor::GenerateMetallicTexture(const MaterialPBRProperties& prop
     }
     
     // Read the base texture VTF
-    std::vector<uint8_t> vtfData;
-    if (!ReadVTFFile(props.baseTexturePath, vtfData)) {
+    std::vector<uint8_t> fileData;
+    if (!ReadVTFFile(props.baseTexturePath, fileData)) {
         if (m_debugOutput) {
             Msg("[LegacyTextureProcessor] %s: Could not read base texture for metallic map generation\n",
                 props.materialName.c_str());
@@ -648,12 +648,21 @@ bool TextureProcessor::GenerateMetallicTexture(const MaterialPBRProperties& prop
         return false;
     }
     
-    // Parse VTF
-    std::vector<uint8_t> rgbaData;
-    int width, height;
-    if (!ParseVTFToRGBA(vtfData, rgbaData, width, height)) {
+    // Parse VTF header
+    VTFFileHeader header;
+    if (!ParseVTFHeader(fileData, header)) {
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: Could not parse base texture VTF for metallic map\n",
+            Msg("[LegacyTextureProcessor] %s: Could not parse base texture VTF header for metallic map\n",
+                props.materialName.c_str());
+        }
+        return false;
+    }
+    
+    // Extract pixel data
+    ConvertedTexture sourceTex;
+    if (!ExtractVTFPixelData(fileData, header, sourceTex, false)) {
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: Could not extract base texture pixel data for metallic map\n",
                 props.materialName.c_str());
         }
         return false;
@@ -661,22 +670,22 @@ bool TextureProcessor::GenerateMetallicTexture(const MaterialPBRProperties& prop
     
     // Generate metallic map from per-pixel brightness
     // Dark pixels (brightness < 0.3) = metallic (scaled), bright pixels = non-metallic
-    outTexture.width = width;
-    outTexture.height = height;
-    outTexture.data.resize(width * height * 4);
+    outTexture.width = sourceTex.width;
+    outTexture.height = sourceTex.height;
+    outTexture.pixelData.resize(sourceTex.width * sourceTex.height * 4);
     
     // Metallic map: store metallic value in R channel (grayscale)
     // Pixels darker than threshold become metallic, brighter = non-metallic
     constexpr float METALLIC_THRESHOLD = 0.30f;  // Brightness below this is considered metallic
     
-    for (int y = 0; y < height; y++) {
-        for (int x = 0; x < width; x++) {
-            int srcIdx = (y * width + x) * 4;
-            int dstIdx = (y * width + x) * 4;
+    for (uint32_t y = 0; y < sourceTex.height; y++) {
+        for (uint32_t x = 0; x < sourceTex.width; x++) {
+            size_t srcIdx = (y * sourceTex.width + x) * 4;
+            size_t dstIdx = (y * sourceTex.width + x) * 4;
             
-            uint8_t r = rgbaData[srcIdx];
-            uint8_t g = rgbaData[srcIdx + 1];
-            uint8_t b = rgbaData[srcIdx + 2];
+            uint8_t r = sourceTex.pixelData[srcIdx];
+            uint8_t g = sourceTex.pixelData[srcIdx + 1];
+            uint8_t b = sourceTex.pixelData[srcIdx + 2];
             
             // Calculate per-pixel brightness (luminance)
             float brightness = (0.299f * r + 0.587f * g + 0.114f * b) / 255.0f;
@@ -693,16 +702,16 @@ bool TextureProcessor::GenerateMetallicTexture(const MaterialPBRProperties& prop
             uint8_t metallicByte = static_cast<uint8_t>(metallic * 255.0f);
             
             // Store as grayscale (R=G=B=metallic, A=255)
-            outTexture.data[dstIdx] = metallicByte;
-            outTexture.data[dstIdx + 1] = metallicByte;
-            outTexture.data[dstIdx + 2] = metallicByte;
-            outTexture.data[dstIdx + 3] = 255;
+            outTexture.pixelData[dstIdx] = metallicByte;
+            outTexture.pixelData[dstIdx + 1] = metallicByte;
+            outTexture.pixelData[dstIdx + 2] = metallicByte;
+            outTexture.pixelData[dstIdx + 3] = 255;
         }
     }
     
     if (m_debugOutput) {
         Msg("[LegacyTextureProcessor] %s: Generated %dx%d per-pixel metallic map from base texture brightness\n",
-            props.materialName.c_str(), width, height);
+            props.materialName.c_str(), sourceTex.width, sourceTex.height);
     }
     
     return true;
