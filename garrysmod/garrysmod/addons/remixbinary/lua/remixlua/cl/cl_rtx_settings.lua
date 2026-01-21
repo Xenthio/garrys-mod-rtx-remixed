@@ -229,6 +229,8 @@ if BRANCH == "x86-64" or BRANCH == "chromium" then
                 if delaySlider then delaySlider:SetEnabled(enabled) end
                 if metallicCheckbox then metallicCheckbox:SetEnabled(enabled) end
                 if processButton then processButton:SetEnabled(enabled) end
+                if statsButton then statsButton:SetEnabled(enabled) end
+                if clearButton then clearButton:SetEnabled(enabled) end
             end
             
             -- Set initial state

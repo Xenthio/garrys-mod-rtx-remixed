@@ -159,12 +159,6 @@ local function ProcessLoadedEntities()
                     ProcessMaterial(matName)
                 end
             end
-
-            -- Process model
-            local modelName = ent:GetModel()
-            if modelName then
-                ProcessMaterial(modelName)
-            end
         end
     end
 end
