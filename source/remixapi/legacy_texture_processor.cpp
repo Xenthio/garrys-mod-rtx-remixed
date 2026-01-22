@@ -2686,7 +2686,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
             if (outProps.isGlass) {
                 Msg("[LegacyTextureProcessor] %s: DETECTED AS GLASS (shader=%s, vmtShader=%s, vmtRefract=%d, translucent=%d, surfaceprop=%s, hasEnvMap=%d)\n",
                     materialName.c_str(), outProps.shaderName.c_str(), 
-                    hasVMTParsed ? vmtProps.shaderName.c_str() : "N/A",
+                    hasVMTParsed ? vmtParsed.shaderName.c_str() : "N/A",
                     vmtHasRefractAmount, outProps.isTranslucent, outProps.surfaceProp.c_str(), outProps.hasEnvMap);
             } else if (isSurfaceGlass || isRefractShader || vmtIsRefract || vmtHasRefractAmount) {
                 // This shouldn't happen, but log it for debugging
