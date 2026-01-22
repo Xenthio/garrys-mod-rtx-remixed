@@ -3120,8 +3120,9 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     // Glass detection: Material is considered glass if:
     // 1. Shader is "Refract" (always glass), OR
     // 2. VMT has $refractamount (indicates Refract shader even if FindVar says otherwise), OR
-    // 3. $surfaceprop = "glass" (FindVar doesn't reliably expose $translucent), OR
-    // 4. $translucent = 1 AND material has envmap + reflective properties
+    // 3. $surfaceprop = "glass" AND $translucent = 1 (surfaceprop alone is for physics, needs translucent)
+    // NOTE: $surfaceprop "glass" alone is NOT enough - materials like nukwindowa have it for physics sounds
+    //       but are not meant to be transparent. They need $translucent=1 to actually be glass.
     {
         // Check if shader name indicates glass/refraction
         bool isRefractShader = false;
@@ -3169,12 +3170,16 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
             outProps.isGlass = true;  // Refract shader is always glass
         } else if (vmtHasRefractAmount) {
             outProps.isGlass = true;  // Has $refractamount means it's a refractive material
-        } else if (isSurfaceGlass) {
-            outProps.isGlass = true;  // surfaceprop=glass means it's glass
+        } else if (isSurfaceGlass && outProps.isTranslucent) {
+            // surfaceprop=glass ONLY triggers glass shader if ALSO translucent
+            // Materials like nukwindowa have $surfaceprop "glass" but no $translucent
+            // They're just textures with glass surface properties for physics/sounds
+            outProps.isGlass = true;
         }
         // NOTE: We REMOVED the "translucent + envmap = glass" heuristic because it catches
         // too many materials that aren't glass (like doors with glass cutouts, windows with frames, etc.)
         // Those materials have $translucent for alpha blending, not for glass refraction.
+        // NOTE 2: $surfaceprop alone is NOT enough - it's just for physics. Need $translucent too.
         
         if (m_debugOutput) {
             if (outProps.isGlass) {
