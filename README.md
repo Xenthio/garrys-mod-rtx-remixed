@@ -14,8 +14,9 @@
       
 
 ## Installation
-1. Download [RTXLauncher](https://github.com/Xenthio/RTXLauncher/releases/latest).
-2. Put `RTXLauncher.exe` in an empty folder, run it as an <ins>**Administrator**</ins>
+1. Ensure you've ran the vanilla game at least once, especially if you switched branches on Steam.
+2. Download [RTXLauncher](https://github.com/Xenthio/RTXLauncher/releases/latest).
+3. Put `RTXLauncher.exe` in an empty folder, run it as an <ins>**Administrator**</ins>
    - Do not place in the same place as your vanilla game
    - Do not place it in a OneDrive synced folder (Documents, Desktop, etc), the game will not launch if you do so
 4. Select `Run Quick Install` on the main screen and follow the prompts when asked.
