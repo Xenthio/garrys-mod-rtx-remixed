@@ -1555,6 +1555,37 @@ float TextureProcessor::CalculateRoughness(const MaterialPBRProperties& props) {
         roughness = max(0.30f, roughness - boostFactor);
     }
     
+    // NEW: Rim lighting affects perceived glossiness
+    // Materials with rim lighting typically have shiny edges, suggesting lower roughness overall
+    if (props.hasRimLight) {
+        // Rim lighting active - material is shinier
+        // rimlightboost 0.5 -> small decrease
+        // rimlightboost 1.0 -> moderate decrease
+        // rimlightboost 2.0+ -> significant decrease
+        float rimFactor = 0.05f;  // Base rim factor
+        if (props.hasRimLightBoost && props.rimLightBoost > 0.5f) {
+            rimFactor = min((props.rimLightBoost - 0.5f) * 0.04f + 0.05f, 0.15f);
+        }
+        roughness = max(0.30f, roughness - rimFactor);
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: Rim light adjustment: rimFactor=%.2f, roughness=%.2f\n",
+                props.materialName.c_str(), rimFactor, roughness);
+        }
+    }
+    
+    // NEW: $envmapcontrast affects perceived glossiness
+    // Higher contrast means sharper reflections = lower roughness
+    if (props.hasEnvMapContrast && props.envMapContrast > 0.0f) {
+        float contrastFactor = min(props.envMapContrast * 0.05f, 0.10f);
+        roughness = max(0.25f, roughness - contrastFactor);
+    }
+    
+    // NEW: $phongalbedotint with high boost suggests color-tinted metal-like reflections
+    if (props.phongAlbedoTint && props.hasPhongAlbedoBoost && props.phongAlbedoBoost > 1.0f) {
+        float albedoBoostFactor = min((props.phongAlbedoBoost - 1.0f) * 0.02f, 0.08f);
+        roughness = max(0.30f, roughness - albedoBoostFactor);
+    }
+    
     return std::clamp(roughness, 0.30f, 0.85f);
 }
 
@@ -1724,6 +1755,44 @@ struct VMTProperties {
     
     bool hasSelfIllum;
     int selfIllum;
+    
+    // =========================================================================
+    // NEW: Additional properties for comprehensive PBR extraction
+    // =========================================================================
+    
+    // Self-illumination / Emissive
+    std::string selfIllumMask;      // $selfillummask - separate emissive mask texture
+    bool hasSelfIllumMask;
+    float selfIllumTint[3];         // $selfillumtint - tint color for self-illumination
+    bool hasSelfIllumTint;
+    
+    // Rim lighting (affects specular)
+    bool hasRimLight;
+    int rimLight;
+    float rimLightExponent;
+    bool hasRimLightExponent;
+    float rimLightBoost;
+    bool hasRimLightBoost;
+    
+    // Additional phong properties
+    bool hasPhongAlbedoTint;
+    int phongAlbedoTint;
+    float phongAlbedoBoost;
+    bool hasPhongAlbedoBoost;
+    float phongTint[3];
+    bool hasPhongTint;
+    
+    // Parallax/heightmap
+    std::string parallaxMap;        // $parallaxmap - heightmap for parallax
+    bool hasParallaxMap;
+    float parallaxMapScale;
+    bool hasParallaxMapScale;
+    
+    // Additional envmap properties  
+    float envMapContrast;
+    bool hasEnvMapContrast;
+    float envMapSaturation;
+    bool hasEnvMapSaturation;
 };
 
 // Parse a VMT file and extract properties that FindVar doesn't reliably expose
@@ -1767,6 +1836,30 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
     outProps.phongFresnelRanges[0] = outProps.phongFresnelRanges[1] = outProps.phongFresnelRanges[2] = 0.0f;
     outProps.hasSelfIllum = false;
     outProps.selfIllum = 0;
+    
+    // NEW: Initialize additional properties
+    outProps.hasSelfIllumMask = false;
+    outProps.hasSelfIllumTint = false;
+    outProps.selfIllumTint[0] = outProps.selfIllumTint[1] = outProps.selfIllumTint[2] = 1.0f;
+    outProps.hasRimLight = false;
+    outProps.rimLight = 0;
+    outProps.hasRimLightExponent = false;
+    outProps.rimLightExponent = 4.0f;
+    outProps.hasRimLightBoost = false;
+    outProps.rimLightBoost = 1.0f;
+    outProps.hasPhongAlbedoTint = false;
+    outProps.phongAlbedoTint = 0;
+    outProps.hasPhongAlbedoBoost = false;
+    outProps.phongAlbedoBoost = 1.0f;
+    outProps.hasPhongTint = false;
+    outProps.phongTint[0] = outProps.phongTint[1] = outProps.phongTint[2] = 1.0f;
+    outProps.hasParallaxMap = false;
+    outProps.hasParallaxMapScale = false;
+    outProps.parallaxMapScale = 0.05f;
+    outProps.hasEnvMapContrast = false;
+    outProps.envMapContrast = 0.0f;
+    outProps.hasEnvMapSaturation = false;
+    outProps.envMapSaturation = 1.0f;
     
     // Build VMT path
     std::string vmtPath = "materials/" + materialName;
@@ -2042,6 +2135,120 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
         }
     }
     
+    // =========================================================================
+    // NEW: Parse additional properties for comprehensive PBR extraction
+    // =========================================================================
+    
+    // $selfillummask - separate mask texture for emissive areas
+    if (contentLower.find("$selfillummask") != std::string::npos) {
+        outProps.selfIllumMask = findValue("$selfillummask");
+        outProps.hasSelfIllumMask = !outProps.selfIllumMask.empty();
+    }
+    
+    // $selfillumtint - tint color for self-illumination
+    if (contentLower.find("$selfillumtint") != std::string::npos) {
+        if (parseVector3("$selfillumtint", outProps.selfIllumTint)) {
+            outProps.hasSelfIllumTint = true;
+        }
+    }
+    
+    // $rimlight - enables rim lighting
+    if (contentLower.find("$rimlight") != std::string::npos) {
+        std::string val = findValue("$rimlight");
+        if (!val.empty()) {
+            outProps.hasRimLight = true;
+            outProps.rimLight = (val == "1" || val == "true") ? 1 : 0;
+        }
+    }
+    
+    // $rimlightexponent - sharpness of rim light
+    if (contentLower.find("$rimlightexponent") != std::string::npos) {
+        std::string val = findValue("$rimlightexponent");
+        if (!val.empty()) {
+            try {
+                outProps.rimLightExponent = std::stof(val);
+                outProps.hasRimLightExponent = true;
+            } catch (...) {}
+        }
+    }
+    
+    // $rimlightboost - intensity of rim light
+    if (contentLower.find("$rimlightboost") != std::string::npos) {
+        std::string val = findValue("$rimlightboost");
+        if (!val.empty()) {
+            try {
+                outProps.rimLightBoost = std::stof(val);
+                outProps.hasRimLightBoost = true;
+            } catch (...) {}
+        }
+    }
+    
+    // $phongalbedotint - uses base color to tint phong highlight
+    if (contentLower.find("$phongalbedotint") != std::string::npos) {
+        std::string val = findValue("$phongalbedotint");
+        if (!val.empty()) {
+            outProps.hasPhongAlbedoTint = true;
+            outProps.phongAlbedoTint = (val == "1" || val == "true") ? 1 : 0;
+        }
+    }
+    
+    // $phongalbedoboost - boost for albedo tint effect
+    if (contentLower.find("$phongalbedoboost") != std::string::npos) {
+        std::string val = findValue("$phongalbedoboost");
+        if (!val.empty()) {
+            try {
+                outProps.phongAlbedoBoost = std::stof(val);
+                outProps.hasPhongAlbedoBoost = true;
+            } catch (...) {}
+        }
+    }
+    
+    // $phongtint - direct tint for phong highlight
+    if (contentLower.find("$phongtint") != std::string::npos) {
+        if (parseVector3("$phongtint", outProps.phongTint)) {
+            outProps.hasPhongTint = true;
+        }
+    }
+    
+    // $parallaxmap - heightmap texture for parallax effect
+    if (contentLower.find("$parallaxmap") != std::string::npos) {
+        outProps.parallaxMap = findValue("$parallaxmap");
+        outProps.hasParallaxMap = !outProps.parallaxMap.empty();
+    }
+    
+    // $parallaxmapscale - depth scale for parallax effect
+    if (contentLower.find("$parallaxmapscale") != std::string::npos) {
+        std::string val = findValue("$parallaxmapscale");
+        if (!val.empty()) {
+            try {
+                outProps.parallaxMapScale = std::stof(val);
+                outProps.hasParallaxMapScale = true;
+            } catch (...) {}
+        }
+    }
+    
+    // $envmapcontrast - contrast for environment reflections
+    if (contentLower.find("$envmapcontrast") != std::string::npos) {
+        std::string val = findValue("$envmapcontrast");
+        if (!val.empty()) {
+            try {
+                outProps.envMapContrast = std::stof(val);
+                outProps.hasEnvMapContrast = true;
+            } catch (...) {}
+        }
+    }
+    
+    // $envmapsaturation - saturation for environment reflections
+    if (contentLower.find("$envmapsaturation") != std::string::npos) {
+        std::string val = findValue("$envmapsaturation");
+        if (!val.empty()) {
+            try {
+                outProps.envMapSaturation = std::stof(val);
+                outProps.hasEnvMapSaturation = true;
+            } catch (...) {}
+        }
+    }
+    
     if (debugOutput) {
         Msg("[LegacyTextureProcessor] VMT direct parse for '%s':\n", materialName.c_str());
         Msg("  shader='%s', $basetexture='%s', $bumpmap='%s'\n",
@@ -2050,6 +2257,22 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
             outProps.phong, outProps.phongExponent, outProps.ssbump, outProps.hasEnvMap ? 1 : 0);
         if (outProps.hasEnvMapTint) {
             Msg("  $envmaptint=[%.2f %.2f %.2f]\n", outProps.envMapTint[0], outProps.envMapTint[1], outProps.envMapTint[2]);
+        }
+        // NEW: Log additional properties
+        if (outProps.hasSelfIllum && outProps.selfIllum) {
+            Msg("  $selfillum=1");
+            if (outProps.hasSelfIllumMask) Msg(", $selfillummask='%s'", outProps.selfIllumMask.c_str());
+            if (outProps.hasSelfIllumTint) Msg(", $selfillumtint=[%.2f %.2f %.2f]", outProps.selfIllumTint[0], outProps.selfIllumTint[1], outProps.selfIllumTint[2]);
+            Msg("\n");
+        }
+        if (outProps.hasRimLight && outProps.rimLight) {
+            Msg("  $rimlight=1, exponent=%.1f, boost=%.1f\n", outProps.rimLightExponent, outProps.rimLightBoost);
+        }
+        if (outProps.hasParallaxMap) {
+            Msg("  $parallaxmap='%s', scale=%.3f\n", outProps.parallaxMap.c_str(), outProps.parallaxMapScale);
+        }
+        if (outProps.hasEnvMapContrast || outProps.hasEnvMapSaturation) {
+            Msg("  $envmapcontrast=%.1f, $envmapsaturation=%.1f\n", outProps.envMapContrast, outProps.envMapSaturation);
         }
     }
     
@@ -2109,6 +2332,43 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     // Metallic detection from base texture brightness
     outProps.baseTextureBrightness = 0.5f;  // Default to mid-grey (non-metallic)
     outProps.hasBaseTextureBrightness = false;
+    
+    // NEW: Initialize additional properties
+    // Self-illumination / Emissive
+    outProps.selfIllumMaskPath = "";
+    outProps.hasSelfIllumMask = false;
+    outProps.selfIllumTint[0] = outProps.selfIllumTint[1] = outProps.selfIllumTint[2] = 1.0f;
+    outProps.hasSelfIllumTint = false;
+    
+    // Rim lighting
+    outProps.hasRimLight = false;
+    outProps.rimLightExponent = 4.0f;
+    outProps.rimLightBoost = 1.0f;
+    outProps.hasRimLightExponent = false;
+    outProps.hasRimLightBoost = false;
+    
+    // Additional phong properties
+    outProps.phongAlbedoTint = false;
+    outProps.phongAlbedoBoost = 1.0f;
+    outProps.hasPhongAlbedoBoost = false;
+    outProps.phongTint[0] = outProps.phongTint[1] = outProps.phongTint[2] = 1.0f;
+    outProps.hasPhongTint = false;
+    
+    // Parallax/heightmap
+    outProps.parallaxMapPath = "";
+    outProps.hasParallaxMap = false;
+    outProps.parallaxMapScale = 0.05f;
+    outProps.hasParallaxMapScale = false;
+    
+    // Additional envmap properties
+    outProps.envMapContrast = 0.0f;
+    outProps.hasEnvMapContrast = false;
+    outProps.envMapSaturation = 1.0f;
+    outProps.hasEnvMapSaturation = false;
+    
+    // Secondary envmap mask
+    outProps.envMapMask2Path = "";
+    outProps.hasEnvMapMask2 = false;
     
     // Get the shader name
     const char* shaderName = pMaterial->GetShaderName();
@@ -2599,6 +2859,96 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
             outProps.isSelfIllum = (pVar->GetIntValue() == 1);
         }
     }
+    
+    // =========================================================================
+    // NEW: Copy additional VMT-parsed properties for comprehensive PBR extraction
+    // =========================================================================
+    
+    // $selfillummask - separate emissive mask texture
+    if (hasVMTParsed && vmtParsed.hasSelfIllumMask && IsValidTexturePath(vmtParsed.selfIllumMask)) {
+        outProps.selfIllumMaskPath = vmtParsed.selfIllumMask;
+        outProps.hasSelfIllumMask = true;
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: $selfillummask (from VMT) = %s\n", materialName.c_str(), outProps.selfIllumMaskPath.c_str());
+        }
+    }
+    
+    // $selfillumtint - tint color for self-illumination
+    if (hasVMTParsed && vmtParsed.hasSelfIllumTint) {
+        outProps.selfIllumTint[0] = vmtParsed.selfIllumTint[0];
+        outProps.selfIllumTint[1] = vmtParsed.selfIllumTint[1];
+        outProps.selfIllumTint[2] = vmtParsed.selfIllumTint[2];
+        outProps.hasSelfIllumTint = true;
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: $selfillumtint (from VMT) = [%.2f %.2f %.2f]\n", 
+                materialName.c_str(), outProps.selfIllumTint[0], outProps.selfIllumTint[1], outProps.selfIllumTint[2]);
+        }
+    }
+    
+    // Rim lighting properties
+    if (hasVMTParsed && vmtParsed.hasRimLight) {
+        outProps.hasRimLight = (vmtParsed.rimLight != 0);
+        if (m_debugOutput && outProps.hasRimLight) {
+            Msg("[LegacyTextureProcessor] %s: $rimlight=1 (from VMT)\n", materialName.c_str());
+        }
+    }
+    if (hasVMTParsed && vmtParsed.hasRimLightExponent) {
+        outProps.rimLightExponent = vmtParsed.rimLightExponent;
+        outProps.hasRimLightExponent = true;
+    }
+    if (hasVMTParsed && vmtParsed.hasRimLightBoost) {
+        outProps.rimLightBoost = vmtParsed.rimLightBoost;
+        outProps.hasRimLightBoost = true;
+    }
+    
+    // Additional phong properties
+    if (hasVMTParsed && vmtParsed.hasPhongAlbedoTint) {
+        outProps.phongAlbedoTint = (vmtParsed.phongAlbedoTint != 0);
+    }
+    if (hasVMTParsed && vmtParsed.hasPhongAlbedoBoost) {
+        outProps.phongAlbedoBoost = vmtParsed.phongAlbedoBoost;
+        outProps.hasPhongAlbedoBoost = true;
+    }
+    if (hasVMTParsed && vmtParsed.hasPhongTint) {
+        outProps.phongTint[0] = vmtParsed.phongTint[0];
+        outProps.phongTint[1] = vmtParsed.phongTint[1];
+        outProps.phongTint[2] = vmtParsed.phongTint[2];
+        outProps.hasPhongTint = true;
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: $phongtint (from VMT) = [%.2f %.2f %.2f]\n", 
+                materialName.c_str(), outProps.phongTint[0], outProps.phongTint[1], outProps.phongTint[2]);
+        }
+    }
+    
+    // Parallax/heightmap
+    if (hasVMTParsed && vmtParsed.hasParallaxMap && IsValidTexturePath(vmtParsed.parallaxMap)) {
+        outProps.parallaxMapPath = vmtParsed.parallaxMap;
+        outProps.hasParallaxMap = true;
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: $parallaxmap (from VMT) = %s\n", materialName.c_str(), outProps.parallaxMapPath.c_str());
+        }
+    }
+    if (hasVMTParsed && vmtParsed.hasParallaxMapScale) {
+        outProps.parallaxMapScale = vmtParsed.parallaxMapScale;
+        outProps.hasParallaxMapScale = true;
+    }
+    
+    // Additional envmap properties
+    if (hasVMTParsed && vmtParsed.hasEnvMapContrast) {
+        outProps.envMapContrast = vmtParsed.envMapContrast;
+        outProps.hasEnvMapContrast = true;
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: $envmapcontrast (from VMT) = %.2f\n", materialName.c_str(), outProps.envMapContrast);
+        }
+    }
+    if (hasVMTParsed && vmtParsed.hasEnvMapSaturation) {
+        outProps.envMapSaturation = vmtParsed.envMapSaturation;
+        outProps.hasEnvMapSaturation = true;
+    }
+    
+    // =========================================================================
+    // END: Additional VMT-parsed properties
+    // =========================================================================
     
     // Get $translucent - prefer VMT-parsed value
     if (hasVMTParsed && vmtParsed.hasTranslucent) {

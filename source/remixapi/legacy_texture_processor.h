@@ -140,6 +140,42 @@ struct MaterialPBRProperties {
     // Metallic detection from base texture darkness
     float baseTextureBrightness;    // Average brightness of base texture (0.0 = black, 1.0 = white)
     bool hasBaseTextureBrightness;  // Whether we successfully analyzed the base texture
+    
+    // Self-illumination / Emissive properties
+    std::string selfIllumMaskPath;  // $selfillummask - separate mask texture for emissive areas
+    bool hasSelfIllumMask;
+    float selfIllumTint[3];         // $selfillumtint - tint color for self-illumination
+    bool hasSelfIllumTint;
+    
+    // Rim lighting properties (affects specular appearance)
+    bool hasRimLight;               // $rimlight - enables rim lighting
+    float rimLightExponent;         // $rimlightexponent - sharpness of rim light
+    float rimLightBoost;            // $rimlightboost - intensity of rim light
+    bool hasRimLightExponent;
+    bool hasRimLightBoost;
+    
+    // Additional phong properties
+    bool phongAlbedoTint;           // $phongalbedotint - uses base color to tint phong highlight
+    float phongAlbedoBoost;         // $phongalbedoboost - boost for albedo tint
+    bool hasPhongAlbedoBoost;
+    float phongTint[3];             // $phongtint - direct tint for phong highlight
+    bool hasPhongTint;
+    
+    // Parallax/heightmap properties (for displacement)
+    std::string parallaxMapPath;    // $parallaxmap - heightmap for parallax effect
+    bool hasParallaxMap;
+    float parallaxMapScale;         // $parallaxmapscale - depth scale for parallax
+    bool hasParallaxMapScale;
+    
+    // Additional envmap properties
+    float envMapContrast;           // $envmapcontrast - contrast for environment reflections
+    bool hasEnvMapContrast;
+    float envMapSaturation;         // $envmapsaturation - saturation for environment reflections
+    bool hasEnvMapSaturation;
+    
+    // Additional texture masks
+    std::string envMapMask2Path;    // $envmapmask2 - secondary envmap mask (rare)
+    bool hasEnvMapMask2;
 };
 
 // Main converter class - core VTF to DDS/PBR conversion
