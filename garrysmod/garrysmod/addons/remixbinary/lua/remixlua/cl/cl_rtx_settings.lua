@@ -196,6 +196,10 @@ if BRANCH == "x86-64" or BRANCH == "chromium" then
             panel:ControlHelp("Generate metallic maps from base texture brightness.")
             panel:ControlHelp("WARNING: May cause dark materials to appear completely black!")
             
+            -- Auto-discover companion textures
+            local autodiscoverCheckbox = panel:CheckBox("Auto-Discover Textures", "rtx_topbr_autodiscover")
+            panel:ControlHelp("Search for companion textures (_normal, _mask, _spec) not in VMT.")
+            
             -- Debug output toggle
             local debugCheckbox = panel:CheckBox("Debug Output", "rtx_topbr_debug")
             panel:ControlHelp("Shows debug messages in console for troubleshooting.")
@@ -228,6 +232,7 @@ if BRANCH == "x86-64" or BRANCH == "chromium" then
                 if autoCheckbox then autoCheckbox:SetEnabled(enabled) end
                 if delaySlider then delaySlider:SetEnabled(enabled) end
                 if metallicCheckbox then metallicCheckbox:SetEnabled(enabled) end
+                if autodiscoverCheckbox then autodiscoverCheckbox:SetEnabled(enabled) end
                 if processButton then processButton:SetEnabled(enabled) end
                 if statsButton then statsButton:SetEnabled(enabled) end
                 if clearButton then clearButton:SetEnabled(enabled) end

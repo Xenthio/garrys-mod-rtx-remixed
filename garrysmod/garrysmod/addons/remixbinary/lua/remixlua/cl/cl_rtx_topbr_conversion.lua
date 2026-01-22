@@ -23,6 +23,7 @@ CreateClientConVar("rtx_topbr_auto", "1", true, false, "Auto-process materials o
 CreateClientConVar("rtx_topbr_debug", "0", true, false, "Enable debug output")
 CreateClientConVar("rtx_topbr_delay", "5", true, false, "Delay before auto-processing (seconds)")
 CreateClientConVar("rtx_topbr_metallic", "0", true, false, "Enable experimental metallic generation from base texture brightness (may cause black materials)")
+CreateClientConVar("rtx_topbr_autodiscover", "1", true, false, "Auto-discover companion textures (_normal, _mask, _spec) not explicitly referenced in VMT")
 
 -- Module table
 RTXToPBR = RTXToPBR or {}
@@ -299,6 +300,17 @@ concommand.Add("rtx_topbr_metallic", function(ply, cmd, args)
     end
 end, nil, "Enable/disable experimental metallic generation (WARNING: may cause dark materials to appear black)")
 
+concommand.Add("rtx_topbr_autodiscover", function(ply, cmd, args)
+    local enabled = args[1] == "1" or args[1] == "true"
+    local processor = GetProcessor()
+    if processor and processor.SetAutoDiscover then
+        processor.SetAutoDiscover(enabled)
+        RunConsoleCommand("rtx_topbr_autodiscover", enabled and "1" or "0")
+    else
+        MsgC(Color(255, 100, 100), "[RTX ToPBR] Auto-discover not available (module not loaded)\n")
+    end
+end, nil, "Enable/disable auto-discovery of companion textures (_normal, _mask, _spec)")
+
 concommand.Add("rtx_topbr_help", function()
     MsgC(Color(100, 200, 255), "\n[RTX ToPBR] Runtime PBR Material Converter\n")
     MsgC(Color(100, 200, 255), string.rep("=", 60) .. "\n")
@@ -320,14 +332,24 @@ Commands:
   rtx_topbr_debug 1/0  - Enable/disable debug output
   rtx_topbr_metallic 1/0 - Enable/disable experimental metallic
                           generation (WARNING: may cause black materials)
+  rtx_topbr_autodiscover 1/0 - Enable/disable auto-discovery of 
+                          companion textures (_normal, _mask, _spec)
   rtx_topbr_help       - Show this help
 
 ConVars:
-  rtx_topbr_enabled   - Enable/disable conversion (default: 1)
-  rtx_topbr_auto      - Auto-process on map load (default: 1)
-  rtx_topbr_delay     - Delay before auto-processing (default: 5)
-  rtx_topbr_debug     - Debug output (default: 0)
-  rtx_topbr_metallic  - Experimental metallic generation (default: 0)
+  rtx_topbr_enabled    - Enable/disable conversion (default: 1)
+  rtx_topbr_auto       - Auto-process on map load (default: 1)
+  rtx_topbr_delay      - Delay before auto-processing (default: 5)
+  rtx_topbr_debug      - Debug output (default: 0)
+  rtx_topbr_metallic   - Experimental metallic generation (default: 0)
+  rtx_topbr_autodiscover - Auto-discover companion textures (default: 1)
+
+Roughness Priority (phong materials are handled first):
+1. $phongexponenttexture (best quality)
+2. $basemapalphaphongmask / $normalmapalphaenvmapmask
+3. $envmapmask texture
+4. Auto-discovered _mask/_spec textures
+5. Base texture alpha with envmap
 
 Note: Dark envmap materials (chrome balls, etc.) use low roughness
 for reflections by default. The experimental metallic mode attempts

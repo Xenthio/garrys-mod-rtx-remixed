@@ -119,6 +119,7 @@ TextureProcessor::TextureProcessor()
     , m_autoProcessing(true)
     , m_debugOutput(false)
     , m_metallicGenerationEnabled(false)  // Disabled by default - experimental feature
+    , m_autoDiscoverEnabled(true)         // Enabled by default - helps find unreferenced textures
     , m_needsUSDAUpdate(false) {
     m_stats = {};
 }
@@ -382,20 +383,33 @@ bool TextureProcessor::WriteTextureToDDS(const ConvertedTexture& texture, const 
 }
 
 bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& props, ConvertedTexture& outTexture) {
-    // Check for roughness sources in order of preference:
-    // 1. $phongexponenttexture - best source, per-pixel phong exponent
-    // 2. $normalmapalphaenvmapmask - use normal map's alpha channel
-    // 3. $phong with $bumpmap - Source Engine uses normal map alpha as phong mask by default!
-    // 4. $basemapalphaphongmask - use base texture alpha as mask
-    // 5. $envmapmask - use separate envmap mask texture
-    // Otherwise, return false and let the USDA use a constant value instead
+    // =========================================================================
+    // ROUGHNESS SOURCE PRIORITY (reorganized with phong-first approach)
+    // =========================================================================
+    // PHONG MATERIALS ($phong=1): Use phong-specific properties first
+    //   1. $phongexponenttexture - dedicated per-pixel phong exponent (BEST)
+    //   2. $basemapalphaphongmask - base texture alpha as phong mask  
+    //   3. $normalmapalphaenvmapmask - normal map alpha as phong mask
+    //   4. $phong + $bumpmap - default Source Engine behavior (normal alpha)
+    //
+    // NON-PHONG MATERIALS: Use envmap-based properties
+    //   5. $envmapmask - separate envmap mask texture
+    //   6. $basealphaenvmapmask - base texture alpha as envmap mask
+    //   7. Auto-discovered _mask/_spec textures
+    //   8. $envmap + normal map alpha as last resort
+    //   9. $envmap + base texture alpha as last resort
+    //
+    // If no valid source, return false -> use constant roughness in USDA
+    // =========================================================================
     
     if (m_debugOutput) {
         Msg("[LegacyTextureProcessor] GenerateRoughnessTexture for %s:\n", props.materialName.c_str());
-        Msg("  hasPhongExpTex=%d (%s)\n", props.hasPhongExponentTexture, props.phongExponentTexturePath.c_str());
-        Msg("  normMapAlphaEnvMapMask=%d, hasPhong=%d, hasBump=%d (%s)\n", props.normalMapAlphaEnvMapMask, props.hasPhong, props.hasBumpMap, props.bumpMapPath.c_str());
-        Msg("  hasBaseMapAlphaPhongMask=%d, hasBaseAlphaEnvMapMask=%d\n", props.hasBaseMapAlphaPhongMask, props.hasBaseAlphaEnvMapMask);
-        Msg("  hasEnvMapMask=%d (%s), hasEnvMap=%d\n", props.hasEnvMapMask, props.envMapMaskPath.c_str(), props.hasEnvMap);
+        Msg("  hasPhong=%d, hasPhongExpTex=%d (%s)\n", props.hasPhong, props.hasPhongExponentTexture, props.phongExponentTexturePath.c_str());
+        Msg("  normMapAlphaEnvMapMask=%d, hasBaseMapAlphaPhongMask=%d\n", props.normalMapAlphaEnvMapMask, props.hasBaseMapAlphaPhongMask);
+        Msg("  hasBump=%d (%s)\n", props.hasBumpMap, props.bumpMapPath.c_str());
+        Msg("  hasEnvMapMask=%d (%s), hasBaseAlphaEnvMapMask=%d\n", props.hasEnvMapMask, props.envMapMaskPath.c_str(), props.hasBaseAlphaEnvMapMask);
+        Msg("  hasEnvMap=%d, hasEnvMapTint=%d\n", props.hasEnvMap, props.hasEnvMapTint);
+        Msg("  hasDiscoveredMask=%d (%s)\n", props.hasDiscoveredMask, props.discoveredMaskPath.c_str());
         Msg("  baseTexturePath=%s\n", props.baseTexturePath.c_str());
     }
     
@@ -404,91 +418,105 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
     bool isPhongExponentTexture = false;
     bool isInvertedMask = false;  // For $basealphaenvmapmask where white=masked(matte), black=reflective(shiny)
     
-    if (props.hasPhongExponentTexture && !props.phongExponentTexturePath.empty()) {
-        // Use the phong exponent texture - best source!
-        vtfPath = props.phongExponentTexturePath;
-        useAlphaChannel = false;
-        isPhongExponentTexture = true;
-        if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: Using $phongexponenttexture for roughness (best quality)\n", props.materialName.c_str());
+    // =========================================================================
+    // PHONG MATERIAL PATH - prioritize phong-specific properties
+    // =========================================================================
+    if (props.hasPhong) {
+        // Priority 1: $phongexponenttexture (best quality - dedicated roughness data)
+        if (props.hasPhongExponentTexture && !props.phongExponentTexturePath.empty()) {
+            vtfPath = props.phongExponentTexturePath;
+            useAlphaChannel = false;
+            isPhongExponentTexture = true;
+            if (m_debugOutput) {
+                Msg("[LegacyTextureProcessor] %s: [PHONG] Using $phongexponenttexture (best quality)\n", props.materialName.c_str());
+            }
         }
-    } else if (props.normalMapAlphaEnvMapMask && props.hasBumpMap && !props.bumpMapPath.empty()) {
-        // Use the normal map's alpha channel as the roughness source (explicit flag)
-        vtfPath = props.bumpMapPath;
-        useAlphaChannel = true;
-        if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: Using normal map alpha channel for roughness ($normalmapalphaenvmapmask)\n", props.materialName.c_str());
+        // Priority 2: $basemapalphaphongmask - base texture alpha as phong mask
+        else if (props.hasBaseMapAlphaPhongMask && !props.baseTexturePath.empty()) {
+            vtfPath = props.baseTexturePath;
+            useAlphaChannel = true;
+            if (m_debugOutput) {
+                Msg("[LegacyTextureProcessor] %s: [PHONG] Using base texture alpha ($basemapalphaphongmask)\n", props.materialName.c_str());
+            }
         }
-    } else if (props.hasPhong && props.hasBumpMap && !props.bumpMapPath.empty()) {
-        // Source Engine default behavior: when $phong is enabled, the normal map's alpha
-        // channel contains the phong mask (determines which areas get specular highlights)
-        // This is the DEFAULT behavior in Source, not just when $normalmapalphaenvmapmask is set
-        vtfPath = props.bumpMapPath;
-        useAlphaChannel = true;
-        if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: Using normal map alpha as phong mask (default Source behavior)\n", props.materialName.c_str());
+        // Priority 3: $normalmapalphaenvmapmask - normal map alpha as mask
+        else if (props.normalMapAlphaEnvMapMask && props.hasBumpMap && !props.bumpMapPath.empty()) {
+            vtfPath = props.bumpMapPath;
+            useAlphaChannel = true;
+            if (m_debugOutput) {
+                Msg("[LegacyTextureProcessor] %s: [PHONG] Using normal map alpha ($normalmapalphaenvmapmask)\n", props.materialName.c_str());
+            }
         }
-    } else if (props.hasBaseMapAlphaPhongMask && !props.baseTexturePath.empty()) {
-        // Use the base texture's alpha channel as phong mask
-        vtfPath = props.baseTexturePath;
-        useAlphaChannel = true;
-        if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: Using base texture alpha for roughness ($basemapalphaphongmask)\n", props.materialName.c_str());
+        // Priority 4: Default Source Engine behavior - phong + bumpmap = normal alpha has phong mask
+        else if (props.hasBumpMap && !props.bumpMapPath.empty()) {
+            vtfPath = props.bumpMapPath;
+            useAlphaChannel = true;
+            if (m_debugOutput) {
+                Msg("[LegacyTextureProcessor] %s: [PHONG] Using normal map alpha (default Source behavior)\n", props.materialName.c_str());
+            }
         }
-    } else if (props.hasBaseAlphaEnvMapMask && !props.baseTexturePath.empty()) {
-        // Use the base texture's alpha channel as envmap mask (common in LightmappedGeneric brushes)
-        // NOTE: $basealphaenvmapmask is INVERTED: white (255) = masked/no reflection, black (0) = reflective
-        vtfPath = props.baseTexturePath;
-        useAlphaChannel = true;
-        isInvertedMask = true;  // This mask type is inverted!
-        if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: Using base texture alpha for roughness ($basealphaenvmapmask - INVERTED mask)\n", props.materialName.c_str());
+    }
+    
+    // =========================================================================
+    // NON-PHONG / FALLBACK PATH - use envmap-based properties
+    // =========================================================================
+    if (vtfPath.empty()) {
+        // Priority 5: $envmapmask - separate envmap mask texture
+        if (props.hasEnvMapMask && !props.envMapMaskPath.empty()) {
+            vtfPath = props.envMapMaskPath;
+            useAlphaChannel = false;
+            if (m_debugOutput) {
+                Msg("[LegacyTextureProcessor] %s: Using $envmapmask for roughness\n", props.materialName.c_str());
+            }
         }
-    } else if (props.hasEnvMapMask && !props.envMapMaskPath.empty()) {
-        // Use the envmap mask texture
-        vtfPath = props.envMapMaskPath;
-        useAlphaChannel = false;
-        if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: Using envmap mask for roughness\n", props.materialName.c_str());
+        // Priority 6: $basealphaenvmapmask - base texture alpha as envmap mask (INVERTED!)
+        else if (props.hasBaseAlphaEnvMapMask && !props.baseTexturePath.empty()) {
+            vtfPath = props.baseTexturePath;
+            useAlphaChannel = true;
+            isInvertedMask = true;
+            if (m_debugOutput) {
+                Msg("[LegacyTextureProcessor] %s: Using base texture alpha ($basealphaenvmapmask - INVERTED)\n", props.materialName.c_str());
+            }
         }
-    } else if ((props.hasEnvMap || props.hasEnvMapTint) && props.hasBumpMap && !props.bumpMapPath.empty()) {
-        // FALLBACK for $normalmapalphaenvmapmask: If $envmap or $envmaptint is set and we have a bumpmap,
-        // try using normal map alpha first (implicit $normalmapalphaenvmapmask behavior)
-        // This handles cases where FindVar doesn't find $normalmapalphaenvmapmask but it's set in VMT
-        vtfPath = props.bumpMapPath;
-        useAlphaChannel = true;
-        if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: Trying normal map alpha as fallback roughness (implicit $normalmapalphaenvmapmask)\n", props.materialName.c_str());
+        // Priority 7: Auto-discovered _mask/_spec textures
+        else if (props.hasDiscoveredMask && !props.discoveredMaskPath.empty()) {
+            vtfPath = props.discoveredMaskPath;
+            useAlphaChannel = false;  // Use the RGB channels of the discovered mask
+            if (m_debugOutput) {
+                Msg("[LegacyTextureProcessor] %s: Using auto-discovered mask/spec texture: %s\n", props.materialName.c_str(), props.discoveredMaskPath.c_str());
+            }
         }
-    } else if ((props.hasEnvMap || props.hasEnvMapTint) && !props.baseTexturePath.empty()) {
-        // FALLBACK: If $envmap or $envmaptint is set but no explicit roughness source,
-        // try using base texture alpha as envmap mask (implicit $basealphaenvmapmask behavior)
-        // This handles cases where FindVar doesn't find $basealphaenvmapmask but it's set in VMT
-        // NOTE: $basealphaenvmapmask is INVERTED: white (255) = masked/no reflection, black (0) = reflective
-        vtfPath = props.baseTexturePath;
-        useAlphaChannel = true;
-        isInvertedMask = true;  // This mask type is inverted!
-        if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: Trying base texture alpha as fallback roughness (implicit envmap alpha - INVERTED)\n", props.materialName.c_str());
+        // Priority 8: $envmap + normal map alpha (implicit $normalmapalphaenvmapmask)
+        else if ((props.hasEnvMap || props.hasEnvMapTint) && props.hasBumpMap && !props.bumpMapPath.empty()) {
+            vtfPath = props.bumpMapPath;
+            useAlphaChannel = true;
+            if (m_debugOutput) {
+                Msg("[LegacyTextureProcessor] %s: Trying normal map alpha (implicit envmap roughness)\n", props.materialName.c_str());
+            }
         }
-    } else if (props.hasBumpMap && !props.bumpMapPath.empty()) {
-        // LAST RESORT: If we have a bumpmap but couldn't detect envmap reliably,
-        // try normal map alpha anyway. The alpha variation check will filter out
-        // normal maps without useful alpha data. This handles cases where:
-        // - $envmap is set but FindVar returns UNDEFINED
-        // - $normalmapalphaenvmapmask is set but FindVar doesn't find it
-        vtfPath = props.bumpMapPath;
-        useAlphaChannel = true;
-        if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: Last resort - trying normal map alpha (FindVar limitations)\n", props.materialName.c_str());
+        // Priority 9: $envmap + base texture alpha (implicit $basealphaenvmapmask)
+        else if ((props.hasEnvMap || props.hasEnvMapTint) && !props.baseTexturePath.empty()) {
+            vtfPath = props.baseTexturePath;
+            useAlphaChannel = true;
+            isInvertedMask = true;
+            if (m_debugOutput) {
+                Msg("[LegacyTextureProcessor] %s: Trying base texture alpha (implicit envmap - INVERTED)\n", props.materialName.c_str());
+            }
         }
-    } else {
-        // NO REFLECTIVE PROPERTIES - don't try to generate roughness texture
-        // Materials without $envmap, $phong, $envmaptint, etc. should just use constant roughness
-        // This prevents matte materials from incorrectly getting roughness textures
-        // No texture source for roughness - use constant in USDA
+        // Priority 10 (LAST RESORT): Try normal map alpha anyway for materials with bumpmap
+        else if (props.hasBumpMap && !props.bumpMapPath.empty()) {
+            vtfPath = props.bumpMapPath;
+            useAlphaChannel = true;
+            if (m_debugOutput) {
+                Msg("[LegacyTextureProcessor] %s: Last resort - trying normal map alpha\n", props.materialName.c_str());
+            }
+        }
+    }
+    
+    // No valid roughness source found - use constant value in USDA
+    if (vtfPath.empty()) {
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] No roughness texture source for %s, will use roughness constant %.2f\n",
+            Msg("[LegacyTextureProcessor] No roughness texture source for %s, will use constant %.2f\n",
                 props.materialName.c_str(), props.roughness);
         }
         return false;
@@ -1700,6 +1728,112 @@ bool TextureProcessor::AnalyzeBaseTextureBrightness(const std::string& texturePa
     return true;
 }
 
+// Discover companion textures that might not be explicitly referenced in the VMT
+// E.g., if basetexture is "metal/metal001", look for "metal/metal001_normal", "_height", "_mask", "_spec"
+void TextureProcessor::DiscoverCompanionTextures(const std::string& baseTexturePath, MaterialPBRProperties& props) {
+    // Initialize discovered texture flags
+    props.hasDiscoveredNormal = false;
+    props.hasDiscoveredHeight = false;
+    props.hasDiscoveredMask = false;
+    props.hasDiscoveredAO = false;
+    props.discoveredNormalPath = "";
+    props.discoveredHeightPath = "";
+    props.discoveredMaskPath = "";
+    props.discoveredAOPath = "";
+    
+    if (baseTexturePath.empty() || !m_autoDiscoverEnabled) {
+        return;
+    }
+    
+    // Get the base path without extension
+    std::string basePath = baseTexturePath;
+    
+    // Remove any .vtf extension if present
+    size_t extPos = basePath.rfind(".vtf");
+    if (extPos != std::string::npos) {
+        basePath = basePath.substr(0, extPos);
+    }
+    extPos = basePath.rfind(".VTF");
+    if (extPos != std::string::npos) {
+        basePath = basePath.substr(0, extPos);
+    }
+    
+    if (m_debugOutput) {
+        Msg("[LegacyTextureProcessor] Searching for companion textures for: %s\n", basePath.c_str());
+    }
+    
+    // List of suffix variants to check for each type
+    // We'll try to read the VTF file to verify it exists
+    
+    // Helper lambda to check if a VTF texture exists
+    auto TextureExists = [this](const std::string& texPath) -> bool {
+        std::vector<uint8_t> fileData;
+        return ReadVTFFile(texPath, fileData);
+    };
+    
+    // Normal map variants - only discover if we don't already have a bumpmap
+    if (!props.hasBumpMap) {
+        const char* normalSuffixes[] = { "_normal", "_n", "_norm", "_nrm", "_Normal", "_N" };
+        for (const char* suffix : normalSuffixes) {
+            std::string candidatePath = basePath + suffix;
+            if (TextureExists(candidatePath)) {
+                props.discoveredNormalPath = candidatePath;
+                props.hasDiscoveredNormal = true;
+                if (m_debugOutput) {
+                    Msg("[LegacyTextureProcessor] Discovered normal map: %s\n", candidatePath.c_str());
+                }
+                break;
+            }
+        }
+    }
+    
+    // Height/parallax map variants - only discover if we don't already have one
+    if (!props.hasParallaxMap) {
+        const char* heightSuffixes[] = { "_height", "_h", "_bump", "_disp", "_Height", "_H" };
+        for (const char* suffix : heightSuffixes) {
+            std::string candidatePath = basePath + suffix;
+            if (TextureExists(candidatePath)) {
+                props.discoveredHeightPath = candidatePath;
+                props.hasDiscoveredHeight = true;
+                if (m_debugOutput) {
+                    Msg("[LegacyTextureProcessor] Discovered height map: %s\n", candidatePath.c_str());
+                }
+                break;
+            }
+        }
+    }
+    
+    // Mask/spec map variants (for roughness) - only discover if we don't have any roughness source
+    if (!props.hasEnvMapMask && !props.hasPhongExponentTexture) {
+        const char* maskSuffixes[] = { "_mask", "_spec", "_gloss", "_roughness", "_s", "_Mask", "_Spec" };
+        for (const char* suffix : maskSuffixes) {
+            std::string candidatePath = basePath + suffix;
+            if (TextureExists(candidatePath)) {
+                props.discoveredMaskPath = candidatePath;
+                props.hasDiscoveredMask = true;
+                if (m_debugOutput) {
+                    Msg("[LegacyTextureProcessor] Discovered mask/spec map: %s\n", candidatePath.c_str());
+                }
+                break;
+            }
+        }
+    }
+    
+    // AO (ambient occlusion) map variants
+    const char* aoSuffixes[] = { "_ao", "_occlusion", "_AO", "_Occlusion" };
+    for (const char* suffix : aoSuffixes) {
+        std::string candidatePath = basePath + suffix;
+        if (TextureExists(candidatePath)) {
+            props.discoveredAOPath = candidatePath;
+            props.hasDiscoveredAO = true;
+            if (m_debugOutput) {
+                Msg("[LegacyTextureProcessor] Discovered AO map: %s\n", candidatePath.c_str());
+            }
+            break;
+        }
+    }
+}
+
 // Helper function to check if a file exists
 static bool FileExists(const std::string& path) {
     std::ifstream file(path, std::ios::binary);
@@ -2369,6 +2503,16 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     // Secondary envmap mask
     outProps.envMapMask2Path = "";
     outProps.hasEnvMapMask2 = false;
+    
+    // Auto-discovered companion textures
+    outProps.discoveredNormalPath = "";
+    outProps.hasDiscoveredNormal = false;
+    outProps.discoveredHeightPath = "";
+    outProps.hasDiscoveredHeight = false;
+    outProps.discoveredMaskPath = "";
+    outProps.hasDiscoveredMask = false;
+    outProps.discoveredAOPath = "";
+    outProps.hasDiscoveredAO = false;
     
     // Get the shader name
     const char* shaderName = pMaterial->GetShaderName();
@@ -3058,6 +3202,32 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
             if (m_debugOutput) {
                 Msg("[LegacyTextureProcessor] %s: Base texture brightness=%.3f (for metallic detection)\n",
                     materialName.c_str(), brightness);
+            }
+        }
+    }
+    
+    // Auto-discover companion textures that aren't explicitly referenced in the VMT
+    // This helps find textures that follow naming conventions (e.g., _normal, _mask, _spec)
+    if (m_autoDiscoverEnabled && !outProps.baseTexturePath.empty()) {
+        DiscoverCompanionTextures(outProps.baseTexturePath, outProps);
+        
+        // If we discovered a normal map and don't have one yet, use it
+        if (outProps.hasDiscoveredNormal && !outProps.hasBumpMap) {
+            outProps.bumpMapPath = outProps.discoveredNormalPath;
+            outProps.hasBumpMap = true;
+            if (m_debugOutput) {
+                Msg("[LegacyTextureProcessor] %s: Using auto-discovered normal map: %s\n", 
+                    materialName.c_str(), outProps.discoveredNormalPath.c_str());
+            }
+        }
+        
+        // If we discovered a height map and don't have one yet, use it
+        if (outProps.hasDiscoveredHeight && !outProps.hasParallaxMap) {
+            outProps.parallaxMapPath = outProps.discoveredHeightPath;
+            outProps.hasParallaxMap = true;
+            if (m_debugOutput) {
+                Msg("[LegacyTextureProcessor] %s: Using auto-discovered height map: %s\n", 
+                    materialName.c_str(), outProps.discoveredHeightPath.c_str());
             }
         }
     }
@@ -3918,6 +4088,30 @@ LUA_FUNCTION(LegacyTextureProcessor_IsMetallicGenerationEnabled) {
     return 1;
 }
 
+LUA_FUNCTION(LegacyTextureProcessor_SetAutoDiscover) {
+    if (!LUA->IsType(1, Type::Bool)) {
+        LUA->ThrowError("Expected boolean for auto-discover");
+        return 0;
+    }
+    
+    bool enabled = LUA->GetBool(1);
+    TextureProcessor::Instance().SetAutoDiscover(enabled);
+    
+    if (enabled) {
+        Msg("[LegacyTextureProcessor] Texture auto-discovery ENABLED (default)\n");
+        Msg("[LegacyTextureProcessor] Will search for companion textures like _normal, _mask, _spec\n");
+    } else {
+        Msg("[LegacyTextureProcessor] Texture auto-discovery DISABLED\n");
+        Msg("[LegacyTextureProcessor] Only explicitly referenced textures will be used\n");
+    }
+    return 0;
+}
+
+LUA_FUNCTION(LegacyTextureProcessor_IsAutoDiscoverEnabled) {
+    LUA->PushBool(TextureProcessor::Instance().IsAutoDiscoverEnabled());
+    return 1;
+}
+
 LUA_FUNCTION(LegacyTextureProcessor_GetStats) {
     auto stats = TextureProcessor::Instance().GetStats();
     
@@ -4121,6 +4315,12 @@ void InitializeLegacyTextureProcessorLuaBindings(GarrysMod::Lua::ILuaBase* LUA) 
     LUA->PushCFunction(LegacyTextureProcessor_IsMetallicGenerationEnabled);
     LUA->SetField(-2, "IsMetallicGenerationEnabled");
     
+    LUA->PushCFunction(LegacyTextureProcessor_SetAutoDiscover);
+    LUA->SetField(-2, "SetAutoDiscover");
+    
+    LUA->PushCFunction(LegacyTextureProcessor_IsAutoDiscoverEnabled);
+    LUA->SetField(-2, "IsAutoDiscoverEnabled");
+    
     LUA->PushCFunction(LegacyTextureProcessor_GetStats);
     LUA->SetField(-2, "GetStats");
     
@@ -4173,6 +4373,12 @@ void InitializeLegacyTextureProcessorLuaBindings(GarrysMod::Lua::ILuaBase* LUA) 
     
     LUA->PushCFunction(LegacyTextureProcessor_IsMetallicGenerationEnabled);
     LUA->SetField(-2, "IsMetallicGenerationEnabled");
+    
+    LUA->PushCFunction(LegacyTextureProcessor_SetAutoDiscover);
+    LUA->SetField(-2, "SetAutoDiscover");
+    
+    LUA->PushCFunction(LegacyTextureProcessor_IsAutoDiscoverEnabled);
+    LUA->SetField(-2, "IsAutoDiscoverEnabled");
     
     LUA->PushCFunction(LegacyTextureProcessor_GetStats);
     LUA->SetField(-2, "GetStats");

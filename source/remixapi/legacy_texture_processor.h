@@ -176,6 +176,16 @@ struct MaterialPBRProperties {
     // Additional texture masks
     std::string envMapMask2Path;    // $envmapmask2 - secondary envmap mask (rare)
     bool hasEnvMapMask2;
+    
+    // Auto-discovered companion textures (not explicitly referenced in VMT)
+    std::string discoveredNormalPath;   // basetexture_normal (auto-discovered)
+    bool hasDiscoveredNormal;
+    std::string discoveredHeightPath;   // basetexture_height (auto-discovered)
+    bool hasDiscoveredHeight;
+    std::string discoveredMaskPath;     // basetexture_mask or basetexture_spec (auto-discovered)
+    bool hasDiscoveredMask;
+    std::string discoveredAOPath;       // basetexture_ao (auto-discovered)
+    bool hasDiscoveredAO;
 };
 
 // Main converter class - core VTF to DDS/PBR conversion
@@ -237,6 +247,12 @@ public:
     // Default: disabled - dark envmap materials will use low roughness instead
     void SetMetallicGeneration(bool enabled) { m_metallicGenerationEnabled = enabled; }
     bool IsMetallicGenerationEnabled() const { return m_metallicGenerationEnabled; }
+    
+    // Enable/disable auto-discovery of companion textures (e.g., _normal, _height, _mask)
+    // When enabled, searches for textures that follow naming conventions but aren't
+    // explicitly referenced in the VMT file. Default: enabled
+    void SetAutoDiscover(bool enabled) { m_autoDiscoverEnabled = enabled; }
+    bool IsAutoDiscoverEnabled() const { return m_autoDiscoverEnabled; }
     
     // Set output directory for generated textures
     void SetOutputDirectory(const std::string& path);
@@ -318,6 +334,10 @@ private:
     // Black textures + envmap = metallic, grey/colored textures + envmap = non-metallic
     bool AnalyzeBaseTextureBrightness(const std::string& texturePath, float& outBrightness);
     
+    // Discover companion textures that might not be explicitly referenced in the VMT
+    // E.g., if basetexture is "metal/metal001", look for "metal/metal001_normal", "_height", "_mask", "_spec"
+    void DiscoverCompanionTextures(const std::string& baseTexturePath, MaterialPBRProperties& props);
+    
     // Get filesystem interface
     IFileSystem* GetFileSystem();
     
@@ -327,6 +347,7 @@ private:
     bool m_autoProcessing;
     bool m_debugOutput;
     bool m_metallicGenerationEnabled;  // Experimental metallic generation from base texture brightness (default: false)
+    bool m_autoDiscoverEnabled;        // Auto-discover companion textures (default: true)
     std::string m_outputDirectory;       // Absolute output directory for writing DDS files
     
     // Cache of processed materials
