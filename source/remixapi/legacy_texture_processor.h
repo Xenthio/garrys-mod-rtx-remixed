@@ -368,10 +368,12 @@ private:
         std::string normalPath;
         std::string roughnessPath;
         std::string metallicPath;
+        std::string heightPath;       // Displacement/height map path
         std::string baseTexturePath;  // For non-Refract glass: used as transmittance_texture to color the glass
         std::string transmittancePath;  // For Refract glass: $refracttinttexture converted to DDS
         float roughnessConstant;
         float metallicConstant;
+        float heightScale;            // Displacement scale (from $parallaxmapscale, default 0.025)
         bool isGlass;               // Whether this material should use the translucent glass shader
         bool isRefractShader;       // Whether this is a Refract shader (don't use baseTexture for transmittance)
         float ior;                  // Index of Refraction (for glass, default 1.5)

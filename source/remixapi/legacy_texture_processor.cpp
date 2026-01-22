@@ -3267,6 +3267,7 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
     matInfo.textureHash = textureHash;
     matInfo.roughnessConstant = props.roughness;
     matInfo.metallicConstant = props.metallic;
+    matInfo.heightScale = 0.025f;  // Default height scale
     matInfo.isGlass = props.isGlass;
     matInfo.isRefractShader = props.isRefractShader;
     matInfo.ior = props.isGlass ? 1.5f : 1.0f;  // Default glass IOR is 1.5
@@ -3531,16 +3532,69 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
         }
     }
     
+    // Write height/displacement map to disk if available
+    // Use $parallaxmap or auto-discovered height map
+    std::string heightMapPath;
+    if (props.hasParallaxMap && !props.parallaxMapPath.empty()) {
+        heightMapPath = props.parallaxMapPath;
+    } else if (props.hasDiscoveredHeight && !props.discoveredHeightPath.empty()) {
+        heightMapPath = props.discoveredHeightPath;
+    }
+    
+    if (!heightMapPath.empty()) {
+        uint64_t heightHash = GenerateTextureHash(heightMapPath + "_height", 0, 0);
+        std::string expectedOutputPath = GenerateOutputPath(heightHash, "_height");
+        
+        // Check if the file already exists
+        if (FileExists(expectedOutputPath)) {
+            matInfo.heightPath = expectedOutputPath;
+            matInfo.heightScale = props.hasParallaxMapScale ? props.parallaxMapScale : 0.025f;
+            m_writtenTexturePaths[heightHash] = expectedOutputPath;
+            skippedCount++;
+            
+            if (m_debugOutput) {
+                Msg("[LegacyTextureProcessor] Skipping existing height texture: %s\n", expectedOutputPath.c_str());
+            }
+        } else {
+            std::vector<uint8_t> heightFileData;
+            if (ReadVTFFile(heightMapPath, heightFileData)) {
+                VTFFileHeader heightHeader;
+                if (ParseVTFHeader(heightFileData, heightHeader)) {
+                    ConvertedTexture heightTex;
+                    heightTex.isNormalMap = false;
+                    if (ExtractVTFPixelData(heightFileData, heightHeader, heightTex, false)) {
+                        heightTex.hash = GenerateTextureHash(heightMapPath + "_height", heightTex.width, heightTex.height);
+                        std::string outputPath = GenerateOutputPath(heightTex.hash, "_height");
+                        
+                        if (WriteTextureToDDS(heightTex, outputPath)) {
+                            matInfo.heightPath = outputPath;
+                            matInfo.heightScale = props.hasParallaxMapScale ? props.parallaxMapScale : 0.025f;
+                            m_writtenTexturePaths[heightTex.hash] = outputPath;
+                            
+                            if (m_debugOutput) {
+                                Msg("[LegacyTextureProcessor] Wrote height/displacement texture: %s (scale=%.4f)\n", 
+                                    outputPath.c_str(), matInfo.heightScale);
+                            }
+                        }
+                    }
+                }
+            } else if (m_debugOutput) {
+                Msg("[LegacyTextureProcessor] Failed to read height map: %s\n", heightMapPath.c_str());
+            }
+        }
+    }
+    
     // Store for USDA generation
     m_processedMaterialInfo[textureHash] = matInfo;
     m_stats.materialsProcessed++;
     
     if (m_debugOutput) {
-        Msg("[LegacyTextureProcessor] Processed material '%s' (hash 0x%llX): roughness=%.2f, metallic=%.2f%s%s%s%s\n",
+        Msg("[LegacyTextureProcessor] Processed material '%s' (hash 0x%llX): roughness=%.2f, metallic=%.2f%s%s%s%s%s\n",
             props.materialName.c_str(), textureHash, props.roughness, props.metallic,
             !matInfo.normalPath.empty() ? " [normal]" : "",
             !matInfo.roughnessPath.empty() ? " [roughness]" : "",
             !matInfo.metallicPath.empty() ? " [metallic]" : "",
+            !matInfo.heightPath.empty() ? " [height]" : "",
             skippedCount > 0 ? " (some textures already existed)" : "");
     }
     
@@ -3990,6 +4044,19 @@ bool TextureProcessor::WriteModUSDA() {
                 materialsUsda << "                )\n";
             } else {
                 materialsUsda << "                float inputs:metallic_constant = " << info.metallicConstant << "\n";
+            }
+            
+            // Height/Displacement map
+            if (!info.heightPath.empty()) {
+                std::string relPath = GetRelativeTexturePath(info.heightPath, m_outputDirectory);
+                materialsUsda << "                asset inputs:height_texture = @" << relPath << "@ (\n";
+                materialsUsda << "                    colorSpace = \"raw\"\n";
+                materialsUsda << "                )\n";
+                // displace_in is the maximum displacement depth in meters
+                // Source Engine parallax map scale is typically small (0.01-0.05 range)
+                // Convert to a reasonable displacement value (multiply by a factor for game scale)
+                float displaceIn = info.heightScale * 0.5f;  // Scale factor for visual effect
+                materialsUsda << "                float inputs:displace_in = " << displaceIn << "\n";
             }
         }
         
