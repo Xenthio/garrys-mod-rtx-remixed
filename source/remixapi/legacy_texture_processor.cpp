@@ -1687,12 +1687,52 @@ struct VMTProperties {
     std::string envMap;
     std::string refractTintTexture;  // $refracttinttexture - color texture for Refract shader
     bool hasRefractTintTexture;
+    
+    // Extended properties - extracted directly from VMT file to bypass DX6 shader limitations
+    std::string baseTexture;
+    bool hasBaseTexture;
+    std::string bumpMap;
+    bool hasBumpMap;
+    std::string normalMap;
+    bool hasNormalMap;
+    std::string envMapMask;
+    bool hasEnvMapMask;
+    std::string phongExponentTexture;
+    bool hasPhongExponentTexture;
+    
+    bool hasPhong;
+    int phong;
+    bool hasPhongExponent;
+    float phongExponent;
+    bool hasPhongBoost;
+    float phongBoost;
+    
+    bool hasSSBump;
+    int ssbump;
+    
+    bool hasNormalMapAlphaEnvMapMask;
+    int normalMapAlphaEnvMapMask;
+    bool hasBaseMapAlphaPhongMask;
+    int baseMapAlphaPhongMask;
+    bool hasBaseAlphaEnvMapMask;
+    int baseAlphaEnvMapMask;
+    
+    bool hasEnvMapTint;
+    float envMapTint[3];
+    bool hasPhongFresnelRanges;
+    float phongFresnelRanges[3];
+    
+    bool hasSelfIllum;
+    int selfIllum;
 };
 
 // Parse a VMT file and extract properties that FindVar doesn't reliably expose
+// This is crucial because when running with DX6 fallback shaders, FindVar() returns
+// incorrect or missing values for many material properties
 static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialName, VMTProperties& outProps, bool debugOutput) {
     if (!fileSystem) return false;
     
+    // Initialize all properties to defaults
     outProps = VMTProperties{};
     outProps.hasRefractAmount = false;
     outProps.refractAmount = 0.0f;
@@ -1700,6 +1740,33 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
     outProps.translucent = false;
     outProps.hasEnvMap = false;
     outProps.hasRefractTintTexture = false;
+    
+    // Extended properties
+    outProps.hasBaseTexture = false;
+    outProps.hasBumpMap = false;
+    outProps.hasNormalMap = false;
+    outProps.hasEnvMapMask = false;
+    outProps.hasPhongExponentTexture = false;
+    outProps.hasPhong = false;
+    outProps.phong = 0;
+    outProps.hasPhongExponent = false;
+    outProps.phongExponent = 0.0f;
+    outProps.hasPhongBoost = false;
+    outProps.phongBoost = 1.0f;
+    outProps.hasSSBump = false;
+    outProps.ssbump = 0;
+    outProps.hasNormalMapAlphaEnvMapMask = false;
+    outProps.normalMapAlphaEnvMapMask = 0;
+    outProps.hasBaseMapAlphaPhongMask = false;
+    outProps.baseMapAlphaPhongMask = 0;
+    outProps.hasBaseAlphaEnvMapMask = false;
+    outProps.baseAlphaEnvMapMask = 0;
+    outProps.hasEnvMapTint = false;
+    outProps.envMapTint[0] = outProps.envMapTint[1] = outProps.envMapTint[2] = 1.0f;
+    outProps.hasPhongFresnelRanges = false;
+    outProps.phongFresnelRanges[0] = outProps.phongFresnelRanges[1] = outProps.phongFresnelRanges[2] = 0.0f;
+    outProps.hasSelfIllum = false;
+    outProps.selfIllum = 0;
     
     // Build VMT path
     std::string vmtPath = "materials/" + materialName;
@@ -1826,11 +1893,164 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
         outProps.refractTintTexture = findValue("$refracttinttexture");
     }
     
-    if (debugOutput && (outProps.hasRefractAmount || !outProps.shaderName.empty())) {
-        Msg("[LegacyTextureProcessor] VMT parse: shader='%s', $refractamount=%d (%.2f), $translucent=%d (%d), $surfaceprop='%s', $envmap=%d, $refracttinttexture='%s'\n",
-            outProps.shaderName.c_str(), outProps.hasRefractAmount, outProps.refractAmount,
-            outProps.hasTranslucent, outProps.translucent, outProps.surfaceProp.c_str(), outProps.hasEnvMap,
-            outProps.refractTintTexture.c_str());
+    // =========================================================================
+    // Extended VMT property extraction to bypass DX6 shader FindVar limitations
+    // =========================================================================
+    
+    // Texture paths
+    if (contentLower.find("$basetexture") != std::string::npos) {
+        outProps.baseTexture = findValue("$basetexture");
+        outProps.hasBaseTexture = !outProps.baseTexture.empty();
+    }
+    
+    if (contentLower.find("$bumpmap") != std::string::npos) {
+        outProps.bumpMap = findValue("$bumpmap");
+        outProps.hasBumpMap = !outProps.bumpMap.empty();
+    }
+    
+    if (contentLower.find("$normalmap") != std::string::npos) {
+        outProps.normalMap = findValue("$normalmap");
+        outProps.hasNormalMap = !outProps.normalMap.empty();
+    }
+    
+    if (contentLower.find("$envmapmask") != std::string::npos) {
+        outProps.envMapMask = findValue("$envmapmask");
+        outProps.hasEnvMapMask = !outProps.envMapMask.empty();
+    }
+    
+    if (contentLower.find("$phongexponenttexture") != std::string::npos) {
+        outProps.phongExponentTexture = findValue("$phongexponenttexture");
+        outProps.hasPhongExponentTexture = !outProps.phongExponentTexture.empty();
+    }
+    
+    // Phong properties
+    if (contentLower.find("$phong") != std::string::npos) {
+        std::string val = findValue("$phong");
+        if (!val.empty()) {
+            outProps.hasPhong = true;
+            outProps.phong = (val == "1" || val == "true") ? 1 : 0;
+        }
+    }
+    
+    if (contentLower.find("$phongexponent") != std::string::npos && 
+        contentLower.find("$phongexponenttexture") == std::string::npos) {  // Don't match the texture
+        std::string val = findValue("$phongexponent");
+        if (!val.empty()) {
+            try {
+                outProps.phongExponent = std::stof(val);
+                outProps.hasPhongExponent = true;
+            } catch (...) {}
+        }
+    }
+    
+    if (contentLower.find("$phongboost") != std::string::npos) {
+        std::string val = findValue("$phongboost");
+        if (!val.empty()) {
+            try {
+                outProps.phongBoost = std::stof(val);
+                outProps.hasPhongBoost = true;
+            } catch (...) {}
+        }
+    }
+    
+    // SSBump
+    if (contentLower.find("$ssbump") != std::string::npos) {
+        std::string val = findValue("$ssbump");
+        if (!val.empty()) {
+            outProps.hasSSBump = true;
+            outProps.ssbump = (val == "1" || val == "true") ? 1 : 0;
+        }
+    }
+    
+    // Mask properties
+    if (contentLower.find("$normalmapalphaenvmapmask") != std::string::npos) {
+        std::string val = findValue("$normalmapalphaenvmapmask");
+        if (!val.empty()) {
+            outProps.hasNormalMapAlphaEnvMapMask = true;
+            outProps.normalMapAlphaEnvMapMask = (val == "1" || val == "true") ? 1 : 0;
+        }
+    }
+    
+    if (contentLower.find("$basemapalphaphongmask") != std::string::npos) {
+        std::string val = findValue("$basemapalphaphongmask");
+        if (!val.empty()) {
+            outProps.hasBaseMapAlphaPhongMask = true;
+            outProps.baseMapAlphaPhongMask = (val == "1" || val == "true") ? 1 : 0;
+        }
+    }
+    
+    if (contentLower.find("$basealphaenvmapmask") != std::string::npos) {
+        std::string val = findValue("$basealphaenvmapmask");
+        if (!val.empty()) {
+            outProps.hasBaseAlphaEnvMapMask = true;
+            outProps.baseAlphaEnvMapMask = (val == "1" || val == "true") ? 1 : 0;
+        }
+    }
+    
+    // $selfillum
+    if (contentLower.find("$selfillum") != std::string::npos) {
+        std::string val = findValue("$selfillum");
+        if (!val.empty()) {
+            outProps.hasSelfIllum = true;
+            outProps.selfIllum = (val == "1" || val == "true") ? 1 : 0;
+        }
+    }
+    
+    // Helper for parsing vector values like "[x y z]" or "x y z"
+    auto parseVector3 = [&content, &contentLower](const std::string& keyLower, float out[3]) -> bool {
+        size_t pos = contentLower.find(keyLower);
+        if (pos == std::string::npos) return false;
+        
+        pos += keyLower.length();
+        // Skip to value
+        while (pos < content.length() && (content[pos] == ' ' || content[pos] == '\t' || content[pos] == '"')) {
+            pos++;
+        }
+        
+        // Read the rest of the line
+        size_t endPos = content.find_first_of("\r\n", pos);
+        if (endPos == std::string::npos) endPos = content.length();
+        std::string valueStr = content.substr(pos, endPos - pos);
+        
+        // Try parsing [x y z] format
+        float x = 0, y = 0, z = 0;
+        if (sscanf(valueStr.c_str(), "[%f %f %f]", &x, &y, &z) == 3 ||
+            sscanf(valueStr.c_str(), "[ %f %f %f ]", &x, &y, &z) == 3 ||
+            sscanf(valueStr.c_str(), "%f %f %f", &x, &y, &z) == 3) {
+            out[0] = x; out[1] = y; out[2] = z;
+            return true;
+        }
+        // Try single value (uniform)
+        if (sscanf(valueStr.c_str(), "%f", &x) == 1) {
+            out[0] = out[1] = out[2] = x;
+            return true;
+        }
+        return false;
+    };
+    
+    // $envmaptint
+    if (contentLower.find("$envmaptint") != std::string::npos) {
+        if (parseVector3("$envmaptint", outProps.envMapTint)) {
+            outProps.hasEnvMapTint = true;
+        }
+    }
+    
+    // $phongfresnelranges
+    if (contentLower.find("$phongfresnelranges") != std::string::npos) {
+        if (parseVector3("$phongfresnelranges", outProps.phongFresnelRanges)) {
+            outProps.hasPhongFresnelRanges = true;
+        }
+    }
+    
+    if (debugOutput) {
+        Msg("[LegacyTextureProcessor] VMT direct parse for '%s':\n", materialName.c_str());
+        Msg("  shader='%s', $basetexture='%s', $bumpmap='%s'\n",
+            outProps.shaderName.c_str(), outProps.baseTexture.c_str(), outProps.bumpMap.c_str());
+        Msg("  $phong=%d, $phongexponent=%.1f, $ssbump=%d, $envmap=%d\n",
+            outProps.phong, outProps.phongExponent, outProps.ssbump, outProps.hasEnvMap ? 1 : 0);
+        if (outProps.hasEnvMapTint) {
+            Msg("  $envmaptint=[%.2f %.2f %.2f]\n", outProps.envMapTint[0], outProps.envMapTint[1], outProps.envMapTint[2]);
+        }
     }
     
     return true;
@@ -1896,6 +2116,25 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
         outProps.shaderName = shaderName;
     }
     
+    // =========================================================================
+    // IMPORTANT: Parse VMT file directly to get material properties
+    // This is crucial because when running with DX6 fallback shaders (which Remix
+    // forces), FindVar() returns incorrect or missing values for many properties.
+    // We use VMT-parsed values as the primary source, falling back to FindVar
+    // only when VMT parsing fails.
+    // =========================================================================
+    VMTProperties vmtParsed;
+    bool hasVMTParsed = ParseVMTFile(m_fileSystem, materialName, vmtParsed, m_debugOutput);
+    
+    // If VMT parsing succeeded, prefer VMT shader name over the DX6 fallback name
+    if (hasVMTParsed && !vmtParsed.shaderName.empty()) {
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: Using VMT shader '%s' instead of runtime '%s'\n", 
+                materialName.c_str(), vmtParsed.shaderName.c_str(), outProps.shaderName.c_str());
+        }
+        outProps.shaderName = vmtParsed.shaderName;
+    }
+    
     // Helper lambda to check if a texture path is valid (not a placeholder/internal texture)
     auto IsValidTexturePath = [](const std::string& path) -> bool {
         if (path.empty()) return false;
@@ -1916,74 +2155,49 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
         return true;
     };
     
-    // Get $basetexture - try string value first, then texture name
+    // Get $basetexture - prefer VMT-parsed value, fallback to FindVar
+    if (hasVMTParsed && vmtParsed.hasBaseTexture && IsValidTexturePath(vmtParsed.baseTexture)) {
+        outProps.baseTexturePath = vmtParsed.baseTexture;
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: $basetexture (from VMT) = %s\n", materialName.c_str(), outProps.baseTexturePath.c_str());
+        }
+    } else {
+        // Fallback to FindVar
+        bool found = false;
+        IMaterialVar* pVar = pMaterial->FindVar("$basetexture", &found, false);
+        if (found && pVar) {
+            std::string texPath;
+            const char* strVal = pVar->GetStringValue();
+            if (strVal && strVal[0] != '\0') {
+                texPath = strVal;
+            }
+            if (!IsValidTexturePath(texPath)) {
+                ITexture* pTex = pVar->GetTextureValue();
+                if (pTex) {
+                    texPath = pTex->GetName();
+                }
+            }
+            if (IsValidTexturePath(texPath)) {
+                outProps.baseTexturePath = texPath;
+            }
+            if (m_debugOutput && !outProps.baseTexturePath.empty()) {
+                Msg("[LegacyTextureProcessor] %s: $basetexture (from FindVar) = %s\n", materialName.c_str(), outProps.baseTexturePath.c_str());
+            } else if (m_debugOutput && strVal) {
+                Msg("[LegacyTextureProcessor] %s: $basetexture filtered (invalid path: '%s')\n", materialName.c_str(), strVal);
+            }
+        }
+    }
+    
+    // Get $bumpmap - prefer VMT-parsed value, fallback to FindVar
     bool found = false;
-    IMaterialVar* pVar = pMaterial->FindVar("$basetexture", &found, false);
-    if (found && pVar) {
-        std::string texPath;
-        // Try to get the string value (path from VMT) first
-        const char* strVal = pVar->GetStringValue();
-        if (strVal && strVal[0] != '\0') {
-            texPath = strVal;
+    if (hasVMTParsed && vmtParsed.hasBumpMap && IsValidTexturePath(vmtParsed.bumpMap)) {
+        outProps.bumpMapPath = vmtParsed.bumpMap;
+        outProps.hasBumpMap = true;
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: $bumpmap (from VMT) = %s\n", materialName.c_str(), outProps.bumpMapPath.c_str());
         }
-        // If string is empty or invalid, try texture name
-        if (!IsValidTexturePath(texPath)) {
-            ITexture* pTex = pVar->GetTextureValue();
-            if (pTex) {
-                texPath = pTex->GetName();
-            }
-        }
-        if (IsValidTexturePath(texPath)) {
-            outProps.baseTexturePath = texPath;
-        }
-        if (m_debugOutput && !outProps.baseTexturePath.empty()) {
-            Msg("[LegacyTextureProcessor] %s: $basetexture = %s\n", materialName.c_str(), outProps.baseTexturePath.c_str());
-        } else if (m_debugOutput && strVal) {
-            Msg("[LegacyTextureProcessor] %s: $basetexture filtered (invalid path: '%s')\n", materialName.c_str(), strVal);
-        }
-    }
-    
-    // Get $bumpmap - try string value first, then texture name
-    pVar = pMaterial->FindVar("$bumpmap", &found, false);
-    if (found && pVar) {
-        std::string texPath;
-        const char* strVal = pVar->GetStringValue();
-        if (strVal && strVal[0] != '\0') {
-            texPath = strVal;
-        }
-        if (!IsValidTexturePath(texPath)) {
-            ITexture* pTex = pVar->GetTextureValue();
-            if (pTex) {
-                texPath = pTex->GetName();
-            }
-        }
-        if (IsValidTexturePath(texPath)) {
-            outProps.bumpMapPath = texPath;
-            outProps.hasBumpMap = true;
-        }
-        if (m_debugOutput && outProps.hasBumpMap) {
-            Msg("[LegacyTextureProcessor] %s: $bumpmap = %s\n", materialName.c_str(), outProps.bumpMapPath.c_str());
-        } else if (m_debugOutput && strVal) {
-            Msg("[LegacyTextureProcessor] %s: $bumpmap filtered (invalid path: '%s')\n", materialName.c_str(), strVal);
-        }
-    }
-    
-    // Check for $ssbump flag - indicates SSBump format that needs conversion to standard normal map
-    pVar = pMaterial->FindVar("$ssbump", &found, false);
-    if (found && pVar) {
-        int ssbumpValue = pVar->GetIntValue();
-        if (ssbumpValue != 0) {
-            outProps.isSSBump = true;
-            if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] %s: $ssbump = 1 (will convert to normal map)\n", materialName.c_str());
-            }
-        }
-    }
-    
-    // Get $normalmap - used by Refract shader instead of $bumpmap
-    // Only check this if we don't already have a bump map
-    if (!outProps.hasBumpMap) {
-        pVar = pMaterial->FindVar("$normalmap", &found, false);
+    } else {
+        IMaterialVar* pVar = pMaterial->FindVar("$bumpmap", &found, false);
         if (found && pVar) {
             std::string texPath;
             const char* strVal = pVar->GetStringValue();
@@ -2001,270 +2215,411 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
                 outProps.hasBumpMap = true;
             }
             if (m_debugOutput && outProps.hasBumpMap) {
-                Msg("[LegacyTextureProcessor] %s: $normalmap = %s\n", materialName.c_str(), outProps.bumpMapPath.c_str());
+                Msg("[LegacyTextureProcessor] %s: $bumpmap (from FindVar) = %s\n", materialName.c_str(), outProps.bumpMapPath.c_str());
             } else if (m_debugOutput && strVal) {
-                Msg("[LegacyTextureProcessor] %s: $normalmap filtered (invalid path: '%s')\n", materialName.c_str(), strVal);
+                Msg("[LegacyTextureProcessor] %s: $bumpmap filtered (invalid path: '%s')\n", materialName.c_str(), strVal);
             }
         }
     }
     
-    // Get $envmapmask - try string value first, then texture name
-    pVar = pMaterial->FindVar("$envmapmask", &found, false);
-    if (found && pVar) {
-        std::string texPath;
-        const char* strVal = pVar->GetStringValue();
-        if (strVal && strVal[0] != '\0') {
-            texPath = strVal;
-        }
-        if (!IsValidTexturePath(texPath)) {
-            ITexture* pTex = pVar->GetTextureValue();
-            if (pTex) {
-                texPath = pTex->GetName();
-            }
-        }
-        if (IsValidTexturePath(texPath)) {
-            outProps.envMapMaskPath = texPath;
-            outProps.hasEnvMapMask = true;
-        }
-        if (m_debugOutput && outProps.hasEnvMapMask) {
-            Msg("[LegacyTextureProcessor] %s: $envmapmask = %s\n", materialName.c_str(), outProps.envMapMaskPath.c_str());
-        } else if (m_debugOutput && strVal) {
-            Msg("[LegacyTextureProcessor] %s: $envmapmask filtered (invalid path: '%s')\n", materialName.c_str(), strVal);
-        }
-    } else if (m_debugOutput) {
-        Msg("[LegacyTextureProcessor] %s: $envmapmask not found\n", materialName.c_str());
-    }
-    
-    // Get $envmap (to check if envmapping is enabled)
-    pVar = pMaterial->FindVar("$envmap", &found, false);
-    if (found && pVar) {
-        const char* strVal = pVar->GetStringValue();
-        // Check if it has any value (env_cubemap, or a texture path) - but filter UNDEFINED and <UNDEFINED>
-        bool isUndefined = false;
-        if (strVal) {
-            if (strcmp(strVal, "UNDEFINED") == 0 || strcmp(strVal, "<UNDEFINED>") == 0) {
-                isUndefined = true;
-            } else if (strstr(strVal, "UNDEFINED") != nullptr) {
-                isUndefined = true;  // Also catch partial matches
-            }
-        }
-        if (strVal && strVal[0] != '\0' && !isUndefined) {
-            outProps.hasEnvMap = true;
-            if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] %s: $envmap = %s\n", materialName.c_str(), strVal);
-            }
-        } else if (m_debugOutput && strVal && isUndefined) {
-            Msg("[LegacyTextureProcessor] %s: $envmap = %s (ignored)\n", materialName.c_str(), strVal);
-        }
-    }
-    
-    // Get $normalmapalphaenvmapmask - use normal map's alpha as envmap mask for roughness
-    pVar = pMaterial->FindVar("$normalmapalphaenvmapmask", &found, false);
-    if (found && pVar) {
-        // Try multiple methods to get the value - Source Engine can be inconsistent
-        int intVal = pVar->GetIntValue();
-        float floatVal = pVar->GetFloatValue();
-        const char* strVal = pVar->GetStringValue();
-        
-        // Accept any truthy value
-        bool isTruthy = (intVal != 0) || (floatVal != 0.0f);
-        if (!isTruthy && strVal && strVal[0] != '\0') {
-            isTruthy = (atoi(strVal) != 0) || (atof(strVal) != 0.0);
-        }
-        
-        outProps.normalMapAlphaEnvMapMask = isTruthy;
+    // Check for $ssbump flag - prefer VMT-parsed value
+    if (hasVMTParsed && vmtParsed.hasSSBump && vmtParsed.ssbump != 0) {
+        outProps.isSSBump = true;
         if (m_debugOutput) {
-            if (outProps.normalMapAlphaEnvMapMask) {
-                Msg("[LegacyTextureProcessor] %s: $normalmapalphaenvmapmask = 1 (will use normal alpha for roughness)\n", materialName.c_str());
-            } else {
-                Msg("[LegacyTextureProcessor] %s: $normalmapalphaenvmapmask found but value = 0\n", materialName.c_str());
-            }
+            Msg("[LegacyTextureProcessor] %s: $ssbump = 1 (from VMT, will convert to normal map)\n", materialName.c_str());
         }
-    } else if (m_debugOutput) {
-        Msg("[LegacyTextureProcessor] %s: $normalmapalphaenvmapmask NOT FOUND\n", materialName.c_str());
-    }
-    
-    // Get $phong (check if phong is enabled)
-    pVar = pMaterial->FindVar("$phong", &found, false);
-    if (found && pVar) {
-        outProps.hasPhong = (pVar->GetIntValue() == 1);
-    }
-    
-    // Get $phongexponent
-    pVar = pMaterial->FindVar("$phongexponent", &found, false);
-    if (found && pVar) {
-        outProps.phongExponent = pVar->GetFloatValue();
-        if (!outProps.hasPhong) outProps.hasPhong = true;
-    }
-    
-    // Get $phongboost
-    pVar = pMaterial->FindVar("$phongboost", &found, false);
-    if (found && pVar) {
-        outProps.phongBoost = pVar->GetFloatValue();
-    }
-    
-    // Get $phongexponenttexture - per-pixel phong exponent texture (very useful for roughness!)
-    pVar = pMaterial->FindVar("$phongexponenttexture", &found, false);
-    if (found && pVar) {
-        std::string texPath;
-        const char* strVal = pVar->GetStringValue();
-        if (strVal && strVal[0] != '\0') {
-            texPath = strVal;
-            if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] %s: $phongexponenttexture raw string = '%s'\n", materialName.c_str(), strVal);
-            }
-        }
-        if (!IsValidTexturePath(texPath)) {
-            // Also try getting the texture name directly (some materials use texture references)
-            ITexture* pTex = pVar->GetTextureValue();
-            if (pTex) {
-                texPath = pTex->GetName();
+    } else {
+        IMaterialVar* pVar = pMaterial->FindVar("$ssbump", &found, false);
+        if (found && pVar) {
+            int ssbumpValue = pVar->GetIntValue();
+            if (ssbumpValue != 0) {
+                outProps.isSSBump = true;
                 if (m_debugOutput) {
-                    Msg("[LegacyTextureProcessor] %s: $phongexponenttexture from texture = '%s'\n", materialName.c_str(), texPath.c_str());
-                }
-            }
-        }
-        if (IsValidTexturePath(texPath)) {
-            outProps.phongExponentTexturePath = texPath;
-            outProps.hasPhongExponentTexture = true;
-            if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] %s: $phongexponenttexture = %s\n", materialName.c_str(), texPath.c_str());
-            }
-        } else if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: $phongexponenttexture FILTERED as invalid path: '%s'\n", materialName.c_str(), texPath.c_str());
-        }
-    } else if (m_debugOutput) {
-        Msg("[LegacyTextureProcessor] %s: $phongexponenttexture not found\n", materialName.c_str());
-    }
-    
-    // Get $basemapalphaphongmask - use base texture alpha as phong mask
-    pVar = pMaterial->FindVar("$basemapalphaphongmask", &found, false);
-    if (found && pVar) {
-        outProps.hasBaseMapAlphaPhongMask = (pVar->GetIntValue() == 1);
-        if (m_debugOutput && outProps.hasBaseMapAlphaPhongMask) {
-            Msg("[LegacyTextureProcessor] %s: $basemapalphaphongmask = 1\n", materialName.c_str());
-        }
-    }
-    
-    // Get $basealphaenvmapmask - use base texture alpha as envmap mask (common in LightmappedGeneric)
-    pVar = pMaterial->FindVar("$basealphaenvmapmask", &found, false);
-    if (found && pVar) {
-        // Try multiple ways to get the value - Source Engine can be inconsistent
-        int intVal = pVar->GetIntValue();
-        float floatVal = pVar->GetFloatValue();
-        const char* strVal = pVar->GetStringValue();
-        
-        // Accept any truthy value
-        bool isTruthy = (intVal != 0) || (floatVal != 0.0f);
-        if (!isTruthy && strVal && strVal[0] != '\0') {
-            // Try parsing string - could be "1", " 1", "1.0", etc.
-            isTruthy = (atoi(strVal) != 0) || (atof(strVal) != 0.0);
-        }
-        
-        outProps.hasBaseAlphaEnvMapMask = isTruthy;
-        if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: $basealphaenvmapmask found (int=%d, float=%.2f, str='%s') -> %d\n", 
-                materialName.c_str(), intVal, floatVal, strVal ? strVal : "null", 
-                outProps.hasBaseAlphaEnvMapMask ? 1 : 0);
-        }
-    } else if (m_debugOutput) {
-        Msg("[LegacyTextureProcessor] %s: $basealphaenvmapmask NOT FOUND\n", materialName.c_str());
-    }
-    
-    // Get $phongfresnelranges "[x y z]"
-    pVar = pMaterial->FindVar("$phongfresnelranges", &found, false);
-    if (found && pVar) {
-        // Get vector value from the material var
-        const char* strVal = pVar->GetStringValue();
-        if (strVal && strVal[0] != '\0') {
-            // Parse "[x y z]" format
-            float x = 0, y = 0, z = 0;
-            if (sscanf(strVal, "[%f %f %f]", &x, &y, &z) == 3 ||
-                sscanf(strVal, "%f %f %f", &x, &y, &z) == 3) {
-                outProps.phongFresnelRanges[0] = x;
-                outProps.phongFresnelRanges[1] = y;
-                outProps.phongFresnelRanges[2] = z;
-                outProps.hasPhongFresnelRanges = true;
-                if (m_debugOutput) {
-                    Msg("[LegacyTextureProcessor] %s: $phongfresnelranges = [%.2f %.2f %.2f]\n", 
-                        materialName.c_str(), x, y, z);
+                    Msg("[LegacyTextureProcessor] %s: $ssbump = 1 (will convert to normal map)\n", materialName.c_str());
                 }
             }
         }
     }
     
-    // Get $envmaptint "[r g b]"
-    pVar = pMaterial->FindVar("$envmaptint", &found, false);
-    if (found && pVar) {
-        const char* strVal = pVar->GetStringValue();
-        if (strVal && strVal[0] != '\0') {
-            // Parse "[r g b]" or "r g b" or single float format
-            float r = 1, g = 1, b = 1;
-            bool parsed = false;
-            
-            if (sscanf(strVal, "[%f %f %f]", &r, &g, &b) == 3 ||
-                sscanf(strVal, "%f %f %f", &r, &g, &b) == 3) {
-                parsed = true;
-            } else if (sscanf(strVal, "%f", &r) == 1) {
-                // Single float value - Source Engine sometimes returns this for "$envmaptint .2 .2 .2" 
-                // Treat as uniform tint
-                g = r;
-                b = r;
-                parsed = true;
+    // Get $normalmap - prefer VMT-parsed value, only if we don't have $bumpmap
+    if (!outProps.hasBumpMap) {
+        if (hasVMTParsed && vmtParsed.hasNormalMap && IsValidTexturePath(vmtParsed.normalMap)) {
+            outProps.bumpMapPath = vmtParsed.normalMap;
+            outProps.hasBumpMap = true;
+            if (m_debugOutput) {
+                Msg("[LegacyTextureProcessor] %s: $normalmap (from VMT) = %s\n", materialName.c_str(), outProps.bumpMapPath.c_str());
             }
-            
-            if (parsed) {
-                outProps.envMapTint[0] = r;
-                outProps.envMapTint[1] = g;
-                outProps.envMapTint[2] = b;
-                
-                // IMPORTANT: Only treat as having explicit envmaptint if value is NOT the default [1 1 1]
-                // Source Engine shaders return [1 1 1] as default even when not set in VMT
-                bool isDefaultTint = (fabs(r - 1.0f) < 0.01f && fabs(g - 1.0f) < 0.01f && fabs(b - 1.0f) < 0.01f);
-                
-                if (!isDefaultTint) {
-                    outProps.hasEnvMapTint = true;
-                    // If envmaptint is explicitly set (non-default), envmap must be enabled
-                    if (!outProps.hasEnvMap) {
-                        outProps.hasEnvMap = true;
-                        if (m_debugOutput) {
-                            Msg("[LegacyTextureProcessor] %s: Setting hasEnvMap=true based on non-default $envmaptint\n", materialName.c_str());
-                        }
+        } else {
+            IMaterialVar* pVar = pMaterial->FindVar("$normalmap", &found, false);
+            if (found && pVar) {
+                std::string texPath;
+                const char* strVal = pVar->GetStringValue();
+                if (strVal && strVal[0] != '\0') {
+                    texPath = strVal;
+                }
+                if (!IsValidTexturePath(texPath)) {
+                    ITexture* pTex = pVar->GetTextureValue();
+                    if (pTex) {
+                        texPath = pTex->GetName();
                     }
                 }
-                
-                if (m_debugOutput) {
-                    Msg("[LegacyTextureProcessor] %s: $envmaptint = [%.2f %.2f %.2f]%s\n", 
-                        materialName.c_str(), r, g, b, isDefaultTint ? " (default, ignoring)" : "");
+                if (IsValidTexturePath(texPath)) {
+                    outProps.bumpMapPath = texPath;
+                    outProps.hasBumpMap = true;
                 }
-            } else if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] %s: $envmaptint found but parse failed: '%s'\n", materialName.c_str(), strVal);
+                if (m_debugOutput && outProps.hasBumpMap) {
+                    Msg("[LegacyTextureProcessor] %s: $normalmap = %s\n", materialName.c_str(), outProps.bumpMapPath.c_str());
+                } else if (m_debugOutput && strVal) {
+                    Msg("[LegacyTextureProcessor] %s: $normalmap filtered (invalid path: '%s')\n", materialName.c_str(), strVal);
+                }
+            }
+        }
+    }
+    
+    // Get $envmapmask - prefer VMT-parsed value
+    if (hasVMTParsed && vmtParsed.hasEnvMapMask && IsValidTexturePath(vmtParsed.envMapMask)) {
+        outProps.envMapMaskPath = vmtParsed.envMapMask;
+        outProps.hasEnvMapMask = true;
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: $envmapmask (from VMT) = %s\n", materialName.c_str(), outProps.envMapMaskPath.c_str());
+        }
+    } else {
+        IMaterialVar* pVar = pMaterial->FindVar("$envmapmask", &found, false);
+        if (found && pVar) {
+            std::string texPath;
+            const char* strVal = pVar->GetStringValue();
+            if (strVal && strVal[0] != '\0') {
+                texPath = strVal;
+            }
+            if (!IsValidTexturePath(texPath)) {
+                ITexture* pTex = pVar->GetTextureValue();
+                if (pTex) {
+                    texPath = pTex->GetName();
+                }
+            }
+            if (IsValidTexturePath(texPath)) {
+                outProps.envMapMaskPath = texPath;
+                outProps.hasEnvMapMask = true;
+            }
+            if (m_debugOutput && outProps.hasEnvMapMask) {
+                Msg("[LegacyTextureProcessor] %s: $envmapmask = %s\n", materialName.c_str(), outProps.envMapMaskPath.c_str());
+            } else if (m_debugOutput && strVal) {
+                Msg("[LegacyTextureProcessor] %s: $envmapmask filtered (invalid path: '%s')\n", materialName.c_str(), strVal);
             }
         } else if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: $envmaptint found but empty value\n", materialName.c_str());
+            Msg("[LegacyTextureProcessor] %s: $envmapmask not found\n", materialName.c_str());
         }
-    } else if (m_debugOutput) {
-        Msg("[LegacyTextureProcessor] %s: $envmaptint not found by FindVar\n", materialName.c_str());
     }
     
-    // Get $selfillum
-    pVar = pMaterial->FindVar("$selfillum", &found, false);
-    if (found && pVar) {
-        outProps.isSelfIllum = (pVar->GetIntValue() == 1);
+    // Get $envmap - prefer VMT-parsed value
+    if (hasVMTParsed && vmtParsed.hasEnvMap) {
+        outProps.hasEnvMap = true;
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: $envmap (from VMT) = %s\n", materialName.c_str(), vmtParsed.envMap.c_str());
+        }
+    } else {
+        IMaterialVar* pVar = pMaterial->FindVar("$envmap", &found, false);
+        if (found && pVar) {
+            const char* strVal = pVar->GetStringValue();
+            bool isUndefined = false;
+            if (strVal) {
+                if (strcmp(strVal, "UNDEFINED") == 0 || strcmp(strVal, "<UNDEFINED>") == 0) {
+                    isUndefined = true;
+                } else if (strstr(strVal, "UNDEFINED") != nullptr) {
+                    isUndefined = true;
+                }
+            }
+            if (strVal && strVal[0] != '\0' && !isUndefined) {
+                outProps.hasEnvMap = true;
+                if (m_debugOutput) {
+                    Msg("[LegacyTextureProcessor] %s: $envmap = %s\n", materialName.c_str(), strVal);
+                }
+            } else if (m_debugOutput && strVal && isUndefined) {
+                Msg("[LegacyTextureProcessor] %s: $envmap = %s (ignored)\n", materialName.c_str(), strVal);
+            }
+        }
     }
     
-    // Get $translucent
-    pVar = pMaterial->FindVar("$translucent", &found, false);
-    if (found && pVar) {
-        outProps.isTranslucent = (pVar->GetIntValue() == 1);
+    // Get $normalmapalphaenvmapmask - prefer VMT-parsed value
+    if (hasVMTParsed && vmtParsed.hasNormalMapAlphaEnvMapMask) {
+        outProps.normalMapAlphaEnvMapMask = (vmtParsed.normalMapAlphaEnvMapMask != 0);
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: $normalmapalphaenvmapmask (from VMT) = %d\n", materialName.c_str(), vmtParsed.normalMapAlphaEnvMapMask);
+        }
+    } else {
+        IMaterialVar* pVar = pMaterial->FindVar("$normalmapalphaenvmapmask", &found, false);
+        if (found && pVar) {
+            int intVal = pVar->GetIntValue();
+            float floatVal = pVar->GetFloatValue();
+            const char* strVal = pVar->GetStringValue();
+            
+            bool isTruthy = (intVal != 0) || (floatVal != 0.0f);
+            if (!isTruthy && strVal && strVal[0] != '\0') {
+                isTruthy = (atoi(strVal) != 0) || (atof(strVal) != 0.0);
+            }
+            
+            outProps.normalMapAlphaEnvMapMask = isTruthy;
+            if (m_debugOutput) {
+                if (outProps.normalMapAlphaEnvMapMask) {
+                    Msg("[LegacyTextureProcessor] %s: $normalmapalphaenvmapmask = 1 (will use normal alpha for roughness)\n", materialName.c_str());
+                } else {
+                    Msg("[LegacyTextureProcessor] %s: $normalmapalphaenvmapmask found but value = 0\n", materialName.c_str());
+                }
+            }
+        } else if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: $normalmapalphaenvmapmask NOT FOUND\n", materialName.c_str());
+        }
     }
     
-    // Get $surfaceprop
-    pVar = pMaterial->FindVar("$surfaceprop", &found, false);
-    if (found && pVar) {
-        const char* surfaceVal = pVar->GetStringValue();
-        if (surfaceVal && surfaceVal[0] != '\0') {
-            outProps.surfaceProp = surfaceVal;
+    // Get $phong - prefer VMT-parsed value
+    if (hasVMTParsed && vmtParsed.hasPhong) {
+        outProps.hasPhong = (vmtParsed.phong != 0);
+    } else {
+        IMaterialVar* pVar = pMaterial->FindVar("$phong", &found, false);
+        if (found && pVar) {
+            outProps.hasPhong = (pVar->GetIntValue() == 1);
+        }
+    }
+    
+    // Get $phongexponent - prefer VMT-parsed value
+    if (hasVMTParsed && vmtParsed.hasPhongExponent) {
+        outProps.phongExponent = vmtParsed.phongExponent;
+        if (!outProps.hasPhong) outProps.hasPhong = true;
+    } else {
+        IMaterialVar* pVar = pMaterial->FindVar("$phongexponent", &found, false);
+        if (found && pVar) {
+            outProps.phongExponent = pVar->GetFloatValue();
+            if (!outProps.hasPhong) outProps.hasPhong = true;
+        }
+    }
+    
+    // Get $phongboost - prefer VMT-parsed value
+    if (hasVMTParsed && vmtParsed.hasPhongBoost) {
+        outProps.phongBoost = vmtParsed.phongBoost;
+    } else {
+        IMaterialVar* pVar = pMaterial->FindVar("$phongboost", &found, false);
+        if (found && pVar) {
+            outProps.phongBoost = pVar->GetFloatValue();
+        }
+    }
+    
+    // Get $phongexponenttexture - prefer VMT-parsed value
+    if (hasVMTParsed && vmtParsed.hasPhongExponentTexture && IsValidTexturePath(vmtParsed.phongExponentTexture)) {
+        outProps.phongExponentTexturePath = vmtParsed.phongExponentTexture;
+        outProps.hasPhongExponentTexture = true;
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: $phongexponenttexture (from VMT) = %s\n", materialName.c_str(), outProps.phongExponentTexturePath.c_str());
+        }
+    } else {
+        IMaterialVar* pVar = pMaterial->FindVar("$phongexponenttexture", &found, false);
+        if (found && pVar) {
+            std::string texPath;
+            const char* strVal = pVar->GetStringValue();
+            if (strVal && strVal[0] != '\0') {
+                texPath = strVal;
+                if (m_debugOutput) {
+                    Msg("[LegacyTextureProcessor] %s: $phongexponenttexture raw string = '%s'\n", materialName.c_str(), strVal);
+                }
+            }
+            if (!IsValidTexturePath(texPath)) {
+                ITexture* pTex = pVar->GetTextureValue();
+                if (pTex) {
+                    texPath = pTex->GetName();
+                    if (m_debugOutput) {
+                        Msg("[LegacyTextureProcessor] %s: $phongexponenttexture from texture = '%s'\n", materialName.c_str(), texPath.c_str());
+                    }
+                }
+            }
+            if (IsValidTexturePath(texPath)) {
+                outProps.phongExponentTexturePath = texPath;
+                outProps.hasPhongExponentTexture = true;
+                if (m_debugOutput) {
+                    Msg("[LegacyTextureProcessor] %s: $phongexponenttexture = %s\n", materialName.c_str(), texPath.c_str());
+                }
+            } else if (m_debugOutput) {
+                Msg("[LegacyTextureProcessor] %s: $phongexponenttexture FILTERED as invalid path: '%s'\n", materialName.c_str(), texPath.c_str());
+            }
+        } else if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: $phongexponenttexture not found\n", materialName.c_str());
+        }
+    }
+    
+    // Get $basemapalphaphongmask - prefer VMT-parsed value
+    if (hasVMTParsed && vmtParsed.hasBaseMapAlphaPhongMask) {
+        outProps.hasBaseMapAlphaPhongMask = (vmtParsed.baseMapAlphaPhongMask != 0);
+        if (m_debugOutput && outProps.hasBaseMapAlphaPhongMask) {
+            Msg("[LegacyTextureProcessor] %s: $basemapalphaphongmask (from VMT) = 1\n", materialName.c_str());
+        }
+    } else {
+        IMaterialVar* pVar = pMaterial->FindVar("$basemapalphaphongmask", &found, false);
+        if (found && pVar) {
+            outProps.hasBaseMapAlphaPhongMask = (pVar->GetIntValue() == 1);
+            if (m_debugOutput && outProps.hasBaseMapAlphaPhongMask) {
+                Msg("[LegacyTextureProcessor] %s: $basemapalphaphongmask = 1\n", materialName.c_str());
+            }
+        }
+    }
+    
+    // Get $basealphaenvmapmask - prefer VMT-parsed value
+    if (hasVMTParsed && vmtParsed.hasBaseAlphaEnvMapMask) {
+        outProps.hasBaseAlphaEnvMapMask = (vmtParsed.baseAlphaEnvMapMask != 0);
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: $basealphaenvmapmask (from VMT) = %d\n", materialName.c_str(), vmtParsed.baseAlphaEnvMapMask);
+        }
+    } else {
+        IMaterialVar* pVar = pMaterial->FindVar("$basealphaenvmapmask", &found, false);
+        if (found && pVar) {
+            int intVal = pVar->GetIntValue();
+            float floatVal = pVar->GetFloatValue();
+            const char* strVal = pVar->GetStringValue();
+            
+            bool isTruthy = (intVal != 0) || (floatVal != 0.0f);
+            if (!isTruthy && strVal && strVal[0] != '\0') {
+                isTruthy = (atoi(strVal) != 0) || (atof(strVal) != 0.0);
+            }
+            
+            outProps.hasBaseAlphaEnvMapMask = isTruthy;
+            if (m_debugOutput) {
+                Msg("[LegacyTextureProcessor] %s: $basealphaenvmapmask found (int=%d, float=%.2f, str='%s') -> %d\n", 
+                    materialName.c_str(), intVal, floatVal, strVal ? strVal : "null", 
+                    outProps.hasBaseAlphaEnvMapMask ? 1 : 0);
+            }
+        } else if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: $basealphaenvmapmask NOT FOUND\n", materialName.c_str());
+        }
+    }
+    
+    // Get $phongfresnelranges - prefer VMT-parsed value
+    if (hasVMTParsed && vmtParsed.hasPhongFresnelRanges) {
+        outProps.phongFresnelRanges[0] = vmtParsed.phongFresnelRanges[0];
+        outProps.phongFresnelRanges[1] = vmtParsed.phongFresnelRanges[1];
+        outProps.phongFresnelRanges[2] = vmtParsed.phongFresnelRanges[2];
+        outProps.hasPhongFresnelRanges = true;
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: $phongfresnelranges (from VMT) = [%.2f %.2f %.2f]\n", 
+                materialName.c_str(), outProps.phongFresnelRanges[0], outProps.phongFresnelRanges[1], outProps.phongFresnelRanges[2]);
+        }
+    } else {
+        IMaterialVar* pVar = pMaterial->FindVar("$phongfresnelranges", &found, false);
+        if (found && pVar) {
+            const char* strVal = pVar->GetStringValue();
+            if (strVal && strVal[0] != '\0') {
+                float x = 0, y = 0, z = 0;
+                if (sscanf(strVal, "[%f %f %f]", &x, &y, &z) == 3 ||
+                    sscanf(strVal, "%f %f %f", &x, &y, &z) == 3) {
+                    outProps.phongFresnelRanges[0] = x;
+                    outProps.phongFresnelRanges[1] = y;
+                    outProps.phongFresnelRanges[2] = z;
+                    outProps.hasPhongFresnelRanges = true;
+                    if (m_debugOutput) {
+                        Msg("[LegacyTextureProcessor] %s: $phongfresnelranges = [%.2f %.2f %.2f]\n", 
+                            materialName.c_str(), x, y, z);
+                    }
+                }
+            }
+        }
+    }
+    
+    // Get $envmaptint - prefer VMT-parsed value
+    if (hasVMTParsed && vmtParsed.hasEnvMapTint) {
+        outProps.envMapTint[0] = vmtParsed.envMapTint[0];
+        outProps.envMapTint[1] = vmtParsed.envMapTint[1];
+        outProps.envMapTint[2] = vmtParsed.envMapTint[2];
+        
+        // Check if non-default
+        bool isDefaultTint = (fabs(vmtParsed.envMapTint[0] - 1.0f) < 0.01f && 
+                             fabs(vmtParsed.envMapTint[1] - 1.0f) < 0.01f && 
+                             fabs(vmtParsed.envMapTint[2] - 1.0f) < 0.01f);
+        if (!isDefaultTint) {
+            outProps.hasEnvMapTint = true;
+            if (!outProps.hasEnvMap) {
+                outProps.hasEnvMap = true;
+            }
+        }
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: $envmaptint (from VMT) = [%.2f %.2f %.2f]%s\n", 
+                materialName.c_str(), vmtParsed.envMapTint[0], vmtParsed.envMapTint[1], vmtParsed.envMapTint[2],
+                isDefaultTint ? " (default)" : "");
+        }
+    } else {
+        IMaterialVar* pVar = pMaterial->FindVar("$envmaptint", &found, false);
+        if (found && pVar) {
+            const char* strVal = pVar->GetStringValue();
+            if (strVal && strVal[0] != '\0') {
+                float r = 1, g = 1, b = 1;
+                bool parsed = false;
+                
+                if (sscanf(strVal, "[%f %f %f]", &r, &g, &b) == 3 ||
+                    sscanf(strVal, "%f %f %f", &r, &g, &b) == 3) {
+                    parsed = true;
+                } else if (sscanf(strVal, "%f", &r) == 1) {
+                    g = r;
+                    b = r;
+                    parsed = true;
+                }
+                
+                if (parsed) {
+                    outProps.envMapTint[0] = r;
+                    outProps.envMapTint[1] = g;
+                    outProps.envMapTint[2] = b;
+                    
+                    bool isDefaultTint = (fabs(r - 1.0f) < 0.01f && fabs(g - 1.0f) < 0.01f && fabs(b - 1.0f) < 0.01f);
+                    
+                    if (!isDefaultTint) {
+                        outProps.hasEnvMapTint = true;
+                        if (!outProps.hasEnvMap) {
+                            outProps.hasEnvMap = true;
+                            if (m_debugOutput) {
+                                Msg("[LegacyTextureProcessor] %s: Setting hasEnvMap=true based on non-default $envmaptint\n", materialName.c_str());
+                            }
+                        }
+                    }
+                    
+                    if (m_debugOutput) {
+                        Msg("[LegacyTextureProcessor] %s: $envmaptint = [%.2f %.2f %.2f]%s\n", 
+                            materialName.c_str(), r, g, b, isDefaultTint ? " (default, ignoring)" : "");
+                    }
+                } else if (m_debugOutput) {
+                    Msg("[LegacyTextureProcessor] %s: $envmaptint found but parse failed: '%s'\n", materialName.c_str(), strVal);
+                }
+            } else if (m_debugOutput) {
+                Msg("[LegacyTextureProcessor] %s: $envmaptint found but empty value\n", materialName.c_str());
+            }
+        } else if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: $envmaptint not found by FindVar\n", materialName.c_str());
+        }
+    }
+    
+    // Get $selfillum - prefer VMT-parsed value
+    if (hasVMTParsed && vmtParsed.hasSelfIllum) {
+        outProps.isSelfIllum = (vmtParsed.selfIllum != 0);
+    } else {
+        IMaterialVar* pVar = pMaterial->FindVar("$selfillum", &found, false);
+        if (found && pVar) {
+            outProps.isSelfIllum = (pVar->GetIntValue() == 1);
+        }
+    }
+    
+    // Get $translucent - prefer VMT-parsed value
+    if (hasVMTParsed && vmtParsed.hasTranslucent) {
+        outProps.isTranslucent = vmtParsed.translucent;
+    } else {
+        IMaterialVar* pVar = pMaterial->FindVar("$translucent", &found, false);
+        if (found && pVar) {
+            outProps.isTranslucent = (pVar->GetIntValue() == 1);
+        }
+    }
+    
+    // Get $surfaceprop - prefer VMT-parsed value
+    if (hasVMTParsed && !vmtParsed.surfaceProp.empty()) {
+        outProps.surfaceProp = vmtParsed.surfaceProp;
+    } else {
+        IMaterialVar* pVar = pMaterial->FindVar("$surfaceprop", &found, false);
+        if (found && pVar) {
+            const char* surfaceVal = pVar->GetStringValue();
+            if (surfaceVal && surfaceVal[0] != '\0') {
+                outProps.surfaceProp = surfaceVal;
+            }
         }
     }
     
@@ -2290,43 +2645,21 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
             isSurfaceGlass = (surfaceLower == "glass" || surfaceLower.find("glass") != std::string::npos);
         }
         
-        // Try to parse VMT file directly for properties that FindVar doesn't expose reliably
-        // This is especially important for Refract shaders where FindVar returns wrong shader name
-        VMTProperties vmtProps;
-        bool hasVMTParsed = ParseVMTFile(m_fileSystem, materialName, vmtProps, m_debugOutput);
-        
+        // We already parsed the VMT file at the start - reuse that data
         // Check VMT shader name and $refractamount
         bool vmtIsRefract = false;
         bool vmtHasRefractAmount = false;
         if (hasVMTParsed) {
-            if (!vmtProps.shaderName.empty()) {
-                std::string vmtShaderLower = vmtProps.shaderName;
+            if (!vmtParsed.shaderName.empty()) {
+                std::string vmtShaderLower = vmtParsed.shaderName;
                 std::transform(vmtShaderLower.begin(), vmtShaderLower.end(), vmtShaderLower.begin(), ::tolower);
                 vmtIsRefract = (vmtShaderLower.find("refract") != std::string::npos);
             }
-            vmtHasRefractAmount = vmtProps.hasRefractAmount;
+            vmtHasRefractAmount = vmtParsed.hasRefractAmount;
             
             // Get $refracttinttexture if present
-            if (vmtProps.hasRefractTintTexture && !vmtProps.refractTintTexture.empty()) {
-                outProps.refractTintTexturePath = vmtProps.refractTintTexture;
-            }
-            
-            // Also pick up surfaceprop from VMT if not found via FindVar
-            if (outProps.surfaceProp.empty() && !vmtProps.surfaceProp.empty()) {
-                outProps.surfaceProp = vmtProps.surfaceProp;
-                std::string surfaceLower = vmtProps.surfaceProp;
-                std::transform(surfaceLower.begin(), surfaceLower.end(), surfaceLower.begin(), ::tolower);
-                isSurfaceGlass = (surfaceLower == "glass" || surfaceLower.find("glass") != std::string::npos);
-            }
-            
-            // Also pick up translucent from VMT if not found via FindVar
-            if (!outProps.isTranslucent && vmtProps.hasTranslucent && vmtProps.translucent) {
-                outProps.isTranslucent = true;
-            }
-            
-            // Also pick up envmap from VMT if not found via FindVar
-            if (!outProps.hasEnvMap && vmtProps.hasEnvMap && !vmtProps.envMap.empty()) {
-                outProps.hasEnvMap = true;
+            if (vmtParsed.hasRefractTintTexture && !vmtParsed.refractTintTexture.empty()) {
+                outProps.refractTintTexturePath = vmtParsed.refractTintTexture;
             }
         }
         
