@@ -2233,6 +2233,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     // BlueFlyTrap PseudoPBR format
     outProps.isBFTPseudoPBR = false;
     outProps.isBFTMetallicLayer = false;
+    outProps.isBFTDiffuseLayer = false;
     outProps.bftExponentTexturePath = "";
     outProps.hasBFTExponentTexture = false;
     outProps.bftColor2[0] = 1.0f;
