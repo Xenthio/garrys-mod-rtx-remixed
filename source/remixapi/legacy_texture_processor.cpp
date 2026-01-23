@@ -3856,7 +3856,7 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
         
         // Store and write USDA
         m_processedMaterialInfo[textureHash] = matInfo;
-        WriteUSDAFile();
+        WriteModUSDA();
         m_stats.materialsProcessed++;
         
         if (m_debugOutput) {
@@ -3952,7 +3952,6 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
                                 skippedCount++;
                             } else if (WriteTextureToDDS(metalTex, outputPath)) {
                                 matInfo.metallicPath = outputPath;
-                                m_stats.materialsWithMetallic++;
                                 if (m_debugOutput) {
                                     Msg("[LegacyTextureProcessor] [GPBR] Wrote metallic from MRAO: %s\n", outputPath.c_str());
                                 }
@@ -3984,7 +3983,7 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
                             skippedCount++;
                         } else if (WriteTextureToDDS(normalTex, outputPath)) {
                             matInfo.normalPath = outputPath;
-                            m_stats.materialsWithNormal++;
+                            m_stats.materialsWithNormals++;
                             if (m_debugOutput) {
                                 Msg("[LegacyTextureProcessor] [GPBR] Wrote normal map: %s\n", outputPath.c_str());
                             }
@@ -4044,11 +4043,11 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
                         std::string outputPath = GenerateOutputPath(emissionHash, "_emission");
                         
                         if (FileExists(outputPath)) {
-                            matInfo.emissionPath = outputPath;
+                            matInfo.emissivePath = outputPath;
                             matInfo.emissionIntensity = props.hasGPBREmissionScale ? props.gpbrEmissionScale : 1.0f;
                             skippedCount++;
                         } else if (WriteTextureToDDS(emissionTex, outputPath)) {
-                            matInfo.emissionPath = outputPath;
+                            matInfo.emissivePath = outputPath;
                             matInfo.emissionIntensity = props.hasGPBREmissionScale ? props.gpbrEmissionScale : 1.0f;
                             if (m_debugOutput) {
                                 Msg("[LegacyTextureProcessor] [GPBR] Wrote emission texture: %s\n", outputPath.c_str());
@@ -4061,7 +4060,7 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
         
         // Store and write USDA
         m_processedMaterialInfo[textureHash] = matInfo;
-        WriteUSDAFile();
+        WriteModUSDA();
         m_stats.materialsProcessed++;
         
         if (m_debugOutput) {
