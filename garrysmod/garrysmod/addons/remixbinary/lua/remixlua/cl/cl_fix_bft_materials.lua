@@ -23,11 +23,12 @@
 local function IsChannelOverlay(matPath)
     local pathLower = string.lower(matPath)
     
-    -- Check for channel suffixes
-    if string.EndsWith(pathLower, "_ch") or
-       string.EndsWith(pathLower, "_ch_r") or
-       string.EndsWith(pathLower, "_ch_g") or
-       string.EndsWith(pathLower, "_ch_b") then
+    -- Check for channel patterns anywhere in the path (more flexible)
+    -- Patterns: _ch_r, _ch_g, _ch_b, or _ch at end
+    if string.find(pathLower, "_ch_r") or
+       string.find(pathLower, "_ch_g") or
+       string.find(pathLower, "_ch_b") or
+       string.EndsWith(pathLower, "_ch") then
         return true
     end
     
@@ -92,18 +93,32 @@ local function ProcessBFTMaterial(matPath)
     
     -- Check if this is a channel overlay that should be hidden
     if IsChannelOverlay(matPath) then
-        -- Verify it has BFT channel characteristics
-        local additive = mat:GetInt("$additive")
-        local selfillum = mat:GetInt("$selfillum")
-        
-        if additive == 1 or selfillum == 1 then
-            HideChannelOverlay(mat)
-            return
-        end
+        -- Hide it regardless of flags - if it has the suffix, hide it
+        HideChannelOverlay(mat)
+        return
     end
     
     -- Try to fix BFT tinting
     FixBFTMaterial(mat)
+end
+
+-- =========================================================================
+-- Scan Existing Entities
+-- =========================================================================
+
+local function ScanAllEntities()
+    for _, ent in ipairs(ents.GetAll()) do
+        if IsValid(ent) then
+            local materials = ent:GetMaterials()
+            for _, matPath in ipairs(materials) do
+                ProcessBFTMaterial(matPath)
+            end
+        end
+    end
+    
+    if GetConVar("developer"):GetInt() > 0 then
+        print("[RTX-BFT] Scanned all entities for BFT materials")
+    end
 end
 
 -- Fix materials as entities are created
@@ -119,6 +134,18 @@ hook.Add("OnEntityCreated", "RTX_FixBFTMaterials", function(ent)
             ProcessBFTMaterial(matPath)
         end
     end)
+end)
+
+-- Scan on initial spawn and when fully loaded
+hook.Add("InitPostEntity", "RTX_FixBFTMaterials_Init", function()
+    timer.Simple(1, ScanAllEntities)  -- Delay to let everything load
+end)
+
+-- Also scan when player spawns (catches respawns)
+hook.Add("PlayerSpawn", "RTX_FixBFTMaterials_Spawn", function(ply)
+    if ply == LocalPlayer() then
+        timer.Simple(0.5, ScanAllEntities)
+    end
 end)
 
 -- Console command to manually fix a material
@@ -148,5 +175,29 @@ concommand.Add("rtx_hide_bft_channel", function(ply, cmd, args)
     HideChannelOverlay(mat)
     print("Hidden BFT channel overlay: " .. args[1])
 end, nil, "Hide a BlueFlyTrap channel overlay material for RTX rendering")
+
+-- Debug command to scan and list all channel overlays
+concommand.Add("rtx_scan_bft_channels", function()
+    print("[RTX-BFT] Scanning for channel overlay materials...")
+    local count = 0
+    
+    for _, ent in ipairs(ents.GetAll()) do
+        if IsValid(ent) then
+            local materials = ent:GetMaterials()
+            for _, matPath in ipairs(materials) do
+                if IsChannelOverlay(matPath) then
+                    local mat = Material(matPath)
+                    if not mat:IsError() then
+                        print("  Found: " .. matPath)
+                        HideChannelOverlay(mat)
+                        count = count + 1
+                    end
+                end
+            end
+        end
+    end
+    
+    print("[RTX-BFT] Hidden " .. count .. " channel overlay materials")
+end, nil, "Scan and hide all BFT channel overlay materials")
 
 print("[RTX] BlueFlyTrap PseudoPBR material fix loaded (includes channel overlay hiding)")
