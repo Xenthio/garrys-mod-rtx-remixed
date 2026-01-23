@@ -3729,6 +3729,7 @@ LUA_FUNCTION(LegacyTextureProcessor_InspectMaterial) {
     
     LUA->CreateTable();
     
+    // Basic info
     LUA->PushString(props.materialName.c_str());
     LUA->SetField(-2, "name");
     
@@ -3777,6 +3778,9 @@ LUA_FUNCTION(LegacyTextureProcessor_InspectMaterial) {
     LUA->PushBool(props.normalMapAlphaEnvMapMask);
     LUA->SetField(-2, "normalMapAlphaEnvMapMask");
     
+    LUA->PushBool(props.hasBaseAlphaEnvMapMask);
+    LUA->SetField(-2, "hasBaseAlphaEnvMapMask");
+    
     LUA->PushBool(props.isSelfIllum);
     LUA->SetField(-2, "isSelfIllum");
     
@@ -3798,6 +3802,196 @@ LUA_FUNCTION(LegacyTextureProcessor_InspectMaterial) {
     
     LUA->PushBool(props.hasBaseTextureBrightness);
     LUA->SetField(-2, "hasBaseTextureBrightness");
+    
+    // =========================================================================
+    // PBR Format Detection
+    // =========================================================================
+    
+    // Determine detected format
+    std::string detectedFormat = "Source Engine (Standard)";
+    if (props.isExoPBR) detectedFormat = "ExoPBR";
+    else if (props.isGPBR) detectedFormat = "GPBR (Strata)";
+    else if (props.isBFTPseudoPBR) detectedFormat = "PseudoPBR (BlueFlyTrap/MWB)";
+    
+    LUA->PushString(detectedFormat.c_str());
+    LUA->SetField(-2, "detectedFormat");
+    
+    // ExoPBR
+    LUA->PushBool(props.isExoPBR);
+    LUA->SetField(-2, "isExoPBR");
+    
+    LUA->PushString(props.armTexturePath.c_str());
+    LUA->SetField(-2, "armTexture");
+    
+    LUA->PushBool(props.hasARMTexture);
+    LUA->SetField(-2, "hasARMTexture");
+    
+    LUA->PushString(props.exoNormalPath.c_str());
+    LUA->SetField(-2, "exoNormal");
+    
+    LUA->PushBool(props.hasExoNormal);
+    LUA->SetField(-2, "hasExoNormal");
+    
+    LUA->PushString(props.emissionTexturePath.c_str());
+    LUA->SetField(-2, "emissionTexture");
+    
+    LUA->PushBool(props.hasEmissionTexture);
+    LUA->SetField(-2, "hasEmissionTexture");
+    
+    // GPBR (Strata)
+    LUA->PushBool(props.isGPBR);
+    LUA->SetField(-2, "isGPBR");
+    
+    LUA->PushString(props.mraoTexturePath.c_str());
+    LUA->SetField(-2, "mraoTexture");
+    
+    LUA->PushBool(props.hasMRAOTexture);
+    LUA->SetField(-2, "hasMRAOTexture");
+    
+    LUA->PushString(props.gpbrEmissionPath.c_str());
+    LUA->SetField(-2, "gpbrEmission");
+    
+    LUA->PushBool(props.hasGPBREmission);
+    LUA->SetField(-2, "hasGPBREmission");
+    
+    // BlueFlyTrap PseudoPBR
+    LUA->PushBool(props.isBFTPseudoPBR);
+    LUA->SetField(-2, "isBFTPseudoPBR");
+    
+    LUA->PushBool(props.isBFTMetallicLayer);
+    LUA->SetField(-2, "isBFTMetallicLayer");
+    
+    LUA->PushBool(props.isBFTDiffuseLayer);
+    LUA->SetField(-2, "isBFTDiffuseLayer");
+    
+    LUA->PushString(props.bftExponentTexturePath.c_str());
+    LUA->SetField(-2, "bftExponentTexture");
+    
+    LUA->PushBool(props.hasBFTExponentTexture);
+    LUA->SetField(-2, "hasBFTExponentTexture");
+    
+    LUA->PushBool(props.hasBFTBlendTintByBaseAlpha);
+    LUA->SetField(-2, "hasBFTBlendTintByBaseAlpha");
+    
+    LUA->PushBool(props.hasBFTColor2);
+    LUA->SetField(-2, "hasBFTColor2");
+    
+    if (props.hasBFTColor2) {
+        LUA->CreateTable();
+        LUA->PushNumber(props.bftColor2[0]);
+        LUA->SetField(-2, "r");
+        LUA->PushNumber(props.bftColor2[1]);
+        LUA->SetField(-2, "g");
+        LUA->PushNumber(props.bftColor2[2]);
+        LUA->SetField(-2, "b");
+        LUA->SetField(-2, "bftColor2");
+    }
+    
+    // =========================================================================
+    // Auto-discovered textures
+    // =========================================================================
+    LUA->PushString(props.discoveredNormalPath.c_str());
+    LUA->SetField(-2, "discoveredNormal");
+    
+    LUA->PushBool(props.hasDiscoveredNormal);
+    LUA->SetField(-2, "hasDiscoveredNormal");
+    
+    LUA->PushString(props.discoveredHeightPath.c_str());
+    LUA->SetField(-2, "discoveredHeight");
+    
+    LUA->PushBool(props.hasDiscoveredHeight);
+    LUA->SetField(-2, "hasDiscoveredHeight");
+    
+    LUA->PushString(props.discoveredMaskPath.c_str());
+    LUA->SetField(-2, "discoveredMask");
+    
+    LUA->PushBool(props.hasDiscoveredMask);
+    LUA->SetField(-2, "hasDiscoveredMask");
+    
+    LUA->PushString(props.discoveredAOPath.c_str());
+    LUA->SetField(-2, "discoveredAO");
+    
+    LUA->PushBool(props.hasDiscoveredAO);
+    LUA->SetField(-2, "hasDiscoveredAO");
+    
+    // =========================================================================
+    // Envmap properties
+    // =========================================================================
+    LUA->PushBool(props.hasEnvMap);
+    LUA->SetField(-2, "hasEnvMap");
+    
+    LUA->PushBool(props.hasEnvMapTint);
+    LUA->SetField(-2, "hasEnvMapTint");
+    
+    if (props.hasEnvMapTint) {
+        LUA->CreateTable();
+        LUA->PushNumber(props.envMapTint[0]);
+        LUA->SetField(-2, "r");
+        LUA->PushNumber(props.envMapTint[1]);
+        LUA->SetField(-2, "g");
+        LUA->PushNumber(props.envMapTint[2]);
+        LUA->SetField(-2, "b");
+        LUA->SetField(-2, "envMapTint");
+    }
+    
+    LUA->PushNumber(props.envMapContrast);
+    LUA->SetField(-2, "envMapContrast");
+    
+    LUA->PushBool(props.hasEnvMapContrast);
+    LUA->SetField(-2, "hasEnvMapContrast");
+    
+    LUA->PushNumber(props.envMapSaturation);
+    LUA->SetField(-2, "envMapSaturation");
+    
+    LUA->PushBool(props.hasEnvMapSaturation);
+    LUA->SetField(-2, "hasEnvMapSaturation");
+    
+    // =========================================================================
+    // Phong fresnel
+    // =========================================================================
+    LUA->PushBool(props.hasPhongFresnelRanges);
+    LUA->SetField(-2, "hasPhongFresnelRanges");
+    
+    if (props.hasPhongFresnelRanges) {
+        LUA->CreateTable();
+        LUA->PushNumber(props.phongFresnelRanges[0]);
+        LUA->RawSetI(-2, 1);
+        LUA->PushNumber(props.phongFresnelRanges[1]);
+        LUA->RawSetI(-2, 2);
+        LUA->PushNumber(props.phongFresnelRanges[2]);
+        LUA->RawSetI(-2, 3);
+        LUA->SetField(-2, "phongFresnelRanges");
+    }
+    
+    // =========================================================================
+    // Rim lighting
+    // =========================================================================
+    LUA->PushBool(props.hasRimLight);
+    LUA->SetField(-2, "hasRimLight");
+    
+    LUA->PushNumber(props.rimLightExponent);
+    LUA->SetField(-2, "rimLightExponent");
+    
+    LUA->PushNumber(props.rimLightBoost);
+    LUA->SetField(-2, "rimLightBoost");
+    
+    // =========================================================================
+    // Self-illum / Emissive
+    // =========================================================================
+    LUA->PushString(props.selfIllumMaskPath.c_str());
+    LUA->SetField(-2, "selfIllumMask");
+    
+    LUA->PushBool(props.hasSelfIllumMask);
+    LUA->SetField(-2, "hasSelfIllumMask");
+    
+    // =========================================================================
+    // Parallax
+    // =========================================================================
+    LUA->PushString(props.parallaxMapPath.c_str());
+    LUA->SetField(-2, "parallaxMap");
+    
+    LUA->PushBool(props.hasParallaxMap);
+    LUA->SetField(-2, "hasParallaxMap");
     
     return 1;
 }
