@@ -1,0 +1,27 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "models\blueflytrap\gravitygun\view\texture\view_barrel"
+	"$bumpmap" "models\blueflytrap\gravitygun\view\texture\view_barrel_n_alt"
+
+	"$nodiffusebumplighting"	"1"
+
+	"$color2"			"[0 0 0]"
+
+	"$additive"	"1"
+
+	"$phongexponenttexture" "models\blueflytrap\gravitygun\view\texture\view_barrel_e"
+	"$phongalbedotint" 1
+
+	"$phong" "1"
+
+	"$phongboost"	"10.465624"
+	"$phongfresnelranges"	"[0.76 0.921 1.25]"
+
+	$emissiveBlendEnabled 1
+	$emissiveBlendTexture	"models\blueflytrap\gravitygun\world\texture\tb_detail2"
+	$emissiveBlendBaseTexture	"models\blueflytrap\gravitygun\view\texture\view_barrel_g"
+	$emissiveBlendFlowTexture	"models\blueflytrap\gravitygun\view\texture\flow_barrel"
+	$emissiveBlendTint "[1.26 0.32 0.018]"
+	$emissiveBlendStrength 1
+	$emissiveBlendScrollVector "[-0.015 -0.016]"
+}

@@ -372,136 +372,136 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
     //
     // We also use the base texture's alpha channel if it contains a metallic mask.
     // =========================================================================
-    if (props.isBFTMetallicLayer && !props.baseTexturePath.empty()) {
-        std::vector<uint8_t> fileData;
-        if (ctx.readVTFFile(props.baseTexturePath, fileData)) {
-            VTFFileHeader header;
-            if (ctx.parseVTFHeader(fileData, header)) {
-                ConvertedTexture baseTex;
-                baseTex.isNormalMap = false;
-                
-                if (ctx.extractPixelData(fileData, header, baseTex, false)) {
-                    // Calculate boost factor based on $color2
-                    // If $color2 is dark, the original texture was multiplied by that dark color
-                    // To recover: boost = 1.0 / color2 (clamped to reasonable range)
-                    float boostR = DEFAULT_METALLIC_BOOST;
-                    float boostG = DEFAULT_METALLIC_BOOST;
-                    float boostB = DEFAULT_METALLIC_BOOST;
-                    
-                    if (props.hasBFTColor2) {
-                        // Calculate inverse of $color2 to undo the darkening
-                        float c2r = props.bftColor2[0];
-                        float c2g = props.bftColor2[1];
-                        float c2b = props.bftColor2[2];
-                        
-                        if (c2r < 0.1f && c2g < 0.1f && c2b < 0.1f) {
-                            // Full black $color2 - use standard metallic boost
-                            boostR = boostG = boostB = DEFAULT_METALLIC_BOOST;
-                        } else {
-                            // Partial darkening - calculate inverse
-                            if (c2r > 0.1f) boostR = 1.0f / c2r;
-                            if (c2g > 0.1f) boostG = 1.0f / c2g;
-                            if (c2b > 0.1f) boostB = 1.0f / c2b;
-                            
-                            // Clamp to reasonable range (1x to max boost)
-                            boostR = min(MAX_METALLIC_BOOST, max(1.0f, boostR));
-                            boostG = min(MAX_METALLIC_BOOST, max(1.0f, boostG));
-                            boostB = min(MAX_METALLIC_BOOST, max(1.0f, boostB));
-                        }
-                    }
-                    
-                    if (ctx.debugOutput) {
-                        Msg("[BFT] Applying metallic albedo boost: [%.2f %.2f %.2f] (masked by alpha channel)\n", 
-                            boostR, boostG, boostB);
-                    }
-                    
-                    // Create boosted albedo texture
-                    ConvertedTexture albedoTex;
-                    albedoTex.width = baseTex.width;
-                    albedoTex.height = baseTex.height;
-                    albedoTex.mipLevels = 1;
-                    albedoTex.format = REMIXAPI_FORMAT_R8G8B8A8_UNORM;
-                    albedoTex.isNormalMap = false;
-                    albedoTex.pixelData.resize(baseTex.width * baseTex.height * 4);
-                    
-                    for (uint32_t i = 0; i < baseTex.width * baseTex.height; i++) {
-                        // Read original pixel
-                        float r = static_cast<float>(baseTex.pixelData[i * 4 + 0]) / 255.0f;
-                        float g = static_cast<float>(baseTex.pixelData[i * 4 + 1]) / 255.0f;
-                        float b = static_cast<float>(baseTex.pixelData[i * 4 + 2]) / 255.0f;
-                        uint8_t a = baseTex.pixelData[i * 4 + 3];
-                        
-                        // Use alpha channel as metallic mask - only brighten metallic parts
-                        // Alpha = 255 means fully metallic, alpha = 0 means non-metallic
-                        float metallicMask = static_cast<float>(a) / 255.0f;
-                        
-                        // Save original colors for non-metallic parts
-                        float origR = r;
-                        float origG = g;
-                        float origB = b;
-                        
-                        // Calculate boosted metallic colors
-                        float metalR = min(1.0f, r * boostR);
-                        float metalG = min(1.0f, g * boostG);
-                        float metalB = min(1.0f, b * boostB);
-                        
-                        // Apply saturation boost for metals to recover gold, copper, bronze tones
-                        float luminance = 0.2126f * metalR + 0.7152f * metalG + 0.0722f * metalB;
-                        metalR = min(1.0f, luminance + (metalR - luminance) * METALLIC_SATURATION_BOOST);
-                        metalG = min(1.0f, luminance + (metalG - luminance) * METALLIC_SATURATION_BOOST);
-                        metalB = min(1.0f, luminance + (metalB - luminance) * METALLIC_SATURATION_BOOST);
-                        
-                        // Ensure minimum brightness for metals (no true black metals exist)
-                        if (metalR < MIN_METALLIC_BRIGHTNESS && metalG < MIN_METALLIC_BRIGHTNESS && metalB < MIN_METALLIC_BRIGHTNESS) {
-                            // Scale up to minimum brightness while preserving hue
-                            float maxC = max(metalR, max(metalG, metalB));
-                            if (maxC > 0.01f) {
-                                float scale = MIN_METALLIC_BRIGHTNESS / maxC;
-                                metalR *= scale;
-                                metalG *= scale;
-                                metalB *= scale;
-                            } else {
-                                // Pure black - default to neutral metal (like chrome/silver)
-                                metalR = metalG = metalB = DEFAULT_NEUTRAL_METAL;
-                            }
-                        }
-                        
-                        // Blend between original (non-metallic) and boosted (metallic) based on mask
-                        // metallicMask = 1.0 → fully boosted metal color
-                        // metallicMask = 0.0 → original color unchanged
-                        r = origR + (metalR - origR) * metallicMask;
-                        g = origG + (metalG - origG) * metallicMask;
-                        b = origB + (metalB - origB) * metallicMask;
-                        
-                        albedoTex.pixelData[i * 4 + 0] = static_cast<uint8_t>(r * 255.0f);
-                        albedoTex.pixelData[i * 4 + 1] = static_cast<uint8_t>(g * 255.0f);
-                        albedoTex.pixelData[i * 4 + 2] = static_cast<uint8_t>(b * 255.0f);
-                        // Set alpha to fully opaque - original alpha was used as a mask,
-                        // not as transparency. RTX Remix diffuse_texture shouldn't have alpha.
-                        albedoTex.pixelData[i * 4 + 3] = 255;
-                    }
-                    
-                    // Write the boosted albedo
-                    uint64_t hash = ctx.generateHash(props.baseTexturePath + "_bft_albedo", albedoTex.width, albedoTex.height);
-                    std::string path = ctx.generateOutputPath(hash, "_albedo");
-                    
-                    if (ctx.fileExists(path)) {
-                        result.albedoPath = path;
-                        result.skippedCount++;
-                    } else if (ctx.writeDDS(albedoTex, path)) {
-                        result.albedoPath = path;
-                        if (ctx.debugOutput) Msg("[BFT] Wrote reconstructed metallic albedo: %s\n", path.c_str());
-                    }
-                    
-                    // Store the boost values in result for potential use in material override
-                    result.albedoBoostR = boostR;
-                    result.albedoBoostG = boostG;
-                    result.albedoBoostB = boostB;
-                    result.hasAlbedoBoost = true;
-                }
-            }
-        }
-    }
+    //if (props.isBFTMetallicLayer && !props.baseTexturePath.empty()) {
+    //    std::vector<uint8_t> fileData;
+    //    if (ctx.readVTFFile(props.baseTexturePath, fileData)) {
+    //        VTFFileHeader header;
+    //        if (ctx.parseVTFHeader(fileData, header)) {
+    //            ConvertedTexture baseTex;
+    //            baseTex.isNormalMap = false;
+    //            
+    //            if (ctx.extractPixelData(fileData, header, baseTex, false)) {
+    //                // Calculate boost factor based on $color2
+    //                // If $color2 is dark, the original texture was multiplied by that dark color
+    //                // To recover: boost = 1.0 / color2 (clamped to reasonable range)
+    //                float boostR = DEFAULT_METALLIC_BOOST;
+    //                float boostG = DEFAULT_METALLIC_BOOST;
+    //                float boostB = DEFAULT_METALLIC_BOOST;
+    //                
+    //                if (props.hasBFTColor2) {
+    //                    // Calculate inverse of $color2 to undo the darkening
+    //                    float c2r = props.bftColor2[0];
+    //                    float c2g = props.bftColor2[1];
+    //                    float c2b = props.bftColor2[2];
+    //                    
+    //                    if (c2r < 0.1f && c2g < 0.1f && c2b < 0.1f) {
+    //                        // Full black $color2 - use standard metallic boost
+    //                        boostR = boostG = boostB = DEFAULT_METALLIC_BOOST;
+    //                    } else {
+    //                        // Partial darkening - calculate inverse
+    //                        if (c2r > 0.1f) boostR = 1.0f / c2r;
+    //                        if (c2g > 0.1f) boostG = 1.0f / c2g;
+    //                        if (c2b > 0.1f) boostB = 1.0f / c2b;
+    //                        
+    //                        // Clamp to reasonable range (1x to max boost)
+    //                        boostR = min(MAX_METALLIC_BOOST, max(1.0f, boostR));
+    //                        boostG = min(MAX_METALLIC_BOOST, max(1.0f, boostG));
+    //                        boostB = min(MAX_METALLIC_BOOST, max(1.0f, boostB));
+    //                    }
+    //                }
+    //                
+    //                if (ctx.debugOutput) {
+    //                    Msg("[BFT] Applying metallic albedo boost: [%.2f %.2f %.2f] (masked by alpha channel)\n", 
+    //                        boostR, boostG, boostB);
+    //                }
+    //                
+    //                // Create boosted albedo texture
+    //                ConvertedTexture albedoTex;
+    //                albedoTex.width = baseTex.width;
+    //                albedoTex.height = baseTex.height;
+    //                albedoTex.mipLevels = 1;
+    //                albedoTex.format = REMIXAPI_FORMAT_R8G8B8A8_UNORM;
+    //                albedoTex.isNormalMap = false;
+    //                albedoTex.pixelData.resize(baseTex.width * baseTex.height * 4);
+    //                
+    //                for (uint32_t i = 0; i < baseTex.width * baseTex.height; i++) {
+    //                    // Read original pixel
+    //                    float r = static_cast<float>(baseTex.pixelData[i * 4 + 0]) / 255.0f;
+    //                    float g = static_cast<float>(baseTex.pixelData[i * 4 + 1]) / 255.0f;
+    //                    float b = static_cast<float>(baseTex.pixelData[i * 4 + 2]) / 255.0f;
+    //                    uint8_t a = baseTex.pixelData[i * 4 + 3];
+    //                    
+    //                    // Use alpha channel as metallic mask - only brighten metallic parts
+    //                    // Alpha = 255 means fully metallic, alpha = 0 means non-metallic
+    //                    float metallicMask = static_cast<float>(a) / 255.0f;
+    //                    
+    //                    // Save original colors for non-metallic parts
+    //                    float origR = r;
+    //                    float origG = g;
+    //                    float origB = b;
+    //                    
+    //                    // Calculate boosted metallic colors
+    //                    float metalR = min(1.0f, r * boostR);
+    //                    float metalG = min(1.0f, g * boostG);
+    //                    float metalB = min(1.0f, b * boostB);
+    //                    
+    //                    // Apply saturation boost for metals to recover gold, copper, bronze tones
+    //                    float luminance = 0.2126f * metalR + 0.7152f * metalG + 0.0722f * metalB;
+    //                    metalR = min(1.0f, luminance + (metalR - luminance) * METALLIC_SATURATION_BOOST);
+    //                    metalG = min(1.0f, luminance + (metalG - luminance) * METALLIC_SATURATION_BOOST);
+    //                    metalB = min(1.0f, luminance + (metalB - luminance) * METALLIC_SATURATION_BOOST);
+    //                    
+    //                    // Ensure minimum brightness for metals (no true black metals exist)
+    //                    if (metalR < MIN_METALLIC_BRIGHTNESS && metalG < MIN_METALLIC_BRIGHTNESS && metalB < MIN_METALLIC_BRIGHTNESS) {
+    //                        // Scale up to minimum brightness while preserving hue
+    //                        float maxC = max(metalR, max(metalG, metalB));
+    //                        if (maxC > 0.01f) {
+    //                            float scale = MIN_METALLIC_BRIGHTNESS / maxC;
+    //                            metalR *= scale;
+    //                            metalG *= scale;
+    //                            metalB *= scale;
+    //                        } else {
+    //                            // Pure black - default to neutral metal (like chrome/silver)
+    //                            metalR = metalG = metalB = DEFAULT_NEUTRAL_METAL;
+    //                        }
+    //                    }
+    //                    
+    //                    // Blend between original (non-metallic) and boosted (metallic) based on mask
+    //                    // metallicMask = 1.0 → fully boosted metal color
+    //                    // metallicMask = 0.0 → original color unchanged
+    //                    r = origR + (metalR - origR) * metallicMask;
+    //                    g = origG + (metalG - origG) * metallicMask;
+    //                    b = origB + (metalB - origB) * metallicMask;
+    //                    
+    //                    albedoTex.pixelData[i * 4 + 0] = static_cast<uint8_t>(r * 255.0f);
+    //                    albedoTex.pixelData[i * 4 + 1] = static_cast<uint8_t>(g * 255.0f);
+    //                    albedoTex.pixelData[i * 4 + 2] = static_cast<uint8_t>(b * 255.0f);
+    //                    // Set alpha to fully opaque - original alpha was used as a mask,
+    //                    // not as transparency. RTX Remix diffuse_texture shouldn't have alpha.
+    //                    albedoTex.pixelData[i * 4 + 3] = 255;
+    //                }
+    //                
+    //                // Write the boosted albedo
+    //                uint64_t hash = ctx.generateHash(props.baseTexturePath + "_bft_albedo", albedoTex.width, albedoTex.height);
+    //                std::string path = ctx.generateOutputPath(hash, "_albedo");
+    //                
+    //                if (ctx.fileExists(path)) {
+    //                    result.albedoPath = path;
+    //                    result.skippedCount++;
+    //                } else if (ctx.writeDDS(albedoTex, path)) {
+    //                    result.albedoPath = path;
+    //                    if (ctx.debugOutput) Msg("[BFT] Wrote reconstructed metallic albedo: %s\n", path.c_str());
+    //                }
+    //                
+    //                // Store the boost values in result for potential use in material override
+    //                result.albedoBoostR = boostR;
+    //                result.albedoBoostG = boostG;
+    //                result.albedoBoostB = boostB;
+    //                result.hasAlbedoBoost = true;
+    //            }
+    //        }
+    //    }
+    //}
     
     // Process normal map (standard Source Engine bumpmap)
     if (props.hasBumpMap && !props.bumpMapPath.empty()) {
