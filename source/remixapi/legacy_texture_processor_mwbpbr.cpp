@@ -176,6 +176,42 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
     }
     
     // =========================================================================
+    // NORMAL MAP PROCESSING
+    // =========================================================================
+    // MWB materials have standard normal maps in $bumpmap
+    if (props.hasBumpMap && !props.bumpMapPath.empty()) {
+        std::vector<uint8_t> fileData;
+        if (ctx.readVTFFile(props.bumpMapPath, fileData)) {
+            VTFFileHeader header;
+            if (ctx.parseVTFHeader(fileData, header)) {
+                ConvertedTexture normalTex;
+                normalTex.isNormalMap = true;
+                
+                if (ctx.extractPixelData(fileData, header, normalTex, false)) {
+                    // Handle SSBump conversion if needed
+                    if (props.isSSBump) {
+                        ctx.convertSSBumpToNormal(normalTex);
+                    }
+                    
+                    ctx.convertToOctahedral(normalTex);
+                    
+                    uint64_t hash = ctx.generateHash(props.bumpMapPath + "_normal", normalTex.width, normalTex.height);
+                    std::string path = ctx.generateOutputPath(hash, "_normal");
+                    
+                    if (ctx.fileExists(path)) {
+                        result.normalPath = path;
+                        result.skippedCount++;
+                    } else if (ctx.writeDDS(normalTex, path)) {
+                        result.normalPath = path;
+                        if (ctx.materialsWithNormals) (*ctx.materialsWithNormals)++;
+                        if (ctx.debugOutput) Msg("[MWB-PBR] Wrote normal: %s\n", path.c_str());
+                    }
+                }
+            }
+        }
+    }
+    
+    // =========================================================================
     // EXPONENT TEXTURE PROCESSING
     // =========================================================================
     // MWB encodes multiple channels in the exponent texture:
