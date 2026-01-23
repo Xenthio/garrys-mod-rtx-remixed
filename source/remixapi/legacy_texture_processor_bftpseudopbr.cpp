@@ -49,6 +49,76 @@ namespace BFTPseudoPBR {
 static const float DARK_COLOR2_THRESHOLD = 0.3f;
 
 // =========================================================================
+// Channel Overlay Detection
+// =========================================================================
+// BFT materials may have channel overlay layers (_ch, _ch_r, _ch_g, _ch_b)
+// These are additive glow layers that use $selfillum and colored $envmaptint.
+// In RTX they appear as white overlaps and should be hidden.
+
+bool IsChannelOverlayMaterial(const VMTParseResult& vmt, const std::string& materialPath) {
+    // Check if material name ends with channel suffixes
+    std::string pathLower = materialPath;
+    std::transform(pathLower.begin(), pathLower.end(), pathLower.begin(), ::tolower);
+    
+    bool hasChannelSuffix = 
+        pathLower.length() >= 3 && pathLower.substr(pathLower.length() - 3) == "_ch" ||
+        pathLower.length() >= 5 && pathLower.substr(pathLower.length() - 5) == "_ch_r" ||
+        pathLower.length() >= 5 && pathLower.substr(pathLower.length() - 5) == "_ch_g" ||
+        pathLower.length() >= 5 && pathLower.substr(pathLower.length() - 5) == "_ch_b";
+    
+    if (!hasChannelSuffix) return false;
+    
+    // Verify it has BFT channel overlay characteristics
+    std::string additive = vmt.findValue("$additive");
+    std::string selfillum = vmt.findValue("$selfillum");
+    
+    bool isAdditive = !additive.empty() && atoi(additive.c_str()) == 1;
+    bool hasSelfillum = !selfillum.empty() && atoi(selfillum.c_str()) == 1;
+    
+    return hasChannelSuffix && (isAdditive || hasSelfillum);
+}
+
+// =========================================================================
+// Suffix-based BFT Detection
+// =========================================================================
+// BFT materials often have predictable naming:
+//   base_material      - Base/diffuse layer (has $blendTintByBaseAlpha)
+//   base_material_metal - Metallic layer (has $phongalbedotint, $additive)
+//   base_material_e     - Exponent/roughness texture
+//   base_material_n     - Normal map
+//   base_material_ch*   - Channel overlays (should be hidden)
+
+bool DetectBySuffix(const std::string& materialPath, const VMTParseResult& vmt) {
+    std::string pathLower = materialPath;
+    std::transform(pathLower.begin(), pathLower.end(), pathLower.begin(), ::tolower);
+    
+    // Check for _metal suffix (BFT metallic layer)
+    if (pathLower.length() >= 6 && 
+        pathLower.substr(pathLower.length() - 6) == "_metal") {
+        // Verify it has BFT metallic layer characteristics
+        std::string albedoTint = vmt.findValue("$phongalbedotint");
+        if (!albedoTint.empty() && atoi(albedoTint.c_str()) == 1) {
+            return true;
+        }
+    }
+    
+    // Check if there's a companion _e texture (exponent/roughness)
+    // This is a strong indicator of BFT even without comments
+    std::string expTex = vmt.findValue("$phongexponenttexture");
+    if (!expTex.empty()) {
+        std::string expLower = expTex;
+        std::transform(expLower.begin(), expLower.end(), expLower.begin(), ::tolower);
+        
+        // If exponent texture ends with _e, strong BFT indicator
+        if (expLower.length() >= 2 && expLower.substr(expLower.length() - 2) == "_e") {
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+// =========================================================================
 // Detection
 // =========================================================================
 
@@ -56,13 +126,28 @@ bool Detect(const VMTParseResult& vmt) {
     std::string shaderLower = vmt.shaderName;
     std::transform(shaderLower.begin(), shaderLower.end(), shaderLower.begin(), ::tolower);
     
-    // Must be VertexlitGeneric with $phongexponenttexture
+    // Must be VertexlitGeneric
     if (shaderLower != "vertexlitgeneric") return false;
     
+    // Check for $phongexponenttexture (core BFT requirement)
     std::string expTex = vmt.findValue("$phongexponenttexture");
     if (expTex.empty()) return false;
     
     bool hasMarker = false;
+    
+    // =========================================================================
+    // Suffix-based detection (no comments needed)
+    // =========================================================================
+    // Check if exponent texture follows BFT naming convention (*_e)
+    std::string expLower = expTex;
+    std::transform(expLower.begin(), expLower.end(), expLower.begin(), ::tolower);
+    if (expLower.length() >= 2 && expLower.substr(expLower.length() - 2) == "_e") {
+        hasMarker = true;
+    }
+    
+    // =========================================================================
+    // Pattern-based detection (original logic)
+    // =========================================================================
     
     // Check for $color2 black/grey (stacking marker)
     std::string color2 = vmt.findValue("$color2");

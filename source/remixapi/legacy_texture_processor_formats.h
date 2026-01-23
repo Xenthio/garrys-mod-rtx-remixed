@@ -174,6 +174,10 @@ namespace BFTPseudoPBR {
     ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
                                        uint64_t textureHash,
                                        const ProcessingContext& ctx);
+    
+    // Check if this is a BFT channel overlay material (_ch, _ch_r, _ch_g, _ch_b)
+    // These additive glow layers should be hidden in RTX as they cause white overlaps
+    bool IsChannelOverlayMaterial(const VMTParseResult& vmt, const std::string& materialPath);
 }
 
 namespace SourceEngine {
