@@ -35,24 +35,100 @@ local function IsChannelOverlay(matPath)
     return false
 end
 
+-- Create a transparent material to use as replacement
+local transparentMat = nil
+local function GetTransparentMaterial()
+    if not transparentMat then
+        transparentMat = CreateMaterial("rtx_transparent_" .. os.time(), "UnlitGeneric", {
+            ["$basetexture"] = "color/white",
+            ["$translucent"] = "1",
+            ["$alpha"] = "0",
+            ["$vertexalpha"] = "1",
+            ["$vertexcolor"] = "1",
+            ["$color"] = "[0 0 0]",
+            ["$color2"] = "[0 0 0]",
+        })
+    end
+    return transparentMat
+end
+
+-- Track materials that should be hidden
+local channelOverlayMaterials = {}
+
 local function HideChannelOverlay(mat)
     if not mat or mat:IsError() then return end
     
-    -- Make the material fully transparent/invisible
+    local matName = mat:GetName()
+    
+    -- Store the material name for entity-level hiding
+    channelOverlayMaterials[matName] = true
+    
+    -- Method 1: Disable additive blending and selfillum
     mat:SetInt("$additive", 0)
     mat:SetInt("$selfillum", 0)
+    mat:SetInt("$selfillumtint", 0)
+    
+    -- Method 2: Make the base texture invisible
     mat:SetVector("$color", Vector(0, 0, 0))
     mat:SetVector("$color2", Vector(0, 0, 0))
     mat:SetFloat("$alpha", 0)
     
-    -- Try to make it not render at all
+    -- Method 3: Enable translucency with 0 alpha
     mat:SetInt("$translucent", 1)
-    mat:SetInt("$no_draw", 1)
+    mat:SetInt("$nocull", 0)
+    mat:SetFloat("$alphatest", 0)
+    
+    -- Method 4: Set basetexture to blank/invisible if possible
+    -- Using a 1x1 black texture effectively hides the material
+    mat:SetTexture("$basetexture", "color/black")
+    
+    -- Method 5: Try $ignorez to move it behind everything
+    mat:SetInt("$ignorez", 1)
     
     if GetConVar("developer"):GetInt() > 0 then
-        print("[RTX-BFT] Hidden channel overlay: " .. mat:GetName())
+        print("[RTX-BFT] Hidden channel overlay: " .. matName)
     end
 end
+
+-- Function to check if a material is a channel overlay we want to hide
+local function ShouldHideMaterial(matPath)
+    return channelOverlayMaterials[matPath] == true
+end
+
+-- =========================================================================
+-- Entity-Level Material Hiding
+-- =========================================================================
+-- Since material-level hiding may not work for additive materials,
+-- we also hide them at the entity level using SetSubMaterial
+
+local function HideChannelOverlaysOnEntity(ent)
+    if not IsValid(ent) then return end
+    
+    local materials = ent:GetMaterials()
+    for idx, matPath in ipairs(materials) do
+        if IsChannelOverlay(matPath) then
+            -- SetSubMaterial uses 0-based indexing
+            -- Set to empty string or use our transparent material
+            ent:SetSubMaterial(idx - 1, "!rtx_bft_transparent")
+            
+            if GetConVar("developer"):GetInt() > 0 then
+                print("[RTX-BFT] Hidden submaterial " .. (idx-1) .. " on entity: " .. matPath)
+            end
+        end
+    end
+end
+
+-- Create the transparent replacement material
+hook.Add("InitPostEntity", "RTX_CreateTransparentMat", function()
+    -- Create a material that renders as nothing
+    CreateMaterial("rtx_bft_transparent", "UnlitGeneric", {
+        ["$basetexture"] = "color/white",
+        ["$translucent"] = "1",
+        ["$alpha"] = "0",
+        ["$vertexalpha"] = "1",
+        ["$color"] = "[0 0 0]",
+    })
+end)
 
 -- =========================================================================
 -- BFT Tinting Fix
@@ -115,7 +191,9 @@ local function ScanAllEntities(verbose)
     for _, ent in ipairs(ents.GetAll()) do
         if IsValid(ent) then
             local materials = ent:GetMaterials()
-            for _, matPath in ipairs(materials) do
+            local hasChannelOverlay = false
+            
+            for idx, matPath in ipairs(materials) do
                 -- Skip already processed materials
                 if not processedMaterials[matPath] then
                     processedMaterials[matPath] = true
@@ -128,11 +206,19 @@ local function ScanAllEntities(verbose)
                             end
                             HideChannelOverlay(mat)
                             channelCount = channelCount + 1
+                            hasChannelOverlay = true
                         end
                     else
                         ProcessBFTMaterial(matPath)
                     end
+                elseif IsChannelOverlay(matPath) then
+                    hasChannelOverlay = true
                 end
+            end
+            
+            -- Also apply entity-level hiding for all channel overlays on this entity
+            if hasChannelOverlay then
+                HideChannelOverlaysOnEntity(ent)
             end
         end
     end
@@ -149,8 +235,18 @@ hook.Add("OnEntityCreated", "RTX_FixBFTMaterials", function(ent)
         
         -- Get all materials on the entity
         local materials = ent:GetMaterials()
+        local hasChannelOverlay = false
+        
         for _, matPath in ipairs(materials) do
             ProcessBFTMaterial(matPath)
+            if IsChannelOverlay(matPath) then
+                hasChannelOverlay = true
+            end
+        end
+        
+        -- Apply entity-level hiding for channel overlays
+        if hasChannelOverlay then
+            HideChannelOverlaysOnEntity(ent)
         end
     end)
 end)
