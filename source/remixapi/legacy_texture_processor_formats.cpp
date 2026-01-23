@@ -60,6 +60,8 @@ Format DetectFormat(const VMTParseResult& vmt) {
     // Check formats in priority order
     if (ExoPBR::Detect(vmt)) return Format::ExoPBR;
     if (GPBR::Detect(vmt)) return Format::GPBR;
+    // MWB PBR must be checked BEFORE BFT - it has more specific patterns
+    if (MWBPBR::Detect(vmt)) return Format::MWBPBR;
     if (BFTPseudoPBR::Detect(vmt)) return Format::BFTPseudoPBR;
     
     // SourceEngine is the fallback
@@ -70,6 +72,7 @@ const char* GetFormatName(Format format) {
     switch (format) {
         case Format::ExoPBR: return "ExoPBR";
         case Format::GPBR: return "GPBR";
+        case Format::MWBPBR: return "MWB-PBR";
         case Format::BFTPseudoPBR: return "BFT-PseudoPBR";
         case Format::SourceEngine: return "Source Engine";
         default: return "Unknown";

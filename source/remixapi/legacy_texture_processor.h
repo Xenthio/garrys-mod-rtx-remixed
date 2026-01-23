@@ -241,6 +241,13 @@ struct MaterialPBRProperties {
     // We need to: 1) extract metallic from alpha, 2) disable tinting at runtime via Lua fix
     bool hasBFTBlendTintByBaseAlpha;    // $blendtintbybasealpha "1" detected
     bool isBFTDiffuseLayer;             // This is a BFT diffuse layer that uses blend tinting
+    
+    // =========================================================================
+    // MWB PBR Gen format support
+    // Separate from BFT - uses pow(gloss,4.0) encoding and stores metalness in green channel
+    // Detection: _rgb suffix, pbr\output\ path, MwEnvMapTint/Arc9EnvMapTint proxies
+    // =========================================================================
+    bool isMWBPBR;                       // Detected MWB PBR Gen format
 };
 
 // Main converter class - core VTF to DDS/PBR conversion

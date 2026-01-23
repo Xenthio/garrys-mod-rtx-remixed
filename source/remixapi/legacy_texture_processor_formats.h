@@ -137,6 +137,7 @@ namespace FormatHandler {
         Unknown = 0,
         ExoPBR,         // Community PBR - screenspace_general_8tex + ExoPBR proxy
         GPBR,           // Strata Source - "PBR" shader
+        MWBPBR,         // MWB PBR Gen - _rgb suffix, pow(gloss,4) encoding
         BFTPseudoPBR,   // BlueFlyTrap - VertexlitGeneric + specific patterns
         SourceEngine    // Standard Source Engine materials (fallback)
     };
@@ -168,7 +169,17 @@ namespace GPBR {
                                        const ProcessingContext& ctx);
 }
 
+namespace MWBPBR {
+    // MWB PBR Gen - uses pow(gloss,4) encoding in exponent texture
+    bool Detect(const VMTParseResult& vmt);
+    void ExtractProperties(const VMTParseResult& vmt, MaterialPBRProperties& props);
+    ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
+                                       uint64_t textureHash,
+                                       const ProcessingContext& ctx);
+}
+
 namespace BFTPseudoPBR {
+    // BlueFlyTrap PseudoPBR - simpler linear encoding
     bool Detect(const VMTParseResult& vmt);
     void ExtractProperties(const VMTParseResult& vmt, MaterialPBRProperties& props);
     ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,

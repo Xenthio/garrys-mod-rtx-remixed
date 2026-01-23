@@ -2012,11 +2012,27 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
     }
     
     // =========================================================================
-    // BlueFlyTrap PseudoPBR format detection
-    // Uses the modular BFTPseudoPBR::Detect() function for comprehensive detection
-    // Supports: BlueFlyTrap, MWB PBR Gen, and similar PseudoPBR tools
+    // MWB PBR Gen format detection (must check BEFORE BFT)
+    // Uses _rgb suffix, pbr\output\ path, MwEnvMapTint/Arc9EnvMapTint proxies
     // =========================================================================
     if (!outProps.isExoPBR && !outProps.isGPBR) {
+        // Create VMTParseResult for modular detection
+        VMTParseResult vmtParse;
+        vmtParse.shaderName = outProps.shaderName;
+        vmtParse.content = content;
+        vmtParse.contentLower = contentLower;
+        
+        if (MWBPBR::Detect(vmtParse)) {
+            outProps.isMWBPBR = true;
+            MWBPBR::ExtractProperties(vmtParse, outProps);
+        }
+    }
+    
+    // =========================================================================
+    // BlueFlyTrap PseudoPBR format detection (only if not MWB)
+    // Uses the modular BFTPseudoPBR::Detect() function for comprehensive detection
+    // =========================================================================
+    if (!outProps.isExoPBR && !outProps.isGPBR && !outProps.isMWBPBR) {
         // Create VMTParseResult for modular detection
         VMTParseResult vmtParse;
         vmtParse.shaderName = outProps.shaderName;
@@ -2085,11 +2101,18 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
             if (outProps.hasGPBRParallax) Msg("    $parallax=%d, depth=%.3f\n", outProps.gpbrParallax ? 1 : 0, outProps.gpbrParallaxDepth);
             if (outProps.hasGPBRAlpha) Msg("    $alpha=%.2f\n", outProps.gpbrAlpha);
         }
+        // MWB PBR Gen specific logging
+        if (outProps.isMWBPBR) {
+            Msg("  [MWB-PBR] Detected MWB PBR Gen format!\n");
+            if (outProps.hasPhongExponentTexture) {
+                Msg("    $phongexponenttexture='%s' (roughness: pow^0.25 decode, metallic: green channel)\n", outProps.phongExponentTexture.c_str());
+            }
+        }
         // BlueFlyTrap PseudoPBR specific logging
         if (outProps.isBFTPseudoPBR) {
             Msg("  [BFT-PseudoPBR] Detected BlueFlyTrap PseudoPBR format!\n");
             if (outProps.hasPhongExponentTexture) {
-                Msg("    $phongexponenttexture='%s' (contains roughness)\n", outProps.phongExponentTexture.c_str());
+                Msg("    $phongexponenttexture='%s' (roughness: linear inversion)\n", outProps.phongExponentTexture.c_str());
             }
             Msg("    $phongboost=%.2f\n", outProps.phongBoost);
             if (outProps.hasPhongFresnelRanges) {
@@ -3240,6 +3263,18 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
     // GPBR format
     if (props.isGPBR) {
         ProcessedMaterial result = GPBR::ProcessTextures(props, textureHash, ctx);
+        if (result.success) {
+            CopyProcessedMaterial(result, matInfo);
+            m_processedMaterialInfo[textureHash] = matInfo;
+            WriteModUSDA();
+            m_stats.materialsProcessed++;
+            return true;
+        }
+    }
+    
+    // MWB PBR Gen format (must check before BFT - it has more specific patterns)
+    if (props.isMWBPBR) {
+        ProcessedMaterial result = MWBPBR::ProcessTextures(props, textureHash, ctx);
         if (result.success) {
             CopyProcessedMaterial(result, matInfo);
             m_processedMaterialInfo[textureHash] = matInfo;
