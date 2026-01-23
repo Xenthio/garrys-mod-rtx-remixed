@@ -235,6 +235,16 @@ static const float MIN_METALLIC_BRIGHTNESS = 0.3f;
 // Default fallback color for pure black metals (neutral chrome/silver)
 static const float DEFAULT_NEUTRAL_METAL = 0.7f;
 
+// Minimum difference between min/max alpha values to consider the alpha
+// channel as having meaningful metallic information. Values below this
+// threshold are treated as uniform (no metallic variation).
+// 10/255 = ~4% variation threshold - filters out compression artifacts
+static const uint8_t ALPHA_VARIATION_THRESHOLD = 10;
+
+// Sampling step for alpha variation check. Lower = more accurate but slower.
+// 8 provides good balance between speed and catching small metallic details.
+static const uint32_t ALPHA_SAMPLE_STEP = 8;
+
 ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
                                    uint64_t textureHash,
                                    const ProcessingContext& ctx) {
@@ -277,63 +287,71 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
                 baseTex.isNormalMap = false;
                 
                 if (ctx.extractPixelData(fileData, header, baseTex, false)) {
-                    // Check if alpha channel has meaningful variation (not uniform like DXT1)
-                    // If alpha is all 255 or all 0, there's no metallic information
-                    uint8_t minAlpha = 255;
-                    uint8_t maxAlpha = 0;
-                    uint8_t firstAlpha = baseTex.pixelData[3];
-                    bool hasVariation = false;
-                    
-                    // Sample pixels to check for variation (check every 16th pixel for speed)
-                    for (uint32_t i = 0; i < baseTex.width * baseTex.height && !hasVariation; i += 16) {
-                        uint8_t a = baseTex.pixelData[i * 4 + 3];
-                        if (a != firstAlpha) {
-                            hasVariation = true;
-                        }
-                        if (a < minAlpha) minAlpha = a;
-                        if (a > maxAlpha) maxAlpha = a;
-                    }
-                    
-                    // Only extract metallic if alpha has meaningful variation
-                    // (not just uniform 255 or 0)
-                    if (hasVariation || (maxAlpha - minAlpha) > 10) {
+                    // Verify we have valid pixel data before accessing
+                    if (baseTex.pixelData.size() < 4) {
                         if (ctx.debugOutput) {
-                            Msg("[BFT] Alpha channel has variation (min=%d, max=%d) - extracting metallic\n", 
-                                minAlpha, maxAlpha);
-                        }
-                        
-                        // Create metallic texture from alpha channel
-                        ConvertedTexture metallicTex;
-                        metallicTex.width = baseTex.width;
-                        metallicTex.height = baseTex.height;
-                        metallicTex.mipLevels = 1;
-                        metallicTex.format = REMIXAPI_FORMAT_R8G8B8A8_UNORM;
-                        metallicTex.isNormalMap = false;
-                        metallicTex.pixelData.resize(baseTex.width * baseTex.height * 4);
-                        
-                        for (uint32_t i = 0; i < baseTex.width * baseTex.height; i++) {
-                            // Alpha channel = metallic value
-                            uint8_t metallic = baseTex.pixelData[i * 4 + 3];
-                            
-                            metallicTex.pixelData[i * 4 + 0] = metallic;
-                            metallicTex.pixelData[i * 4 + 1] = metallic;
-                            metallicTex.pixelData[i * 4 + 2] = metallic;
-                            metallicTex.pixelData[i * 4 + 3] = 255;
-                        }
-                        
-                        uint64_t hash = ctx.generateHash(props.baseTexturePath + "_bft_metallic", metallicTex.width, metallicTex.height);
-                        std::string path = ctx.generateOutputPath(hash, "_metallic");
-                        
-                        if (ctx.fileExists(path)) {
-                            result.metallicPath = path;
-                            result.skippedCount++;
-                        } else if (ctx.writeDDS(metallicTex, path)) {
-                            result.metallicPath = path;
-                            if (ctx.debugOutput) Msg("[BFT] Extracted metallic from alpha: %s\n", path.c_str());
+                            Msg("[BFT] Invalid pixel data size - skipping metallic extraction\n");
                         }
                     } else {
-                        if (ctx.debugOutput) {
-                            Msg("[BFT] Alpha channel is uniform (%d) - skipping metallic extraction\n", firstAlpha);
+                        // Check if alpha channel has meaningful variation (not uniform like DXT1)
+                        // If alpha is all 255 or all 0, there's no metallic information
+                        uint8_t minAlpha = 255;
+                        uint8_t maxAlpha = 0;
+                        uint8_t firstAlpha = baseTex.pixelData[3];
+                        bool hasVariation = false;
+                        
+                        // Sample pixels to check for variation
+                        uint32_t totalPixels = baseTex.width * baseTex.height;
+                        for (uint32_t i = 0; i < totalPixels && !hasVariation; i += ALPHA_SAMPLE_STEP) {
+                            uint8_t a = baseTex.pixelData[i * 4 + 3];
+                            if (a != firstAlpha) {
+                                hasVariation = true;
+                            }
+                            if (a < minAlpha) minAlpha = a;
+                            if (a > maxAlpha) maxAlpha = a;
+                        }
+                        
+                        // Only extract metallic if alpha has meaningful variation
+                        // (not just uniform 255 or 0)
+                        if (hasVariation || (maxAlpha - minAlpha) > ALPHA_VARIATION_THRESHOLD) {
+                            if (ctx.debugOutput) {
+                                Msg("[BFT] Alpha channel has variation (min=%d, max=%d) - extracting metallic\n", 
+                                    minAlpha, maxAlpha);
+                            }
+                            
+                            // Create metallic texture from alpha channel
+                            ConvertedTexture metallicTex;
+                            metallicTex.width = baseTex.width;
+                            metallicTex.height = baseTex.height;
+                            metallicTex.mipLevels = 1;
+                            metallicTex.format = REMIXAPI_FORMAT_R8G8B8A8_UNORM;
+                            metallicTex.isNormalMap = false;
+                            metallicTex.pixelData.resize(totalPixels * 4);
+                            
+                            for (uint32_t i = 0; i < totalPixels; i++) {
+                                // Alpha channel = metallic value
+                                uint8_t metallic = baseTex.pixelData[i * 4 + 3];
+                                
+                                metallicTex.pixelData[i * 4 + 0] = metallic;
+                                metallicTex.pixelData[i * 4 + 1] = metallic;
+                                metallicTex.pixelData[i * 4 + 2] = metallic;
+                                metallicTex.pixelData[i * 4 + 3] = 255;
+                            }
+                            
+                            uint64_t hash = ctx.generateHash(props.baseTexturePath + "_bft_metallic", metallicTex.width, metallicTex.height);
+                            std::string path = ctx.generateOutputPath(hash, "_metallic");
+                            
+                            if (ctx.fileExists(path)) {
+                                result.metallicPath = path;
+                                result.skippedCount++;
+                            } else if (ctx.writeDDS(metallicTex, path)) {
+                                result.metallicPath = path;
+                                if (ctx.debugOutput) Msg("[BFT] Extracted metallic from alpha: %s\n", path.c_str());
+                            }
+                        } else {
+                            if (ctx.debugOutput) {
+                                Msg("[BFT] Alpha channel is uniform (%d) - skipping metallic extraction\n", firstAlpha);
+                            }
                         }
                     }
                 }
