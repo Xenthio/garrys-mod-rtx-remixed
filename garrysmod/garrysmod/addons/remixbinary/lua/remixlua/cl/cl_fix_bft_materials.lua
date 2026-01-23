@@ -106,19 +106,38 @@ end
 -- Scan Existing Entities
 -- =========================================================================
 
-local function ScanAllEntities()
+-- Cache of processed materials to avoid redundant work
+local processedMaterials = {}
+
+local function ScanAllEntities(verbose)
+    local channelCount = 0
+    
     for _, ent in ipairs(ents.GetAll()) do
         if IsValid(ent) then
             local materials = ent:GetMaterials()
             for _, matPath in ipairs(materials) do
-                ProcessBFTMaterial(matPath)
+                -- Skip already processed materials
+                if not processedMaterials[matPath] then
+                    processedMaterials[matPath] = true
+                    
+                    if IsChannelOverlay(matPath) then
+                        local mat = Material(matPath)
+                        if not mat:IsError() then
+                            if verbose then
+                                print("  Found: " .. matPath)
+                            end
+                            HideChannelOverlay(mat)
+                            channelCount = channelCount + 1
+                        end
+                    else
+                        ProcessBFTMaterial(matPath)
+                    end
+                end
             end
         end
     end
     
-    if GetConVar("developer"):GetInt() > 0 then
-        print("[RTX-BFT] Scanned all entities for BFT materials")
-    end
+    return channelCount
 end
 
 -- Fix materials as entities are created
@@ -138,13 +157,18 @@ end)
 
 -- Scan on initial spawn and when fully loaded
 hook.Add("InitPostEntity", "RTX_FixBFTMaterials_Init", function()
-    timer.Simple(1, ScanAllEntities)  -- Delay to let everything load
+    timer.Simple(1, function()
+        local count = ScanAllEntities(false)
+        if GetConVar("developer"):GetInt() > 0 then
+            print("[RTX-BFT] Initial scan: hidden " .. count .. " channel overlays")
+        end
+    end)
 end)
 
 -- Also scan when player spawns (catches respawns)
 hook.Add("PlayerSpawn", "RTX_FixBFTMaterials_Spawn", function(ply)
     if ply == LocalPlayer() then
-        timer.Simple(0.5, ScanAllEntities)
+        timer.Simple(0.5, function() ScanAllEntities(false) end)
     end
 end)
 
@@ -179,24 +203,9 @@ end, nil, "Hide a BlueFlyTrap channel overlay material for RTX rendering")
 -- Debug command to scan and list all channel overlays
 concommand.Add("rtx_scan_bft_channels", function()
     print("[RTX-BFT] Scanning for channel overlay materials...")
-    local count = 0
-    
-    for _, ent in ipairs(ents.GetAll()) do
-        if IsValid(ent) then
-            local materials = ent:GetMaterials()
-            for _, matPath in ipairs(materials) do
-                if IsChannelOverlay(matPath) then
-                    local mat = Material(matPath)
-                    if not mat:IsError() then
-                        print("  Found: " .. matPath)
-                        HideChannelOverlay(mat)
-                        count = count + 1
-                    end
-                end
-            end
-        end
-    end
-    
+    -- Clear cache to force rescan
+    processedMaterials = {}
+    local count = ScanAllEntities(true)
     print("[RTX-BFT] Hidden " .. count .. " channel overlay materials")
 end, nil, "Scan and hide all BFT channel overlay materials")
 
