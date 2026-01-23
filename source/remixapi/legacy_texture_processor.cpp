@@ -120,6 +120,7 @@ TextureProcessor::TextureProcessor()
     , m_debugOutput(false)
     , m_metallicGenerationEnabled(false)  // Disabled by default - experimental feature
     , m_autoDiscoverEnabled(true)         // Enabled by default - helps find unreferenced textures
+    , m_parseCommentedPropertiesEnabled(false)  // Disabled by default - respects VMT comments
     , m_needsUSDAUpdate(false)
     , m_lastKnownMaterialCount(0)
     , m_allMaterialsProcessed(false)
@@ -1541,40 +1542,45 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
     }
     buffer[fileSize] = '\0';
     
-    // Parse the VMT content - REMOVE COMMENTS FIRST
+    // Parse the VMT content - REMOVE COMMENTS FIRST (unless convar enabled)
     std::string content(buffer.data());
     
     // Strip out commented lines (// style) to prevent parsing commented-out properties
+    // UNLESS the user has enabled parsing of commented properties (for maps where
+    // envmap/masks were disabled for vanilla Source performance but benefit RTX Remix)
     std::string contentWithoutComments;
-    size_t lineStart = 0;
-    for (size_t i = 0; i <= content.size(); ++i) {
-        if (i == content.size() || content[i] == '\n' || content[i] == '\r') {
-            if (i > lineStart) {
-                std::string line = content.substr(lineStart, i - lineStart);
-                
-                // Check if line starts with // (after trimming whitespace)
-                size_t firstChar = line.find_first_not_of(" \t");
-                bool isComment = false;
-                if (firstChar != std::string::npos && firstChar + 1 < line.size()) {
-                    if (line[firstChar] == '/' && line[firstChar + 1] == '/') {
-                        isComment = true;
+    if (!TextureProcessor::Instance().IsParseCommentedPropertiesEnabled()) {
+        size_t lineStart = 0;
+        for (size_t i = 0; i <= content.size(); ++i) {
+            if (i == content.size() || content[i] == '\n' || content[i] == '\r') {
+                if (i > lineStart) {
+                    std::string line = content.substr(lineStart, i - lineStart);
+                    
+                    // Check if line starts with // (after trimming whitespace)
+                    size_t firstChar = line.find_first_not_of(" \t");
+                    bool isComment = false;
+                    if (firstChar != std::string::npos && firstChar + 1 < line.size()) {
+                        if (line[firstChar] == '/' && line[firstChar + 1] == '/') {
+                            isComment = true;
+                        }
+                    }
+                    
+                    // If not a comment line, keep it
+                    if (!isComment) {
+                        contentWithoutComments += line;
+                        if (i < content.size()) {
+                            contentWithoutComments += content[i];  // Preserve newline
+                        }
                     }
                 }
-                
-                // If not a comment line, keep it
-                if (!isComment) {
-                    contentWithoutComments += line;
-                    if (i < content.size()) {
-                        contentWithoutComments += content[i];  // Preserve newline
-                    }
-                }
+                lineStart = i + 1;
             }
-            lineStart = i + 1;
         }
+        
+        // Use the comment-free content for parsing
+        content = contentWithoutComments;
     }
-    
-    // Use the comment-free content for parsing
-    content = contentWithoutComments;
+    // else: keep all content including commented lines
     
     // Convert to lowercase for case-insensitive matching
     std::string contentLower = content;
@@ -4229,6 +4235,31 @@ LUA_FUNCTION(LegacyTextureProcessor_IsAutoDiscoverEnabled) {
     return 1;
 }
 
+LUA_FUNCTION(LegacyTextureProcessor_SetParseCommentedProperties) {
+    if (!LUA->IsType(1, Type::Bool)) {
+        LUA->ThrowError("Expected boolean for parse commented properties");
+        return 0;
+    }
+    
+    bool enabled = LUA->GetBool(1);
+    TextureProcessor::Instance().SetParseCommentedProperties(enabled);
+    
+    if (enabled) {
+        Msg("[LegacyTextureProcessor] Parsing commented-out VMT properties ENABLED\n");
+        Msg("[LegacyTextureProcessor] Will parse // commented properties like $envmap, $normalmapalphaenvmapmask\n");
+        Msg("[LegacyTextureProcessor] Useful for maps where these were disabled for vanilla Source performance\n");
+    } else {
+        Msg("[LegacyTextureProcessor] Parsing commented-out VMT properties DISABLED (default)\n");
+        Msg("[LegacyTextureProcessor] Respects author intent - commented properties will be ignored\n");
+    }
+    return 0;
+}
+
+LUA_FUNCTION(LegacyTextureProcessor_IsParseCommentedPropertiesEnabled) {
+    LUA->PushBool(TextureProcessor::Instance().IsParseCommentedPropertiesEnabled());
+    return 1;
+}
+
 LUA_FUNCTION(LegacyTextureProcessor_GetStats) {
     auto stats = TextureProcessor::Instance().GetStats();
     
@@ -4673,6 +4704,12 @@ void InitializeLegacyTextureProcessorLuaBindings(GarrysMod::Lua::ILuaBase* LUA) 
     LUA->PushCFunction(LegacyTextureProcessor_IsAutoDiscoverEnabled);
     LUA->SetField(-2, "IsAutoDiscoverEnabled");
     
+    LUA->PushCFunction(LegacyTextureProcessor_SetParseCommentedProperties);
+    LUA->SetField(-2, "SetParseCommentedProperties");
+    
+    LUA->PushCFunction(LegacyTextureProcessor_IsParseCommentedPropertiesEnabled);
+    LUA->SetField(-2, "IsParseCommentedPropertiesEnabled");
+    
     LUA->PushCFunction(LegacyTextureProcessor_GetStats);
     LUA->SetField(-2, "GetStats");
     
@@ -4750,6 +4787,12 @@ void InitializeLegacyTextureProcessorLuaBindings(GarrysMod::Lua::ILuaBase* LUA) 
     
     LUA->PushCFunction(LegacyTextureProcessor_IsAutoDiscoverEnabled);
     LUA->SetField(-2, "IsAutoDiscoverEnabled");
+    
+    LUA->PushCFunction(LegacyTextureProcessor_SetParseCommentedProperties);
+    LUA->SetField(-2, "SetParseCommentedProperties");
+    
+    LUA->PushCFunction(LegacyTextureProcessor_IsParseCommentedPropertiesEnabled);
+    LUA->SetField(-2, "IsParseCommentedPropertiesEnabled");
     
     LUA->PushCFunction(LegacyTextureProcessor_GetStats);
     LUA->SetField(-2, "GetStats");

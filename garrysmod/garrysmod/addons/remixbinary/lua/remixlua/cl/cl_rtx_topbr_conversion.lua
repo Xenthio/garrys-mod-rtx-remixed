@@ -24,6 +24,7 @@ CreateClientConVar("rtx_topbr_debug", "0", true, false, "Enable debug output")
 CreateClientConVar("rtx_topbr_delay", "5", true, false, "Delay before auto-processing (seconds)")
 CreateClientConVar("rtx_topbr_metallic", "0", true, false, "Enable experimental metallic generation from base texture brightness (may cause black materials)")
 CreateClientConVar("rtx_topbr_autodiscover", "1", true, false, "Auto-discover companion textures (_normal, _mask, _spec) not explicitly referenced in VMT")
+CreateClientConVar("rtx_topbr_parse_commented_properties", "1", true, false, "Parse commented-out VMT properties (e.g., //$envmap) - useful for maps where they were disabled for vanilla Source")
 CreateClientConVar("rtx_topbr_continuous", "1", true, false, "Continuous processing interval in seconds (0 = disabled, >0 = process every N seconds)")
 CreateClientConVar("rtx_topbr_batch_size", "3", true, false, "Number of materials to process per batch (reduces stutter)")
 
@@ -80,8 +81,17 @@ function RTXToPBR.Initialize()
     if processor.IsInitialized and processor.IsInitialized() then
         isInitialized = true
         MsgC(Color(100, 255, 100), "[RTX ToPBR] LegacyTextureProcessor already initialized by C++\n")
-        -- Set debug output based on ConVar
+        -- Sync ConVars to C++
         processor.SetDebugOutput(GetConVarBoolSafe("rtx_topbr_debug", false))
+        if processor.SetMetallicGeneration then
+            processor.SetMetallicGeneration(GetConVarBoolSafe("rtx_topbr_metallic", false))
+        end
+        if processor.SetAutoDiscover then
+            processor.SetAutoDiscover(GetConVarBoolSafe("rtx_topbr_autodiscover", true))
+        end
+        if processor.SetParseCommentedProperties then
+            processor.SetParseCommentedProperties(GetConVarBoolSafe("rtx_topbr_parse_commented_properties", true))
+        end
         return true
     end
     
@@ -92,8 +102,17 @@ function RTXToPBR.Initialize()
         return false
     end
     
-    -- Set debug output based on ConVar
+    -- Sync ConVars to C++
     processor.SetDebugOutput(GetConVarBoolSafe("rtx_topbr_debug", false))
+    if processor.SetMetallicGeneration then
+        processor.SetMetallicGeneration(GetConVarBoolSafe("rtx_topbr_metallic", false))
+    end
+    if processor.SetAutoDiscover then
+        processor.SetAutoDiscover(GetConVarBoolSafe("rtx_topbr_autodiscover", true))
+    end
+    if processor.SetParseCommentedProperties then
+        processor.SetParseCommentedProperties(GetConVarBoolSafe("rtx_topbr_parse_commented_properties", true))
+    end
     
     isInitialized = true
     MsgC(Color(100, 255, 100), "[RTX ToPBR] Initialized successfully\n")
@@ -683,6 +702,23 @@ concommand.Add("rtx_topbr_autodiscover", function(ply, cmd, args)
     end
 end, nil, "Enable/disable auto-discovery of companion textures (_normal, _mask, _spec)")
 
+concommand.Add("rtx_topbr_parse_commented_properties", function(ply, cmd, args)
+    local enabled = args[1] == "1" or args[1] == "true"
+    local processor = GetProcessor()
+    if processor and processor.SetParseCommentedProperties then
+        processor.SetParseCommentedProperties(enabled)
+        RunConsoleCommand("rtx_topbr_parse_commented_properties", enabled and "1" or "0")
+        MsgC(Color(100, 255, 100), string.format("[RTX ToPBR] Parse commented properties %s\n", enabled and "enabled" or "disabled"))
+        if enabled then
+            MsgC(Color(255, 200, 100), "  WARNING: Commented-out VMT properties (like //\"$envmap\") will now be parsed.\n")
+            MsgC(Color(255, 200, 100), "  This may cause unexpected results if properties were commented out for a reason.\n")
+            MsgC(Color(255, 200, 100), "  Clear cache and reprocess: rtx_topbr_clear && rtx_topbr_process\n")
+        end
+    else
+        MsgC(Color(255, 100, 100), "[RTX ToPBR] Parse commented properties not available (module not loaded)\n")
+    end
+end, nil, "Enable/disable parsing of commented-out VMT properties (WARNING: may cause unexpected results)")
+
 concommand.Add("rtx_topbr_continuous", function(ply, cmd, args)
     if not args[1] or args[1] == "" then
         -- Show current status
@@ -745,6 +781,11 @@ Commands:
                                 (WARNING: may cause black materials)
   rtx_topbr_autodiscover 1/0  - Enable/disable auto-discovery of 
                                 companion textures (_normal, _mask, _spec)
+  rtx_topbr_parse_commented_properties 1/0
+                              - Enable/disable parsing of commented-out
+                                VMT properties (e.g., //"$envmap")
+                                Useful for maps where envmap was disabled
+                                for vanilla Source but benefits RTX
   rtx_topbr_help              - Show this help
 
 ConVars:

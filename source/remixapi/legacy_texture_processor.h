@@ -345,6 +345,13 @@ public:
     void SetAutoDiscover(bool enabled) { m_autoDiscoverEnabled = enabled; }
     bool IsAutoDiscoverEnabled() const { return m_autoDiscoverEnabled; }
     
+    // Enable/disable parsing of commented-out VMT properties
+    // When enabled, properties that are commented out with // will still be parsed.
+    // This is useful for maps where envmap/masks were commented out for vanilla Source
+    // performance, but would benefit RTX Remix with roughness variation. Default: disabled
+    void SetParseCommentedProperties(bool enabled) { m_parseCommentedPropertiesEnabled = enabled; }
+    bool IsParseCommentedPropertiesEnabled() const { return m_parseCommentedPropertiesEnabled; }
+    
     // Set output directory for generated textures
     void SetOutputDirectory(const std::string& path);
     std::string GetOutputDirectory() const { return m_outputDirectory; }
@@ -462,6 +469,7 @@ private:
     bool m_debugOutput;
     bool m_metallicGenerationEnabled;  // Experimental metallic generation from base texture brightness (default: false)
     bool m_autoDiscoverEnabled;        // Auto-discover companion textures (default: true)
+    bool m_parseCommentedPropertiesEnabled; // Parse commented-out VMT properties (default: false)
     std::string m_outputDirectory;       // Absolute output directory for writing DDS files
     size_t m_lastKnownMaterialCount;     // Cache to avoid expensive GetCachedMaterials() calls
     std::atomic<bool> m_allMaterialsProcessed; // Lock-free flag for instant early exit
