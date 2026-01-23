@@ -27,6 +27,9 @@ class ILuaBase;
 // This system can be extended with custom processors for different texture/material types
 namespace LegacyTextureProcessor {
 
+// Forward declaration for modular format handlers
+struct ProcessingContext;
+
 // VTF file format structures
 #pragma pack(push, 1)
 struct VTFFileHeader {
@@ -218,6 +221,33 @@ struct MaterialPBRProperties {
     float gpbrParallaxDepth;            // $parallaxdepth - Displacement depth
     float gpbrAlpha;                    // $alpha - Transparency value
     bool hasGPBRAlpha;
+    
+    // =========================================================================
+    // BlueFlyTrap PseudoPBR format support
+    // A technique encoding PBR properties into Source Engine's phong workflow
+    // Detection: VertexlitGeneric + $phongexponenttexture + specific patterns
+    // =========================================================================
+    bool isBFTPseudoPBR;                // Detected BlueFlyTrap PseudoPBR format
+    bool isBFTMetallicLayer;            // This is the metallic layer ($translucent + $phongalbedotint)
+    std::string bftExponentTexturePath; // $phongexponenttexture - encodes roughness (inverted)
+    bool hasBFTExponentTexture;
+    
+    // BFT $color2 - used to darken albedo for layer stacking (need to invert for PBR)
+    float bftColor2[3];                 // RGB values from $color2
+    bool hasBFTColor2;
+    
+    // BFT $blendTintByBaseAlpha - when combined with dark $color2, tints albedo by alpha
+    // This pattern means the alpha channel IS the metallic mask!
+    // We need to: 1) extract metallic from alpha, 2) disable tinting at runtime via Lua fix
+    bool hasBFTBlendTintByBaseAlpha;    // $blendtintbybasealpha "1" detected
+    bool isBFTDiffuseLayer;             // This is a BFT diffuse layer that uses blend tinting
+    
+    // =========================================================================
+    // MWB PBR Gen format support
+    // Separate from BFT - uses pow(gloss,4.0) encoding and stores metalness in green channel
+    // Detection: _rgb suffix, pbr\output\ path, MwEnvMapTint/Arc9EnvMapTint proxies
+    // =========================================================================
+    bool isMWBPBR;                       // Detected MWB PBR Gen format
 };
 
 // Main converter class - core VTF to DDS/PBR conversion
@@ -263,6 +293,26 @@ public:
         int failedConversions;
     };
     Stats GetStats() const;
+    
+    // Processed material info for USDA generation (public for static helper access)
+    struct ProcessedMaterialInfo {
+        uint64_t textureHash;
+        std::string normalPath;
+        std::string roughnessPath;
+        std::string metallicPath;
+        std::string heightPath;       // Displacement/height map path
+        std::string emissivePath;     // Emission/self-illumination texture path
+        std::string baseTexturePath;  // For non-Refract glass: used as transmittance_texture to color the glass
+        std::string transmittancePath;  // For Refract glass: $refracttinttexture converted to DDS
+        std::string albedoPath;       // For modified albedo (e.g., BFT metallic reconstruction)
+        float roughnessConstant;
+        float metallicConstant;
+        float heightScale;            // Displacement scale (from $parallaxmapscale, default 0.025)
+        bool isGlass;               // Whether this material should use the translucent glass shader
+        bool isRefractShader;       // Whether this is a Refract shader (don't use baseTexture for transmittance)
+        float ior;                  // Index of Refraction (for glass, default 1.5)
+        float emissionIntensity;    // Emission intensity (from $emissionscale)
+    };
     
     // Clear processed materials cache (for map changes)
     void ClearCache();
@@ -370,6 +420,9 @@ private:
     // E.g., if basetexture is "metal/metal001", look for "metal/metal001_normal", "_height", "_mask", "_spec"
     void DiscoverCompanionTextures(const std::string& baseTexturePath, MaterialPBRProperties& props);
     
+    // Create processing context for modular format handlers
+    ProcessingContext CreateProcessingContext();
+    
     // Get filesystem interface
     IFileSystem* GetFileSystem();
     
@@ -395,23 +448,6 @@ private:
     std::unordered_map<uint64_t, std::string> m_writtenTexturePaths;
     
     // Track material data for USDA generation
-    struct ProcessedMaterialInfo {
-        uint64_t textureHash;
-        std::string normalPath;
-        std::string roughnessPath;
-        std::string metallicPath;
-        std::string heightPath;       // Displacement/height map path
-        std::string emissivePath;     // Emission/self-illumination texture path
-        std::string baseTexturePath;  // For non-Refract glass: used as transmittance_texture to color the glass
-        std::string transmittancePath;  // For Refract glass: $refracttinttexture converted to DDS
-        float roughnessConstant;
-        float metallicConstant;
-        float heightScale;            // Displacement scale (from $parallaxmapscale, default 0.025)
-        bool isGlass;               // Whether this material should use the translucent glass shader
-        bool isRefractShader;       // Whether this is a Refract shader (don't use baseTexture for transmittance)
-        float ior;                  // Index of Refraction (for glass, default 1.5)
-        float emissionIntensity;    // Emission intensity (from $emissionscale)
-    };
     std::unordered_map<uint64_t, ProcessedMaterialInfo> m_processedMaterialInfo;
     
     // Flag to indicate USDA needs to be rewritten

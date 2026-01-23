@@ -1,0 +1,24 @@
+CustomHero
+{
+	"$baseTexture"	"models\blueflytrap\gravitygun\view\texture\view_barrel"
+	"$normalmap"	"models\blueflytrap\gravitygun\view\texture\view_barrel_n"
+
+	"$maskmap1" 	"models\blueflytrap\gravitygun\world\texture\masks1"
+	"$maskmap2" 	"models\blueflytrap\gravitygun\view\texture\view_barrel_ch"
+
+	"$nocull" "0"
+	"$additive" "1"
+
+	"$specularexponent"		"20"
+	"$specularscale"		 	"0"
+	"$specularcolor" 			"[1 1 1]"
+	"$rimlightcolor" 			"[1 1 1]"
+
+	"$rimlightscale" 			"0"
+	"$ambientscale"			"0"
+
+	"$envmap" "models\cubemaps\cube_metal_grey"
+	"$maskenvbymetalness" "0"
+
+	"$envmapintensity"		"0.225"
+}

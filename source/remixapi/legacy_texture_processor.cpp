@@ -1,6 +1,9 @@
 #ifdef _WIN64
 
 #include "remixapi.h"
+#include "legacy_texture_processor_formats.h"
+#include "legacy_texture_processor_vtf.h"
+#include "legacy_texture_processor_usda.h"
 #include <tier0/dbg.h>
 #include <materialsystem/imaterialsystem.h>
 #include <materialsystem/imaterial.h>
@@ -25,10 +28,7 @@ extern remix::Interface* g_remix;
 
 namespace LegacyTextureProcessor {
 
-// Constants for VTF processing
-constexpr int VTF_MAJOR_VERSION_SUPPORTED = 7;
-constexpr int VTF_MAX_MINOR_VERSION = 5;
-constexpr size_t MAX_VTF_FILE_SIZE = 256 * 1024 * 1024;  // 256 MB
+// PBR conversion constants
 constexpr float MAX_PHONG_EXPONENT = 150.0f;  // Typical max in Source Engine
 
 // DDS format constants
@@ -751,635 +751,42 @@ bool TextureProcessor::ReadVTFFile(const std::string& path, std::vector<uint8_t>
         Warning("[LegacyTextureProcessor] Filesystem not available\n");
         return false;
     }
-    
-    // Build full path
-    std::string fullPath = "materials/" + path;
-    if (fullPath.find(".vtf") == std::string::npos) {
-        fullPath += ".vtf";
-    }
-    
-    // Open file
-    FileHandle_t file = m_fileSystem->Open(fullPath.c_str(), "rb", "GAME");
-    if (!file) {
-        // Try without materials/ prefix
-        file = m_fileSystem->Open(path.c_str(), "rb", "GAME");
-        if (!file) {
-            if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] Could not open VTF: %s\n", fullPath.c_str());
-            }
-            return false;
-        }
-    }
-    
-    // Get file size
-    int fileSize = m_fileSystem->Size(file);
-    if (fileSize <= 0 || static_cast<size_t>(fileSize) > MAX_VTF_FILE_SIZE) {
-        m_fileSystem->Close(file);
-        Warning("[LegacyTextureProcessor] Invalid file size for %s: %d\n", fullPath.c_str(), fileSize);
-        return false;
-    }
-    
-    // Read file data
-    outData.resize(fileSize);
-    int bytesRead = m_fileSystem->Read(outData.data(), fileSize, file);
-    m_fileSystem->Close(file);
-    
-    if (bytesRead != fileSize) {
-        Warning("[LegacyTextureProcessor] Read error for %s: expected %d, got %d\n", 
-                fullPath.c_str(), fileSize, bytesRead);
-        return false;
-    }
-    
-    return true;
+    // Delegate to VTF module
+    return VTF::ReadVTFFile(m_fileSystem, path, outData, m_debugOutput);
 }
 
 bool TextureProcessor::ParseVTFHeader(const std::vector<uint8_t>& fileData, VTFFileHeader& outHeader) {
-    if (fileData.size() < sizeof(VTFFileHeader)) {
-        Warning("[LegacyTextureProcessor] File too small for VTF header\n");
-        return false;
-    }
-    
-    memcpy(&outHeader, fileData.data(), sizeof(VTFFileHeader));
-    
-    // Verify signature
-    if (memcmp(outHeader.signature, "VTF\0", 4) != 0) {
-        Warning("[LegacyTextureProcessor] Invalid VTF signature\n");
-        return false;
-    }
-    
-    // Verify version (support 7.0 - 7.5)
-    if (outHeader.version[0] != VTF_MAJOR_VERSION_SUPPORTED || outHeader.version[1] > VTF_MAX_MINOR_VERSION) {
-        Warning("[LegacyTextureProcessor] Unsupported VTF version %d.%d\n", 
-                outHeader.version[0], outHeader.version[1]);
-        return false;
-    }
-    
-    if (m_debugOutput) {
-        Msg("[LegacyTextureProcessor] VTF: %dx%d, format %d, %d mips\n",
-            outHeader.width, outHeader.height, outHeader.imageFormat, outHeader.mipmapCount);
-    }
-    
-    return true;
+    // Delegate to VTF module
+    return VTF::ParseVTFHeader(fileData, outHeader, m_debugOutput);
 }
 
-// DXT1 block decompression helper
-static void DecompressDXT1Block(const uint8_t* block, uint8_t* output, int stride) {
-    uint16_t c0 = block[0] | (block[1] << 8);
-    uint16_t c1 = block[2] | (block[3] << 8);
-    
-    uint8_t colors[4][4]; // RGBA
-    
-    // Extract RGB565 colors
-    colors[0][0] = ((c0 >> 11) & 0x1F) * 255 / 31;  // R
-    colors[0][1] = ((c0 >> 5) & 0x3F) * 255 / 63;   // G
-    colors[0][2] = (c0 & 0x1F) * 255 / 31;          // B
-    colors[0][3] = 255;
-    
-    colors[1][0] = ((c1 >> 11) & 0x1F) * 255 / 31;
-    colors[1][1] = ((c1 >> 5) & 0x3F) * 255 / 63;
-    colors[1][2] = (c1 & 0x1F) * 255 / 31;
-    colors[1][3] = 255;
-    
-    if (c0 > c1) {
-        // 4-color mode
-        colors[2][0] = (2 * colors[0][0] + colors[1][0]) / 3;
-        colors[2][1] = (2 * colors[0][1] + colors[1][1]) / 3;
-        colors[2][2] = (2 * colors[0][2] + colors[1][2]) / 3;
-        colors[2][3] = 255;
-        
-        colors[3][0] = (colors[0][0] + 2 * colors[1][0]) / 3;
-        colors[3][1] = (colors[0][1] + 2 * colors[1][1]) / 3;
-        colors[3][2] = (colors[0][2] + 2 * colors[1][2]) / 3;
-        colors[3][3] = 255;
-    } else {
-        // 3-color + transparent mode
-        colors[2][0] = (colors[0][0] + colors[1][0]) / 2;
-        colors[2][1] = (colors[0][1] + colors[1][1]) / 2;
-        colors[2][2] = (colors[0][2] + colors[1][2]) / 2;
-        colors[2][3] = 255;
-        
-        colors[3][0] = 0;
-        colors[3][1] = 0;
-        colors[3][2] = 0;
-        colors[3][3] = 0;
-    }
-    
-    uint32_t indices = block[4] | (block[5] << 8) | (block[6] << 16) | (block[7] << 24);
-    
-    for (int y = 0; y < 4; y++) {
-        for (int x = 0; x < 4; x++) {
-            int idx = indices & 0x3;
-            indices >>= 2;
-            
-            int offset = y * stride + x * 4;
-            output[offset + 0] = colors[idx][0];
-            output[offset + 1] = colors[idx][1];
-            output[offset + 2] = colors[idx][2];
-            output[offset + 3] = colors[idx][3];
-        }
-    }
-}
-
-// DXT5 alpha block decompression helper
-static void DecompressDXT5AlphaBlock(const uint8_t* block, uint8_t* output, int stride) {
-    uint8_t a0 = block[0];
-    uint8_t a1 = block[1];
-    
-    uint8_t alphas[8];
-    alphas[0] = a0;
-    alphas[1] = a1;
-    
-    if (a0 > a1) {
-        alphas[2] = (6 * a0 + 1 * a1) / 7;
-        alphas[3] = (5 * a0 + 2 * a1) / 7;
-        alphas[4] = (4 * a0 + 3 * a1) / 7;
-        alphas[5] = (3 * a0 + 4 * a1) / 7;
-        alphas[6] = (2 * a0 + 5 * a1) / 7;
-        alphas[7] = (1 * a0 + 6 * a1) / 7;
-    } else {
-        alphas[2] = (4 * a0 + 1 * a1) / 5;
-        alphas[3] = (3 * a0 + 2 * a1) / 5;
-        alphas[4] = (2 * a0 + 3 * a1) / 5;
-        alphas[5] = (1 * a0 + 4 * a1) / 5;
-        alphas[6] = 0;
-        alphas[7] = 255;
-    }
-    
-    // Unpack 48-bit index data
-    uint64_t indices = 0;
-    for (int i = 0; i < 6; i++) {
-        indices |= ((uint64_t)block[2 + i]) << (i * 8);
-    }
-    
-    for (int y = 0; y < 4; y++) {
-        for (int x = 0; x < 4; x++) {
-            int idx = indices & 0x7;
-            indices >>= 3;
-            
-            int offset = y * stride + x * 4 + 3; // Alpha channel
-            output[offset] = alphas[idx];
-        }
-    }
-}
-
+// DXT decompression - delegate to VTF module
 bool TextureProcessor::DecompressDXT1(const uint8_t* compressedData, uint32_t width, uint32_t height,
                                           std::vector<uint8_t>& outRGBA) {
-    uint32_t blocksX = (width + 3) / 4;
-    uint32_t blocksY = (height + 3) / 4;
-    
-    outRGBA.resize(width * height * 4);
-    
-    const uint8_t* blockPtr = compressedData;
-    
-    for (uint32_t by = 0; by < blocksY; by++) {
-        for (uint32_t bx = 0; bx < blocksX; bx++) {
-            uint8_t blockPixels[4 * 4 * 4]; // 4x4 RGBA
-            DecompressDXT1Block(blockPtr, blockPixels, 4 * 4);
-            blockPtr += 8; // DXT1 block is 8 bytes
-            
-            // Copy to output
-            for (int py = 0; py < 4; py++) {
-                int y = by * 4 + py;
-                if (y >= (int)height) continue;
-                
-                for (int px = 0; px < 4; px++) {
-                    int x = bx * 4 + px;
-                    if (x >= (int)width) continue;
-                    
-                    int srcOffset = py * 16 + px * 4;
-                    int dstOffset = (y * width + x) * 4;
-                    
-                    outRGBA[dstOffset + 0] = blockPixels[srcOffset + 0];
-                    outRGBA[dstOffset + 1] = blockPixels[srcOffset + 1];
-                    outRGBA[dstOffset + 2] = blockPixels[srcOffset + 2];
-                    outRGBA[dstOffset + 3] = blockPixels[srcOffset + 3];
-                }
-            }
-        }
-    }
-    
-    return true;
+    return VTF::DecompressDXT1(compressedData, width, height, outRGBA);
 }
 
 bool TextureProcessor::DecompressDXT5(const uint8_t* compressedData, uint32_t width, uint32_t height,
                                           std::vector<uint8_t>& outRGBA) {
-    uint32_t blocksX = (width + 3) / 4;
-    uint32_t blocksY = (height + 3) / 4;
-    
-    outRGBA.resize(width * height * 4);
-    
-    const uint8_t* blockPtr = compressedData;
-    
-    for (uint32_t by = 0; by < blocksY; by++) {
-        for (uint32_t bx = 0; bx < blocksX; bx++) {
-            uint8_t blockPixels[4 * 4 * 4]; // 4x4 RGBA
-            
-            // First 8 bytes: alpha block - this sets the alpha channel
-            DecompressDXT5AlphaBlock(blockPtr, blockPixels, 4 * 4);
-            blockPtr += 8;
-            
-            // Save alpha values before color decompression (DXT1Block overwrites alpha)
-            uint8_t savedAlpha[16];
-            for (int i = 0; i < 16; i++) {
-                savedAlpha[i] = blockPixels[i * 4 + 3];
-            }
-            
-            // Next 8 bytes: color block (DXT1) - this overwrites alpha with 255
-            DecompressDXT1Block(blockPtr, blockPixels, 4 * 4);
-            blockPtr += 8;
-            
-            // Restore alpha values from DXT5 alpha block
-            for (int i = 0; i < 16; i++) {
-                blockPixels[i * 4 + 3] = savedAlpha[i];
-            }
-            
-            // Copy to output
-            for (int py = 0; py < 4; py++) {
-                int y = by * 4 + py;
-                if (y >= (int)height) continue;
-                
-                for (int px = 0; px < 4; px++) {
-                    int x = bx * 4 + px;
-                    if (x >= (int)width) continue;
-                    
-                    int srcOffset = py * 16 + px * 4;
-                    int dstOffset = (y * width + x) * 4;
-                    
-                    outRGBA[dstOffset + 0] = blockPixels[srcOffset + 0];
-                    outRGBA[dstOffset + 1] = blockPixels[srcOffset + 1];
-                    outRGBA[dstOffset + 2] = blockPixels[srcOffset + 2];
-                    outRGBA[dstOffset + 3] = blockPixels[srcOffset + 3];
-                }
-            }
-        }
-    }
-    
-    return true;
-}
-
-// Calculate image data size for a given format
-static size_t GetImageDataSize(uint32_t width, uint32_t height, VTFImageFormat format) {
-    uint32_t blocksX = (width + 3) / 4;
-    uint32_t blocksY = (height + 3) / 4;
-    
-    switch (format) {
-        case IMAGE_FORMAT_DXT1:
-        case IMAGE_FORMAT_DXT1_ONEBITALPHA:
-            return blocksX * blocksY * 8;
-        case IMAGE_FORMAT_DXT3:
-        case IMAGE_FORMAT_DXT5:
-            return blocksX * blocksY * 16;
-        case IMAGE_FORMAT_RGBA8888:
-        case IMAGE_FORMAT_ABGR8888:
-        case IMAGE_FORMAT_ARGB8888:
-        case IMAGE_FORMAT_BGRA8888:
-        case IMAGE_FORMAT_BGRX8888:
-        case IMAGE_FORMAT_UVWQ8888:
-        case IMAGE_FORMAT_UVLX8888:
-            return width * height * 4;
-        case IMAGE_FORMAT_RGB888:
-        case IMAGE_FORMAT_BGR888:
-        case IMAGE_FORMAT_RGB888_BLUESCREEN:
-        case IMAGE_FORMAT_BGR888_BLUESCREEN:
-            return width * height * 3;
-        case IMAGE_FORMAT_RGB565:
-        case IMAGE_FORMAT_BGR565:
-        case IMAGE_FORMAT_BGRA5551:
-        case IMAGE_FORMAT_BGRX5551:
-        case IMAGE_FORMAT_BGRA4444:
-        case IMAGE_FORMAT_IA88:
-        case IMAGE_FORMAT_UV88:
-            return width * height * 2;
-        case IMAGE_FORMAT_I8:
-        case IMAGE_FORMAT_P8:
-        case IMAGE_FORMAT_A8:
-            return width * height;
-        case IMAGE_FORMAT_RGBA16161616F:
-        case IMAGE_FORMAT_RGBA16161616:
-            return width * height * 8;
-        default:
-            return 0;
-    }
-}
-
-// Calculate total size of all mipmaps
-static size_t GetTotalMipmapSize(uint32_t width, uint32_t height, uint8_t mipmapCount, VTFImageFormat format) {
-    size_t totalSize = 0;
-    uint32_t w = width;
-    uint32_t h = height;
-    
-    for (int i = 0; i < mipmapCount; i++) {
-        totalSize += GetImageDataSize(w, h, format);
-        w = max(1u, w / 2);
-        h = max(1u, h / 2);
-    }
-    
-    return totalSize;
+    return VTF::DecompressDXT5(compressedData, width, height, outRGBA);
 }
 
 bool TextureProcessor::ExtractVTFPixelData(const std::vector<uint8_t>& fileData, 
                                                const VTFFileHeader& header,
                                                ConvertedTexture& outTexture, 
                                                bool isNormalMap) {
-    outTexture.width = header.width;
-    outTexture.height = header.height;
-    outTexture.mipLevels = 1; // We only extract the largest mip for now
-    outTexture.isNormalMap = isNormalMap;
-    outTexture.format = isNormalMap ? REMIXAPI_FORMAT_R8G8B8A8_UNORM : REMIXAPI_FORMAT_R8G8B8A8_SRGB;
-    
-    VTFImageFormat srcFormat = (VTFImageFormat)header.imageFormat;
-    
-    // Calculate offset to high-res image data
-    // VTF stores: header, low-res image (optional), mipmaps from smallest to largest
-    size_t dataOffset = header.headerSize;
-    
-    // Skip low-res thumbnail if present
-    if (header.lowResImageFormat != (uint32_t)IMAGE_FORMAT_NONE && 
-        header.lowResImageFormat != 0xFFFFFFFF) {
-        size_t lowResSize = GetImageDataSize(header.lowResImageWidth, header.lowResImageHeight, 
-                                             (VTFImageFormat)header.lowResImageFormat);
-        dataOffset += lowResSize;
-    }
-    
-    // Get mipmap count (at least 1)
-    uint8_t mipmapCount = header.mipmapCount > 0 ? header.mipmapCount : 1;
-    uint16_t frameCount = header.frames > 0 ? header.frames : 1;
-    
-    // VTF stores mipmaps from smallest to largest
-    // We need to skip all smaller mipmaps and all frames except the first
-    // The data order is: for each mip level (smallest to largest): for each frame: image data
-    
-    // Calculate total size of all mipmaps for ONE frame
-    size_t totalMipSizeOneFrame = GetTotalMipmapSize(header.width, header.height, mipmapCount, srcFormat);
-    
-    // For the largest mip (mip 0), skip all smaller mipmaps (mipmaps mipmapCount-1 down to 1)
-    size_t smallerMipsSize = 0;
-    for (int mip = mipmapCount - 1; mip >= 1; mip--) {
-        uint32_t mipW = max(1u, header.width >> mip);
-        uint32_t mipH = max(1u, header.height >> mip);
-        // Each mip level has frameCount frames
-        smallerMipsSize += GetImageDataSize(mipW, mipH, srcFormat) * frameCount;
-    }
-    
-    dataOffset += smallerMipsSize;
-    
-    // Now we're at the start of the largest mip (mip 0) for frame 0
-    // Calculate size of largest mip
-    size_t largestMipSize = GetImageDataSize(header.width, header.height, srcFormat);
-    
-    if (dataOffset + largestMipSize > fileData.size()) {
-        // Try alternative: maybe the file only has data for one frame with no low-res image
-        dataOffset = header.headerSize;
-        for (int mip = mipmapCount - 1; mip >= 1; mip--) {
-            uint32_t mipW = max(1u, header.width >> mip);
-            uint32_t mipH = max(1u, header.height >> mip);
-            dataOffset += GetImageDataSize(mipW, mipH, srcFormat);
-        }
-        
-        if (dataOffset + largestMipSize > fileData.size()) {
-            if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] VTF data too small: offset %zu + size %zu > total %zu\n",
-                    dataOffset, largestMipSize, fileData.size());
-            }
-            return false;
-        }
-    }
-    
-    const uint8_t* imageData = fileData.data() + dataOffset;
-    
-    // Convert to RGBA8888
-    std::vector<uint8_t> rgba;
-    
-    switch (srcFormat) {
-        case IMAGE_FORMAT_DXT1:
-        case IMAGE_FORMAT_DXT1_ONEBITALPHA:
-            if (!DecompressDXT1(imageData, header.width, header.height, rgba)) {
-                return false;
-            }
-            break;
-            
-        case IMAGE_FORMAT_DXT5:
-            if (!DecompressDXT5(imageData, header.width, header.height, rgba)) {
-                return false;
-            }
-            break;
-            
-        case IMAGE_FORMAT_RGBA8888:
-            rgba.assign(imageData, imageData + header.width * header.height * 4);
-            break;
-            
-        case IMAGE_FORMAT_BGRA8888:
-        case IMAGE_FORMAT_BGRX8888:
-            rgba.resize(header.width * header.height * 4);
-            for (size_t i = 0; i < header.width * header.height; i++) {
-                rgba[i * 4 + 0] = imageData[i * 4 + 2]; // R from B
-                rgba[i * 4 + 1] = imageData[i * 4 + 1]; // G
-                rgba[i * 4 + 2] = imageData[i * 4 + 0]; // B from R
-                rgba[i * 4 + 3] = (srcFormat == IMAGE_FORMAT_BGRX8888) ? 255 : imageData[i * 4 + 3];
-            }
-            break;
-            
-        case IMAGE_FORMAT_RGB888:
-            rgba.resize(header.width * header.height * 4);
-            for (size_t i = 0; i < header.width * header.height; i++) {
-                rgba[i * 4 + 0] = imageData[i * 3 + 0];
-                rgba[i * 4 + 1] = imageData[i * 3 + 1];
-                rgba[i * 4 + 2] = imageData[i * 3 + 2];
-                rgba[i * 4 + 3] = 255;
-            }
-            break;
-            
-        case IMAGE_FORMAT_BGR888:
-            rgba.resize(header.width * header.height * 4);
-            for (size_t i = 0; i < header.width * header.height; i++) {
-                rgba[i * 4 + 0] = imageData[i * 3 + 2];
-                rgba[i * 4 + 1] = imageData[i * 3 + 1];
-                rgba[i * 4 + 2] = imageData[i * 3 + 0];
-                rgba[i * 4 + 3] = 255;
-            }
-            break;
-            
-        default:
-            if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] Unsupported VTF format: %d\n", srcFormat);
-            }
-            return false;
-    }
-    
-    outTexture.pixelData = std::move(rgba);
-    
-    // If this is a normal map, convert to octahedral format for RTX Remix
-    if (isNormalMap) {
-        ConvertNormalMapToOctahedral(outTexture);
-    }
-    
-    return true;
+    // Delegate to VTF module
+    return VTF::ExtractVTFPixelData(fileData, header, outTexture, isNormalMap, m_debugOutput);
 }
 
-// Convert DirectX-style normal map to hemispherical octahedral format for RTX Remix
-// Based on NVIDIA's LightspeedOctahedralConverter
-// See: https://github.com/NVIDIAGameWorks/dxvk-remix
 void TextureProcessor::ConvertNormalMapToOctahedral(ConvertedTexture& texture) {
-    if (texture.pixelData.empty()) return;
-    
-    uint32_t width = texture.width;
-    uint32_t height = texture.height;
-    size_t pixelCount = width * height;
-    
-    std::vector<uint8_t> octahedralData(pixelCount * 4);
-    
-    for (size_t i = 0; i < pixelCount; i++) {
-        size_t srcIdx = i * 4;
-        size_t dstIdx = i * 4;
-        
-        // Read RGB as normal components
-        uint8_t r = texture.pixelData[srcIdx + 0];
-        uint8_t g = texture.pixelData[srcIdx + 1];
-        uint8_t b = texture.pixelData[srcIdx + 2];
-        
-        // Check for inward-pointing normals (z < 0, b < 128) and flip them
-        // RTX Remix only supports hemispherical normals pointing away from surface
-        if (b < 128) {
-            b = 255 - b;
-        }
-        
-        // Convert from [0, 255] to [-1, 1] range
-        float nx = (r / 255.0f) * 2.0f - 1.0f;
-        float ny = (g / 255.0f) * 2.0f - 1.0f;
-        float nz = (b / 255.0f) * 2.0f - 1.0f;
-        
-        // Normalize the vector
-        float len = std::sqrt(nx * nx + ny * ny + nz * nz);
-        if (len > 0.0001f) {
-            nx /= len;
-            ny /= len;
-            nz /= len;
-        } else {
-            // Default to straight up if invalid
-            nx = 0.0f;
-            ny = 0.0f;
-            nz = 1.0f;
-        }
-        
-        // Convert to octahedral encoding
-        // snorm_octahedral = xy / (|x| + |y| + |z|)
-        float absSum = std::abs(nx) + std::abs(ny) + std::abs(nz);
-        float octX = nx / absSum;
-        float octY = ny / absSum;
-        
-        // Hemispherical encoding (for normals pointing outward, z >= 0)
-        // result.x = octX + octY
-        // result.y = octX - octY
-        float resultX = octX + octY;
-        float resultY = octX - octY;
-        
-        // Convert from [-1, 1] to [0, 1]
-        resultX = resultX * 0.5f + 0.5f;
-        resultY = resultY * 0.5f + 0.5f;
-        
-        // Convert to [0, 255] with rounding
-        uint8_t outR = static_cast<uint8_t>(std::clamp(resultX * 255.0f + 0.5f, 0.0f, 255.0f));
-        uint8_t outG = static_cast<uint8_t>(std::clamp(resultY * 255.0f + 0.5f, 0.0f, 255.0f));
-        
-        // Store as RGB with B=0 (octahedral only uses 2 channels)
-        octahedralData[dstIdx + 0] = outR;
-        octahedralData[dstIdx + 1] = outG;
-        octahedralData[dstIdx + 2] = 0;
-        octahedralData[dstIdx + 3] = 255;
-    }
-    
-    texture.pixelData = std::move(octahedralData);
-    
-    if (m_debugOutput) {
-        Msg("[LegacyTextureProcessor] Converted normal map to octahedral format (%dx%d)\n", width, height);
-    }
+    // Delegate to VTF module
+    VTF::ConvertNormalMapToOctahedral(texture, m_debugOutput);
 }
 
-// Convert SSBump texture to standard tangent-space normal map
-// SSBump stores directional occlusion in 3 basis directions, not XYZ normal components
-// Based on Valve's Source SDK common_fxc.h and rob5300's ssbumpToNormal converter
-// Reference: https://github.com/ValveSoftware/source-sdk-2013/blob/master/sp/src/materialsystem/stdshaders/common_fxc.h
 void TextureProcessor::ConvertSSBumpToNormal(ConvertedTexture& texture) {
-    if (texture.pixelData.empty()) return;
-    
-    uint32_t width = texture.width;
-    uint32_t height = texture.height;
-    size_t pixelCount = width * height;
-    
-    std::vector<uint8_t> normalData(pixelCount * 4);
-    
-    // Bump basis transpose from Source SDK common_fxc.h
-    // This transforms from SSBump space (3 basis light responses) to tangent-space normal (XYZ)
-    // Each row is used to compute one component of the output normal
-    const float OO_SQRT_3 = 0.57735025882720947f;
-    
-    // Row 0: computes normal.x
-    const float basisT0_x = 0.81649661064147949f;
-    const float basisT0_y = -0.40824833512306213f;
-    const float basisT0_z = -0.40824833512306213f;
-    
-    // Row 1: computes normal.y
-    const float basisT1_x = 0.0f;
-    const float basisT1_y = 0.70710676908493042f;
-    const float basisT1_z = -0.7071068286895752f;
-    
-    // Row 2: computes normal.z
-    const float basisT2_x = OO_SQRT_3;
-    const float basisT2_y = OO_SQRT_3;
-    const float basisT2_z = OO_SQRT_3;
-    
-    // Normal strength boost factor for SSBump conversion
-    // SSBump normals tend to be subtle, so we boost them for better PBR appearance
-    const float normalStrength = 1.5f;
-    
-    for (size_t i = 0; i < pixelCount; i++) {
-        size_t srcIdx = i * 4;
-        size_t dstIdx = i * 4;
-        
-        // Read SSBump values (light response in 3 basis directions)
-        // Normalized to 0.0-1.0 range
-        float r = texture.pixelData[srcIdx + 0] / 255.0f;  // Basis 0 response
-        float g = texture.pixelData[srcIdx + 1] / 255.0f;  // Basis 1 response
-        float b = texture.pixelData[srcIdx + 2] / 255.0f;  // Basis 2 response
-        
-        // Transform SSBump to tangent-space normal using bumpBasisTranspose
-        // normal.x = dot(ssbump, basisTranspose[0])
-        // normal.y = dot(ssbump, basisTranspose[1])
-        // normal.z = dot(ssbump, basisTranspose[2])
-        float nx = r * basisT0_x + g * basisT0_y + b * basisT0_z;
-        float ny = r * basisT1_x + g * basisT1_y + b * basisT1_z;
-        float nz = r * basisT2_x + g * basisT2_y + b * basisT2_z;
-        
-        // Boost normal strength by scaling X and Y components away from center (0)
-        // This makes the surface bumps more pronounced
-        nx *= normalStrength;
-        ny *= normalStrength;
-        
-        // Renormalize the vector to maintain unit length
-        float len = sqrtf(nx * nx + ny * ny + nz * nz);
-        if (len > 0.0001f) {
-            nx /= len;
-            ny /= len;
-            nz /= len;
-        }
-        
-        // Convert from [-1, 1] to [0, 255] with 0.5 bias (standard normal map encoding)
-        // The formula is: output = (normal * 0.5 + 0.5) * 255
-        uint8_t outR = static_cast<uint8_t>(std::clamp((nx * 0.5f + 0.5f) * 255.0f + 0.5f, 0.0f, 255.0f));
-        uint8_t outG = static_cast<uint8_t>(std::clamp((ny * 0.5f + 0.5f) * 255.0f + 0.5f, 0.0f, 255.0f));
-        uint8_t outB = static_cast<uint8_t>(std::clamp((nz * 0.5f + 0.5f) * 255.0f + 0.5f, 0.0f, 255.0f));
-        
-        normalData[dstIdx + 0] = outR;
-        normalData[dstIdx + 1] = outG;
-        normalData[dstIdx + 2] = outB;
-        normalData[dstIdx + 3] = 255;
-    }
-    
-    texture.pixelData = std::move(normalData);
-    
-    if (m_debugOutput) {
-        Msg("[LegacyTextureProcessor] Converted SSBump to normal map (%dx%d) with strength %.1fx\n", width, height, normalStrength);
-    }
+    // Delegate to VTF module
+    VTF::ConvertSSBumpToNormal(texture, m_debugOutput);
 }
 
 uint64_t TextureProcessor::GenerateTextureHash(const std::string& path, uint32_t width, uint32_t height) {
@@ -1963,6 +1370,18 @@ struct VMTProperties {
     bool hasGPBRParallaxCenter;
     float gpbrAlpha;                // $alpha - Transparency value
     bool hasGPBRAlpha;
+    
+    // =========================================================================
+    // BlueFlyTrap PseudoPBR format support
+    // =========================================================================
+    bool isBFTPseudoPBR;            // Detected BlueFlyTrap PseudoPBR format
+    bool isBFTMetallicLayer;        // This is the metallic layer
+    bool isBFTDiffuseLayer;         // This is the diffuse layer using $blendTintByBaseAlpha
+    
+    // =========================================================================
+    // MWB PBR Gen format support
+    // =========================================================================
+    bool isMWBPBR;                  // Detected MWB PBR Gen format
 };
 
 // Parse a VMT file and extract properties that FindVar doesn't reliably expose
@@ -2058,6 +1477,11 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
     outProps.hasGPBRAlpha = false;
     outProps.gpbrAlpha = 1.0f;
     
+    // BlueFlyTrap PseudoPBR format properties
+    outProps.isBFTPseudoPBR = false;
+    outProps.isBFTMetallicLayer = false;
+    outProps.isBFTDiffuseLayer = false;
+    
     // Build VMT path
     std::string vmtPath = "materials/" + materialName;
     if (vmtPath.find(".vmt") == std::string::npos) {
@@ -2102,8 +1526,35 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
     std::transform(contentLower.begin(), contentLower.end(), contentLower.begin(), ::tolower);
     
     // Extract shader name (first non-whitespace word, possibly in quotes)
-    size_t start = contentLower.find_first_not_of(" \t\r\n");
-    if (start != std::string::npos) {
+    // Skip any comment lines (// or /* */) at the start
+    size_t start = 0;
+    while (start < content.length()) {
+        // Skip whitespace
+        start = content.find_first_not_of(" \t\r\n", start);
+        if (start == std::string::npos) break;
+        
+        // Skip single-line comments
+        if (start + 1 < content.length() && content[start] == '/' && content[start + 1] == '/') {
+            // Find end of line
+            size_t eol = content.find('\n', start);
+            if (eol == std::string::npos) break;
+            start = eol + 1;
+            continue;
+        }
+        
+        // Skip multi-line comments
+        if (start + 1 < content.length() && content[start] == '/' && content[start + 1] == '*') {
+            size_t endComment = content.find("*/", start + 2);
+            if (endComment == std::string::npos) break;
+            start = endComment + 2;
+            continue;
+        }
+        
+        // Found actual content
+        break;
+    }
+    
+    if (start != std::string::npos && start < content.length()) {
         // Skip quotes if present
         if (content[start] == '"') {
             start++;
@@ -2592,6 +2043,52 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
         }
     }
     
+    // =========================================================================
+    // MWB PBR Gen format detection (must check BEFORE BFT)
+    // Uses _rgb suffix, pbr\output\ path, MwEnvMapTint/Arc9EnvMapTint proxies
+    // =========================================================================
+    if (!outProps.isExoPBR && !outProps.isGPBR) {
+        // Create VMTParseResult for modular detection
+        VMTParseResult vmtParse;
+        vmtParse.shaderName = outProps.shaderName;
+        vmtParse.content = content;
+        vmtParse.contentLower = contentLower;
+        
+        if (MWBPBR::Detect(vmtParse)) {
+            outProps.isMWBPBR = true;
+            // ExtractProperties is called later in CreatePBRMaterial with MaterialPBRProperties
+        }
+    }
+    
+    // =========================================================================
+    // BlueFlyTrap PseudoPBR format detection (only if not MWB)
+    // Uses the modular BFTPseudoPBR::Detect() function for comprehensive detection
+    // =========================================================================
+    if (!outProps.isExoPBR && !outProps.isGPBR && !outProps.isMWBPBR) {
+        // Create VMTParseResult for modular detection
+        VMTParseResult vmtParse;
+        vmtParse.shaderName = outProps.shaderName;
+        vmtParse.content = content;
+        vmtParse.contentLower = contentLower;
+        
+        if (BFTPseudoPBR::Detect(vmtParse)) {
+            outProps.isBFTPseudoPBR = true;
+            
+            // Detect metallic layer: $translucent "1" + $phongalbedotint "1"
+            bool hasTranslucent = outProps.hasTranslucent && outProps.translucent;
+            bool hasAlbedoTint = outProps.hasPhongAlbedoTint && (outProps.phongAlbedoTint != 0);
+            outProps.isBFTMetallicLayer = hasTranslucent && hasAlbedoTint;
+            
+            // Also check for $blendTintByBaseAlpha diffuse layer pattern
+            if (contentLower.find("$blendtintbybasealpha") != std::string::npos) {
+                std::string blendTint = findValue("$blendtintbybasealpha");
+                if (!blendTint.empty() && atoi(blendTint.c_str()) == 1) {
+                    outProps.isBFTDiffuseLayer = true;
+                }
+            }
+        }
+    }
+    
     if (debugOutput) {
         Msg("[LegacyTextureProcessor] VMT direct parse for '%s':\n", materialName.c_str());
         Msg("  shader='%s', $basetexture='%s', $bumpmap='%s'\n",
@@ -2635,6 +2132,26 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
             if (outProps.hasGPBREmissionScale) Msg("    $emissionscale=%.2f\n", outProps.gpbrEmissionScale);
             if (outProps.hasGPBRParallax) Msg("    $parallax=%d, depth=%.3f\n", outProps.gpbrParallax ? 1 : 0, outProps.gpbrParallaxDepth);
             if (outProps.hasGPBRAlpha) Msg("    $alpha=%.2f\n", outProps.gpbrAlpha);
+        }
+        // MWB PBR Gen specific logging
+        if (outProps.isMWBPBR) {
+            Msg("  [MWB-PBR] Detected MWB PBR Gen format!\n");
+            if (outProps.hasPhongExponentTexture) {
+                Msg("    $phongexponenttexture='%s' (roughness: pow^0.25 decode, metallic: green channel)\n", outProps.phongExponentTexture.c_str());
+            }
+        }
+        // BlueFlyTrap PseudoPBR specific logging
+        if (outProps.isBFTPseudoPBR) {
+            Msg("  [BFT-PseudoPBR] Detected BlueFlyTrap PseudoPBR format!\n");
+            if (outProps.hasPhongExponentTexture) {
+                Msg("    $phongexponenttexture='%s' (roughness: linear inversion)\n", outProps.phongExponentTexture.c_str());
+            }
+            Msg("    $phongboost=%.2f\n", outProps.phongBoost);
+            if (outProps.hasPhongFresnelRanges) {
+                Msg("    $phongfresnelranges=[%.2f %.2f %.2f]\n", 
+                    outProps.phongFresnelRanges[0], outProps.phongFresnelRanges[1], outProps.phongFresnelRanges[2]);
+            }
+            Msg("    Layer type: %s\n", outProps.isBFTMetallicLayer ? "METALLIC" : "BASE/DIELECTRIC");
         }
     }
     
@@ -2769,6 +2286,20 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     outProps.gpbrParallaxDepth = 0.1f;
     outProps.gpbrAlpha = 1.0f;
     outProps.hasGPBRAlpha = false;
+    
+    // BlueFlyTrap PseudoPBR format
+    outProps.isBFTPseudoPBR = false;
+    outProps.isBFTMetallicLayer = false;
+    outProps.isBFTDiffuseLayer = false;
+    outProps.bftExponentTexturePath = "";
+    outProps.hasBFTExponentTexture = false;
+    outProps.bftColor2[0] = 1.0f;
+    outProps.bftColor2[1] = 1.0f;
+    outProps.bftColor2[2] = 1.0f;
+    outProps.hasBFTColor2 = false;
+    
+    // MWB PBR Gen format
+    outProps.isMWBPBR = false;
     
     // Get the shader name
     const char* shaderName = pMaterial->GetShaderName();
@@ -3460,6 +2991,39 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     }
     
     // =========================================================================
+    // BlueFlyTrap PseudoPBR format detection
+    // Uses $phongexponenttexture for roughness encoding
+    // =========================================================================
+    if (hasVMTParsed && vmtParsed.isBFTPseudoPBR) {
+        outProps.isBFTPseudoPBR = true;
+        outProps.isBFTMetallicLayer = vmtParsed.isBFTMetallicLayer;
+        
+        // The exponent texture contains the roughness info (inverted)
+        if (vmtParsed.hasPhongExponentTexture && IsValidTexturePath(vmtParsed.phongExponentTexture)) {
+            outProps.bftExponentTexturePath = vmtParsed.phongExponentTexture;
+            outProps.hasBFTExponentTexture = true;
+            if (m_debugOutput) {
+                Msg("[LegacyTextureProcessor] %s: [BFT] Exponent texture = %s\n", 
+                    materialName.c_str(), vmtParsed.phongExponentTexture.c_str());
+            }
+        }
+        
+        // Set metallic based on layer type
+        if (outProps.isBFTMetallicLayer) {
+            outProps.metallic = 0.9f;  // High metallic for metallic layers
+        } else {
+            outProps.metallic = 0.0f;  // Non-metallic for base layers
+        }
+        
+        outProps.roughness = 0.5f;  // Will be overridden by exponent texture
+        
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: [BFT] Material detected - %s layer\n", 
+                materialName.c_str(), outProps.isBFTMetallicLayer ? "metallic" : "base");
+        }
+    }
+    
+    // =========================================================================
     // END: Additional VMT-parsed properties
     // =========================================================================
     
@@ -3620,6 +3184,70 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
 }
 
 
+// Helper to create ProcessingContext for modular format handlers
+ProcessingContext TextureProcessor::CreateProcessingContext() {
+    ProcessingContext ctx;
+    
+    // Bind member functions to the context
+    ctx.readVTFFile = [this](const std::string& path, std::vector<uint8_t>& data) {
+        return ReadVTFFile(path, data);
+    };
+    ctx.parseVTFHeader = [this](const std::vector<uint8_t>& data, VTFFileHeader& header) {
+        return ParseVTFHeader(data, header);
+    };
+    ctx.extractPixelData = [this](const std::vector<uint8_t>& data, const VTFFileHeader& header, 
+                                   ConvertedTexture& tex, bool convertNormal) {
+        return ExtractVTFPixelData(data, header, tex, convertNormal);
+    };
+    ctx.writeDDS = [this](const ConvertedTexture& tex, const std::string& path) {
+        return WriteTextureToDDS(tex, path);
+    };
+    ctx.convertToOctahedral = [this](ConvertedTexture& tex) {
+        ConvertNormalMapToOctahedral(tex);
+    };
+    ctx.convertSSBumpToNormal = [this](ConvertedTexture& tex) {
+        ConvertSSBumpToNormal(tex);
+    };
+    ctx.generateHash = [this](const std::string& name, uint32_t w, uint32_t h) {
+        return GenerateTextureHash(name, w, h);
+    };
+    ctx.generateOutputPath = [this](uint64_t hash, const std::string& suffix) {
+        return GenerateOutputPath(hash, suffix.c_str());
+    };
+    ctx.fileExists = [this](const std::string& path) {
+        return FileExists(path);
+    };
+    
+    ctx.debugOutput = m_debugOutput;
+    ctx.materialsWithNormals = &m_stats.materialsWithNormals;
+    ctx.materialsWithRoughness = &m_stats.materialsWithRoughness;
+    
+    return ctx;
+}
+
+// Helper to copy ProcessedMaterial results to ProcessedMaterialInfo
+static void CopyProcessedMaterial(const ProcessedMaterial& src, TextureProcessor::ProcessedMaterialInfo& dst) {
+    if (!src.normalPath.empty()) dst.normalPath = src.normalPath;
+    if (!src.roughnessPath.empty()) dst.roughnessPath = src.roughnessPath;
+    if (!src.metallicPath.empty()) dst.metallicPath = src.metallicPath;
+    if (!src.heightPath.empty()) {
+        dst.heightPath = src.heightPath;
+        dst.heightScale = src.heightScale;
+    }
+    if (!src.emissivePath.empty()) {
+        dst.emissivePath = src.emissivePath;
+        dst.emissionIntensity = src.emissionIntensity;
+    }
+    if (!src.transmittancePath.empty()) dst.transmittancePath = src.transmittancePath;
+    if (!src.albedoPath.empty()) dst.albedoPath = src.albedoPath;
+    if (src.roughnessConstant != 0.5f) dst.roughnessConstant = src.roughnessConstant;
+    if (src.metallicConstant != 0.0f) dst.metallicConstant = src.metallicConstant;
+    if (src.isGlass) {
+        dst.isGlass = src.isGlass;
+        dst.ior = src.ior;
+    }
+}
+
 bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uint64_t textureHash) {
     if (textureHash == 0) {
         return false;
@@ -3647,759 +3275,88 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
     matInfo.ior = props.isGlass ? 1.5f : 1.0f;  // Default glass IOR is 1.5
     matInfo.emissionIntensity = props.hasEmissionScale ? props.emissionScale : 1.0f;
     
-    int skippedCount = 0;
+    // Create processing context for modular handlers
+    ProcessingContext ctx = CreateProcessingContext();
     
     // =========================================================================
-    // ExoPBR community PBR format processing
-    // ExoPBR provides direct PBR textures - we use them directly instead of
-    // deriving PBR properties from Source Engine material parameters
+    // Delegate to format-specific handlers (defined in separate files)
+    // Priority: ExoPBR -> GPBR -> BFT -> SourceEngine (fallback)
     // =========================================================================
+    
+    // ExoPBR format
     if (props.isExoPBR) {
-        if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] Processing ExoPBR material: %s\n", props.materialName.c_str());
+        ProcessedMaterial result = ExoPBR::ProcessTextures(props, textureHash, ctx);
+        if (result.success) {
+            CopyProcessedMaterial(result, matInfo);
+            m_processedMaterialInfo[textureHash] = matInfo;
+            WriteModUSDA();
+            m_stats.materialsProcessed++;
+            return true;
         }
-        
-        // Process ARM texture ($texture1) - split into roughness and metallic
-        if (props.hasARMTexture && !props.armTexturePath.empty()) {
-            std::string vtfPath = props.armTexturePath;
-            std::vector<uint8_t> fileData;
-            
-            if (ReadVTFFile(vtfPath, fileData)) {
-                VTFFileHeader header;
-                if (ParseVTFHeader(fileData, header)) {
-                    ConvertedTexture armTex;
-                    armTex.isNormalMap = false;
-                    
-                    if (ExtractVTFPixelData(fileData, header, armTex, false)) {
-                        // ARM map layout:
-                        // R = Ambient Occlusion (not used directly in PBR output)
-                        // G = Roughness
-                        // B = Metallic
-                        // A = Height (optional)
-                        
-                        // Create roughness texture from green channel
-                        {
-                            ConvertedTexture roughTex;
-                            roughTex.width = armTex.width;
-                            roughTex.height = armTex.height;
-                            roughTex.mipLevels = 1;
-                            roughTex.format = REMIXAPI_FORMAT_R8G8B8A8_UNORM;
-                            roughTex.isNormalMap = false;
-                            roughTex.pixelData.resize(armTex.width * armTex.height * 4);
-                            
-                            for (uint32_t i = 0; i < armTex.width * armTex.height; i++) {
-                                uint8_t roughness = armTex.pixelData[i * 4 + 1];  // Green channel
-                                roughTex.pixelData[i * 4 + 0] = roughness;
-                                roughTex.pixelData[i * 4 + 1] = roughness;
-                                roughTex.pixelData[i * 4 + 2] = roughness;
-                                roughTex.pixelData[i * 4 + 3] = 255;
-                            }
-                            
-                            uint64_t roughHash = GenerateTextureHash(props.armTexturePath + "_roughness", roughTex.width, roughTex.height);
-                            std::string outputPath = GenerateOutputPath(roughHash, "_roughness");
-                            
-                            if (FileExists(outputPath)) {
-                                matInfo.roughnessPath = outputPath;
-                                skippedCount++;
-                            } else if (WriteTextureToDDS(roughTex, outputPath)) {
-                                matInfo.roughnessPath = outputPath;
-                                m_stats.materialsWithRoughness++;
-                                if (m_debugOutput) {
-                                    Msg("[LegacyTextureProcessor] [ExoPBR] Wrote roughness from ARM: %s\n", outputPath.c_str());
-                                }
-                            }
-                        }
-                        
-                        // Create metallic texture from blue channel
-                        {
-                            ConvertedTexture metalTex;
-                            metalTex.width = armTex.width;
-                            metalTex.height = armTex.height;
-                            metalTex.mipLevels = 1;
-                            metalTex.format = REMIXAPI_FORMAT_R8G8B8A8_UNORM;
-                            metalTex.isNormalMap = false;
-                            metalTex.pixelData.resize(armTex.width * armTex.height * 4);
-                            
-                            for (uint32_t i = 0; i < armTex.width * armTex.height; i++) {
-                                uint8_t metallic = armTex.pixelData[i * 4 + 2];  // Blue channel
-                                metalTex.pixelData[i * 4 + 0] = metallic;
-                                metalTex.pixelData[i * 4 + 1] = metallic;
-                                metalTex.pixelData[i * 4 + 2] = metallic;
-                                metalTex.pixelData[i * 4 + 3] = 255;
-                            }
-                            
-                            uint64_t metalHash = GenerateTextureHash(props.armTexturePath + "_metallic", metalTex.width, metalTex.height);
-                            std::string outputPath = GenerateOutputPath(metalHash, "_metallic");
-                            
-                            if (FileExists(outputPath)) {
-                                matInfo.metallicPath = outputPath;
-                                skippedCount++;
-                            } else if (WriteTextureToDDS(metalTex, outputPath)) {
-                                matInfo.metallicPath = outputPath;
-                                if (m_debugOutput) {
-                                    Msg("[LegacyTextureProcessor] [ExoPBR] Wrote metallic from ARM: %s\n", outputPath.c_str());
-                                }
-                            }
-                        }
-                        
-                        // Create height texture from alpha channel if present
-                        {
-                            bool hasHeightData = false;
-                            for (uint32_t i = 0; i < armTex.width * armTex.height && !hasHeightData; i++) {
-                                if (armTex.pixelData[i * 4 + 3] != 255) {
-                                    hasHeightData = true;
-                                }
-                            }
-                            
-                            if (hasHeightData) {
-                                ConvertedTexture heightTex;
-                                heightTex.width = armTex.width;
-                                heightTex.height = armTex.height;
-                                heightTex.mipLevels = 1;
-                                heightTex.format = REMIXAPI_FORMAT_R8G8B8A8_UNORM;
-                                heightTex.isNormalMap = false;
-                                heightTex.pixelData.resize(armTex.width * armTex.height * 4);
-                                
-                                for (uint32_t i = 0; i < armTex.width * armTex.height; i++) {
-                                    uint8_t height = armTex.pixelData[i * 4 + 3];  // Alpha channel
-                                    heightTex.pixelData[i * 4 + 0] = height;
-                                    heightTex.pixelData[i * 4 + 1] = height;
-                                    heightTex.pixelData[i * 4 + 2] = height;
-                                    heightTex.pixelData[i * 4 + 3] = 255;
-                                }
-                                
-                                uint64_t heightHash = GenerateTextureHash(props.armTexturePath + "_height", heightTex.width, heightTex.height);
-                                std::string outputPath = GenerateOutputPath(heightHash, "_height");
-                                
-                                if (FileExists(outputPath)) {
-                                    matInfo.heightPath = outputPath;
-                                    skippedCount++;
-                                } else if (WriteTextureToDDS(heightTex, outputPath)) {
-                                    matInfo.heightPath = outputPath;
-                                    if (m_debugOutput) {
-                                        Msg("[LegacyTextureProcessor] [ExoPBR] Wrote height from ARM alpha: %s\n", outputPath.c_str());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        // Process ExoPBR normal map ($texture2) - DirectX Y- format needs green channel flip
-        if (props.hasExoNormal && !props.exoNormalPath.empty()) {
-            std::string vtfPath = props.exoNormalPath;
-            std::vector<uint8_t> fileData;
-            
-            if (ReadVTFFile(vtfPath, fileData)) {
-                VTFFileHeader header;
-                if (ParseVTFHeader(fileData, header)) {
-                    ConvertedTexture normalTex;
-                    normalTex.isNormalMap = true;
-                    
-                    if (ExtractVTFPixelData(fileData, header, normalTex, false)) {
-                        // ExoPBR uses DirectX Y- format - flip green channel
-                        for (uint32_t i = 0; i < normalTex.width * normalTex.height; i++) {
-                            normalTex.pixelData[i * 4 + 1] = 255 - normalTex.pixelData[i * 4 + 1];
-                        }
-                        
-                        // Convert to octahedral for RTX Remix
-                        ConvertNormalMapToOctahedral(normalTex);
-                        
-                        uint64_t normalHash = GenerateTextureHash(props.exoNormalPath + "_normal", normalTex.width, normalTex.height);
-                        std::string outputPath = GenerateOutputPath(normalHash, "_normal");
-                        
-                        if (FileExists(outputPath)) {
-                            matInfo.normalPath = outputPath;
-                            skippedCount++;
-                        } else if (WriteTextureToDDS(normalTex, outputPath)) {
-                            matInfo.normalPath = outputPath;
-                            m_stats.materialsWithNormals++;
-                            if (m_debugOutput) {
-                                Msg("[LegacyTextureProcessor] [ExoPBR] Wrote normal map (Y- flipped): %s\n", outputPath.c_str());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        // Process emission texture ($texture3)
-        if (props.hasEmissionTexture && !props.emissionTexturePath.empty()) {
-            std::string vtfPath = props.emissionTexturePath;
-            std::vector<uint8_t> fileData;
-            
-            if (ReadVTFFile(vtfPath, fileData)) {
-                VTFFileHeader header;
-                if (ParseVTFHeader(fileData, header)) {
-                    ConvertedTexture emitTex;
-                    emitTex.isNormalMap = false;
-                    
-                    if (ExtractVTFPixelData(fileData, header, emitTex, false)) {
-                        uint64_t emitHash = GenerateTextureHash(props.emissionTexturePath + "_emit", emitTex.width, emitTex.height);
-                        std::string outputPath = GenerateOutputPath(emitHash, "_emit");
-                        
-                        if (FileExists(outputPath)) {
-                            matInfo.emissivePath = outputPath;
-                            skippedCount++;
-                        } else if (WriteTextureToDDS(emitTex, outputPath)) {
-                            matInfo.emissivePath = outputPath;
-                            if (m_debugOutput) {
-                                Msg("[LegacyTextureProcessor] [ExoPBR] Wrote emission texture: %s\n", outputPath.c_str());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        // Store and write USDA
-        m_processedMaterialInfo[textureHash] = matInfo;
-        WriteModUSDA();
-        m_stats.materialsProcessed++;
-        
-        if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] [ExoPBR] Material processed: %s (skipped %d existing)\n", 
-                props.materialName.c_str(), skippedCount);
-        }
-        
-        return true;
     }
     
-    // =========================================================================
-    // GPBR (Strata Source) community PBR format processing
-    // GPBR provides direct PBR textures - MRAO map (Metallic/Roughness/AO), normal, emission
-    // =========================================================================
+    // GPBR format
     if (props.isGPBR) {
-        if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] Processing GPBR material: %s\n", props.materialName.c_str());
+        ProcessedMaterial result = GPBR::ProcessTextures(props, textureHash, ctx);
+        if (result.success) {
+            CopyProcessedMaterial(result, matInfo);
+            m_processedMaterialInfo[textureHash] = matInfo;
+            WriteModUSDA();
+            m_stats.materialsProcessed++;
+            return true;
         }
-        
-        // Process MRAO texture ($mraotexture) - split into roughness and metallic
-        // MRAO layout: R=Metallic, G=Roughness, B=AO
-        if (props.hasMRAOTexture && !props.mraoTexturePath.empty()) {
-            std::string vtfPath = props.mraoTexturePath;
-            std::vector<uint8_t> fileData;
-            
-            if (ReadVTFFile(vtfPath, fileData)) {
-                VTFFileHeader header;
-                if (ParseVTFHeader(fileData, header)) {
-                    ConvertedTexture mraoTex;
-                    mraoTex.isNormalMap = false;
-                    
-                    if (ExtractVTFPixelData(fileData, header, mraoTex, false)) {
-                        float mraoScale = props.hasMRAOScale ? props.mraoScale : 1.0f;
-                        
-                        // Create roughness texture from GREEN channel
-                        {
-                            ConvertedTexture roughTex;
-                            roughTex.width = mraoTex.width;
-                            roughTex.height = mraoTex.height;
-                            roughTex.mipLevels = 1;
-                            roughTex.format = REMIXAPI_FORMAT_R8G8B8A8_UNORM;
-                            roughTex.isNormalMap = false;
-                            roughTex.pixelData.resize(mraoTex.width * mraoTex.height * 4);
-                            
-                            for (uint32_t i = 0; i < mraoTex.width * mraoTex.height; i++) {
-                                uint8_t roughness = mraoTex.pixelData[i * 4 + 1];  // Green channel
-                                roughness = (uint8_t)(roughness * mraoScale);
-                                roughTex.pixelData[i * 4 + 0] = roughness;
-                                roughTex.pixelData[i * 4 + 1] = roughness;
-                                roughTex.pixelData[i * 4 + 2] = roughness;
-                                roughTex.pixelData[i * 4 + 3] = 255;
-                            }
-                            
-                            uint64_t roughHash = GenerateTextureHash(props.mraoTexturePath + "_roughness", roughTex.width, roughTex.height);
-                            std::string outputPath = GenerateOutputPath(roughHash, "_roughness");
-                            
-                            if (FileExists(outputPath)) {
-                                matInfo.roughnessPath = outputPath;
-                                skippedCount++;
-                            } else if (WriteTextureToDDS(roughTex, outputPath)) {
-                                matInfo.roughnessPath = outputPath;
-                                m_stats.materialsWithRoughness++;
-                                if (m_debugOutput) {
-                                    Msg("[LegacyTextureProcessor] [GPBR] Wrote roughness from MRAO: %s\n", outputPath.c_str());
-                                }
-                            }
-                        }
-                        
-                        // Create metallic texture from RED channel
-                        {
-                            ConvertedTexture metalTex;
-                            metalTex.width = mraoTex.width;
-                            metalTex.height = mraoTex.height;
-                            metalTex.mipLevels = 1;
-                            metalTex.format = REMIXAPI_FORMAT_R8G8B8A8_UNORM;
-                            metalTex.isNormalMap = false;
-                            metalTex.pixelData.resize(mraoTex.width * mraoTex.height * 4);
-                            
-                            for (uint32_t i = 0; i < mraoTex.width * mraoTex.height; i++) {
-                                uint8_t metallic = mraoTex.pixelData[i * 4 + 0];  // Red channel
-                                metallic = (uint8_t)(metallic * mraoScale);
-                                metalTex.pixelData[i * 4 + 0] = metallic;
-                                metalTex.pixelData[i * 4 + 1] = metallic;
-                                metalTex.pixelData[i * 4 + 2] = metallic;
-                                metalTex.pixelData[i * 4 + 3] = 255;
-                            }
-                            
-                            uint64_t metalHash = GenerateTextureHash(props.mraoTexturePath + "_metallic", metalTex.width, metalTex.height);
-                            std::string outputPath = GenerateOutputPath(metalHash, "_metallic");
-                            
-                            if (FileExists(outputPath)) {
-                                matInfo.metallicPath = outputPath;
-                                skippedCount++;
-                            } else if (WriteTextureToDDS(metalTex, outputPath)) {
-                                matInfo.metallicPath = outputPath;
-                                if (m_debugOutput) {
-                                    Msg("[LegacyTextureProcessor] [GPBR] Wrote metallic from MRAO: %s\n", outputPath.c_str());
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+    }
+    
+    // MWB PBR Gen format (must check before BFT - it has more specific patterns)
+    if (props.isMWBPBR) {
+        ProcessedMaterial result = MWBPBR::ProcessTextures(props, textureHash, ctx);
+        if (result.success) {
+            CopyProcessedMaterial(result, matInfo);
+            m_processedMaterialInfo[textureHash] = matInfo;
+            WriteModUSDA();
+            m_stats.materialsProcessed++;
+            return true;
         }
-        
-        // Process normal map ($bumpmap) - also check for height in alpha when parallax enabled
-        if (props.hasBumpMap && !props.bumpMapPath.empty()) {
-            std::string vtfPath = props.bumpMapPath;
-            std::vector<uint8_t> fileData;
-            
-            if (ReadVTFFile(vtfPath, fileData)) {
-                VTFFileHeader header;
-                if (ParseVTFHeader(fileData, header)) {
-                    ConvertedTexture normalTex;
-                    normalTex.isNormalMap = true;
-                    
-                    if (ExtractVTFPixelData(fileData, header, normalTex, true)) {
-                        // Write normal map
-                        uint64_t normalHash = GenerateTextureHash(props.bumpMapPath + "_normal", normalTex.width, normalTex.height);
-                        std::string outputPath = GenerateOutputPath(normalHash, "_normal");
-                        
-                        if (FileExists(outputPath)) {
-                            matInfo.normalPath = outputPath;
-                            skippedCount++;
-                        } else if (WriteTextureToDDS(normalTex, outputPath)) {
-                            matInfo.normalPath = outputPath;
-                            m_stats.materialsWithNormals++;
-                            if (m_debugOutput) {
-                                Msg("[LegacyTextureProcessor] [GPBR] Wrote normal map: %s\n", outputPath.c_str());
-                            }
-                        }
-                        
-                        // If parallax is enabled, extract height from normal map alpha
-                        if (props.gpbrParallax) {
-                            ConvertedTexture heightTex;
-                            heightTex.width = normalTex.width;
-                            heightTex.height = normalTex.height;
-                            heightTex.mipLevels = 1;
-                            heightTex.format = REMIXAPI_FORMAT_R8G8B8A8_UNORM;
-                            heightTex.isNormalMap = false;
-                            heightTex.pixelData.resize(normalTex.width * normalTex.height * 4);
-                            
-                            for (uint32_t i = 0; i < normalTex.width * normalTex.height; i++) {
-                                uint8_t height = normalTex.pixelData[i * 4 + 3];  // Alpha channel
-                                heightTex.pixelData[i * 4 + 0] = height;
-                                heightTex.pixelData[i * 4 + 1] = height;
-                                heightTex.pixelData[i * 4 + 2] = height;
-                                heightTex.pixelData[i * 4 + 3] = 255;
-                            }
-                            
-                            uint64_t heightHash = GenerateTextureHash(props.bumpMapPath + "_height", heightTex.width, heightTex.height);
-                            std::string heightPath = GenerateOutputPath(heightHash, "_height");
-                            
-                            if (FileExists(heightPath)) {
-                                matInfo.heightPath = heightPath;
-                                matInfo.heightScale = props.gpbrParallaxDepth;
-                                skippedCount++;
-                            } else if (WriteTextureToDDS(heightTex, heightPath)) {
-                                matInfo.heightPath = heightPath;
-                                matInfo.heightScale = props.gpbrParallaxDepth;
-                                if (m_debugOutput) {
-                                    Msg("[LegacyTextureProcessor] [GPBR] Wrote height from normal alpha: %s (depth=%.3f)\n", heightPath.c_str(), props.gpbrParallaxDepth);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+    }
+    
+    // BlueFlyTrap PseudoPBR format
+    if (props.isBFTPseudoPBR) {
+        ProcessedMaterial result = BFTPseudoPBR::ProcessTextures(props, textureHash, ctx);
+        if (result.success) {
+            CopyProcessedMaterial(result, matInfo);
+            m_processedMaterialInfo[textureHash] = matInfo;
+            WriteModUSDA();
+            m_stats.materialsProcessed++;
+            return true;
         }
+    }
+    
+    // =========================================================================
+    // Standard Source Engine material processing (fallback)
+    // For non-PBR format materials, use the SourceEngine handler
+    // =========================================================================
+    ProcessedMaterial result = SourceEngine::ProcessTextures(props, textureHash, ctx);
+    if (result.success) {
+        CopyProcessedMaterial(result, matInfo);
         
-        // Process emission texture ($emissiontexture)
-        if (props.hasGPBREmission && !props.gpbrEmissionPath.empty()) {
-            std::string vtfPath = props.gpbrEmissionPath;
-            std::vector<uint8_t> fileData;
-            
-            if (ReadVTFFile(vtfPath, fileData)) {
-                VTFFileHeader header;
-                if (ParseVTFHeader(fileData, header)) {
-                    ConvertedTexture emissionTex;
-                    emissionTex.isNormalMap = false;
-                    
-                    if (ExtractVTFPixelData(fileData, header, emissionTex, false)) {
-                        uint64_t emissionHash = GenerateTextureHash(props.gpbrEmissionPath + "_emission", emissionTex.width, emissionTex.height);
-                        std::string outputPath = GenerateOutputPath(emissionHash, "_emission");
-                        
-                        if (FileExists(outputPath)) {
-                            matInfo.emissivePath = outputPath;
-                            matInfo.emissionIntensity = props.hasGPBREmissionScale ? props.gpbrEmissionScale : 1.0f;
-                            skippedCount++;
-                        } else if (WriteTextureToDDS(emissionTex, outputPath)) {
-                            matInfo.emissivePath = outputPath;
-                            matInfo.emissionIntensity = props.hasGPBREmissionScale ? props.gpbrEmissionScale : 1.0f;
-                            if (m_debugOutput) {
-                                Msg("[LegacyTextureProcessor] [GPBR] Wrote emission texture: %s\n", outputPath.c_str());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        // Store and write USDA
+        // Store for USDA generation
         m_processedMaterialInfo[textureHash] = matInfo;
         WriteModUSDA();
         m_stats.materialsProcessed++;
         
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] [GPBR] Material processed: %s (skipped %d existing)\n", 
-                props.materialName.c_str(), skippedCount);
+            Msg("[LegacyTextureProcessor] Processed material '%s' (hash 0x%llX): roughness=%.2f, metallic=%.2f%s%s%s%s\n",
+                props.materialName.c_str(), textureHash, matInfo.roughnessConstant, matInfo.metallicConstant,
+                !matInfo.normalPath.empty() ? " [normal]" : "",
+                !matInfo.roughnessPath.empty() ? " [roughness]" : "",
+                !matInfo.metallicPath.empty() ? " [metallic]" : "",
+                !matInfo.heightPath.empty() ? " [height]" : "");
         }
         
         return true;
     }
     
-    // =========================================================================
-    // Standard Source Engine material processing (non-ExoPBR/GPBR path)
-    // =========================================================================
-    
-    // Write normal map to disk if available
-    if (props.hasBumpMap && !props.bumpMapPath.empty()) {
-        // Generate the expected output path first to check if it exists
-        uint64_t normalHash = GenerateTextureHash(props.bumpMapPath + "_normal", 0, 0);
-        std::string expectedOutputPath = GenerateOutputPath(normalHash, "_normal");
-        
-        // Check if the file already exists
-        if (FileExists(expectedOutputPath)) {
-            // File already exists, just use it
-            matInfo.normalPath = expectedOutputPath;
-            m_writtenTexturePaths[normalHash] = expectedOutputPath;
-            skippedCount++;
-            
-            if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] Skipping existing normal texture: %s\n", expectedOutputPath.c_str());
-            }
-        } else {
-            std::string vtfPath = props.bumpMapPath;
-            std::vector<uint8_t> fileData;
-            
-            if (ReadVTFFile(vtfPath, fileData)) {
-                VTFFileHeader header;
-                if (ParseVTFHeader(fileData, header)) {
-                    ConvertedTexture normalTex;
-                    normalTex.isNormalMap = true;
-                    
-                    // For SSBump textures, extract raw data first then convert
-                    if (props.isSSBump) {
-                        // Extract without octahedral conversion
-                        if (ExtractVTFPixelData(fileData, header, normalTex, false)) {
-                            // Convert SSBump to standard normal map
-                            ConvertSSBumpToNormal(normalTex);
-                            // Then convert to octahedral for RTX Remix
-                            ConvertNormalMapToOctahedral(normalTex);
-                            
-                            normalTex.hash = GenerateTextureHash(props.bumpMapPath + "_normal", normalTex.width, normalTex.height);
-                            std::string outputPath = GenerateOutputPath(normalTex.hash, "_normal");
-                            
-                            // Double-check with actual dimensions hash
-                            if (FileExists(outputPath)) {
-                                matInfo.normalPath = outputPath;
-                                m_writtenTexturePaths[normalTex.hash] = outputPath;
-                                skippedCount++;
-                                
-                                if (m_debugOutput) {
-                                    Msg("[LegacyTextureProcessor] Skipping existing SSBump-converted normal: %s\n", outputPath.c_str());
-                                }
-                            } else if (WriteTextureToDDS(normalTex, outputPath)) {
-                                matInfo.normalPath = outputPath;
-                                m_writtenTexturePaths[normalTex.hash] = outputPath;
-                                m_stats.materialsWithNormals++;
-                                
-                                if (m_debugOutput) {
-                                    Msg("[LegacyTextureProcessor] Wrote SSBump-converted normal: %s\n", outputPath.c_str());
-                                }
-                            } else if (m_debugOutput) {
-                                Msg("[LegacyTextureProcessor] Failed to write SSBump DDS for %s\n", props.bumpMapPath.c_str());
-                            }
-                        } else if (m_debugOutput) {
-                            Msg("[LegacyTextureProcessor] Failed to extract SSBump pixel data for %s\n", props.bumpMapPath.c_str());
-                        }
-                    } else {
-                        // Standard normal map - extract with octahedral conversion
-                        if (ExtractVTFPixelData(fileData, header, normalTex, true)) {
-                            normalTex.hash = GenerateTextureHash(props.bumpMapPath + "_normal", normalTex.width, normalTex.height);
-                            std::string outputPath = GenerateOutputPath(normalTex.hash, "_normal");
-                            
-                            // Double-check with actual dimensions hash
-                            if (FileExists(outputPath)) {
-                                matInfo.normalPath = outputPath;
-                                m_writtenTexturePaths[normalTex.hash] = outputPath;
-                                skippedCount++;
-                                
-                                if (m_debugOutput) {
-                                    Msg("[LegacyTextureProcessor] Skipping existing normal texture: %s\n", outputPath.c_str());
-                                }
-                            } else if (WriteTextureToDDS(normalTex, outputPath)) {
-                                matInfo.normalPath = outputPath;
-                                m_writtenTexturePaths[normalTex.hash] = outputPath;
-                                m_stats.materialsWithNormals++;
-                                
-                                if (m_debugOutput) {
-                                    Msg("[LegacyTextureProcessor] Wrote normal texture: %s\n", outputPath.c_str());
-                                }
-                            } else if (m_debugOutput) {
-                                Msg("[LegacyTextureProcessor] Failed to write normal DDS for %s\n", props.bumpMapPath.c_str());
-                            }
-                        } else if (m_debugOutput) {
-                            Msg("[LegacyTextureProcessor] Failed to extract pixel data for %s\n", props.bumpMapPath.c_str());
-                        }
-                    }
-                } else if (m_debugOutput) {
-                    Msg("[LegacyTextureProcessor] Failed to parse VTF header for %s\n", props.bumpMapPath.c_str());
-                }
-            } else if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] Failed to read VTF file for bump map: %s\n", props.bumpMapPath.c_str());
-            }
-        }
-    }
-    
-    // Generate and write roughness texture
-    {
-        uint64_t roughnessHash = GenerateTextureHash(props.materialName + "_roughness", 256, 256);
-        std::string outputPath = GenerateOutputPath(roughnessHash, "_rough");
-        
-        // Check if the file already exists
-        if (FileExists(outputPath)) {
-            matInfo.roughnessPath = outputPath;
-            m_writtenTexturePaths[roughnessHash] = outputPath;
-            skippedCount++;
-            
-            if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] Skipping existing roughness texture: %s\n", outputPath.c_str());
-            }
-        } else {
-            ConvertedTexture roughnessTex;
-            if (GenerateRoughnessTexture(props, roughnessTex)) {
-                roughnessTex.hash = GenerateTextureHash(props.materialName + "_roughness", roughnessTex.width, roughnessTex.height);
-                outputPath = GenerateOutputPath(roughnessTex.hash, "_rough");
-                
-                if (FileExists(outputPath)) {
-                    matInfo.roughnessPath = outputPath;
-                    m_writtenTexturePaths[roughnessTex.hash] = outputPath;
-                    skippedCount++;
-                    
-                    if (m_debugOutput) {
-                        Msg("[LegacyTextureProcessor] Skipping existing roughness texture: %s\n", outputPath.c_str());
-                    }
-                } else if (WriteTextureToDDS(roughnessTex, outputPath)) {
-                    matInfo.roughnessPath = outputPath;
-                    m_writtenTexturePaths[roughnessTex.hash] = outputPath;
-                    m_stats.materialsWithRoughness++;
-                    
-                    if (m_debugOutput) {
-                        Msg("[LegacyTextureProcessor] Wrote roughness texture: %s\n", outputPath.c_str());
-                    }
-                }
-            }
-        }
-    }
-    
-    // Generate and write metallic texture if significant
-    if (props.metallic > 0.05f) {
-        uint64_t metallicHash = GenerateTextureHash(props.materialName + "_metallic", 256, 256);
-        std::string outputPath = GenerateOutputPath(metallicHash, "_metal");
-        
-        // Check if the file already exists
-        if (FileExists(outputPath)) {
-            matInfo.metallicPath = outputPath;
-            m_writtenTexturePaths[metallicHash] = outputPath;
-            skippedCount++;
-            
-            if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] Skipping existing metallic texture: %s\n", outputPath.c_str());
-            }
-        } else {
-            ConvertedTexture metallicTex;
-            if (GenerateMetallicTexture(props, metallicTex)) {
-                metallicTex.hash = GenerateTextureHash(props.materialName + "_metallic", metallicTex.width, metallicTex.height);
-                outputPath = GenerateOutputPath(metallicTex.hash, "_metal");
-                
-                if (FileExists(outputPath)) {
-                    matInfo.metallicPath = outputPath;
-                    m_writtenTexturePaths[metallicTex.hash] = outputPath;
-                    skippedCount++;
-                    
-                    if (m_debugOutput) {
-                        Msg("[LegacyTextureProcessor] Skipping existing metallic texture: %s\n", outputPath.c_str());
-                    }
-                } else if (WriteTextureToDDS(metallicTex, outputPath)) {
-                    matInfo.metallicPath = outputPath;
-                    m_writtenTexturePaths[metallicTex.hash] = outputPath;
-                    
-                    if (m_debugOutput) {
-                        Msg("[LegacyTextureProcessor] Wrote metallic texture: %s\n", outputPath.c_str());
-                    }
-                }
-            }
-        }
-    }
-    
-    // For glass materials, handle transmittance texture
-    // For Refract shaders: ONLY use $refracttinttexture (don't use baseTexture - it might be set to normalmap by fixer)
-    // For non-Refract glass (surfaceprop=glass): use baseTexture as transmittance
-    if (props.isGlass) {
-        std::string transmittanceTexPath;
-        std::string transmittanceSuffix;
-        
-        if (props.isRefractShader && !props.refractTintTexturePath.empty()) {
-            // Refract shader: use $refracttinttexture
-            transmittanceTexPath = props.refractTintTexturePath;
-            transmittanceSuffix = "_refracttint";
-            if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] Using $refracttinttexture for Refract glass transmittance: %s\n", transmittanceTexPath.c_str());
-            }
-        } else if (!props.isRefractShader && !props.baseTexturePath.empty()) {
-            // Non-Refract glass (like bottles): use baseTexture
-            transmittanceTexPath = props.baseTexturePath;
-            transmittanceSuffix = "_base";
-            if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] Using $basetexture for glass transmittance: %s\n", transmittanceTexPath.c_str());
-            }
-        }
-        // Note: If Refract shader has no $refracttinttexture, glass will be clear (no transmittance texture)
-        
-        if (!transmittanceTexPath.empty()) {
-            uint64_t texHash = GenerateTextureHash(transmittanceTexPath + transmittanceSuffix, 0, 0);
-            std::string expectedOutputPath = GenerateOutputPath(texHash, transmittanceSuffix.c_str());
-            
-            if (FileExists(expectedOutputPath)) {
-                matInfo.transmittancePath = expectedOutputPath;
-                m_writtenTexturePaths[texHash] = expectedOutputPath;
-                skippedCount++;
-                
-                if (m_debugOutput) {
-                    Msg("[LegacyTextureProcessor] Skipping existing transmittance texture for glass: %s\n", expectedOutputPath.c_str());
-                }
-            } else {
-                std::vector<uint8_t> fileData;
-                
-                if (ReadVTFFile(transmittanceTexPath, fileData)) {
-                    VTFFileHeader header;
-                    if (ParseVTFHeader(fileData, header)) {
-                        ConvertedTexture tex;
-                        tex.isNormalMap = false;
-                        if (ExtractVTFPixelData(fileData, header, tex, false)) {
-                            tex.hash = GenerateTextureHash(transmittanceTexPath + transmittanceSuffix, tex.width, tex.height);
-                            std::string outputPath = GenerateOutputPath(tex.hash, transmittanceSuffix.c_str());
-                            
-                            if (FileExists(outputPath)) {
-                                matInfo.transmittancePath = outputPath;
-                                m_writtenTexturePaths[tex.hash] = outputPath;
-                                skippedCount++;
-                                
-                                if (m_debugOutput) {
-                                    Msg("[LegacyTextureProcessor] Skipping existing transmittance texture: %s\n", outputPath.c_str());
-                                }
-                            } else if (WriteTextureToDDS(tex, outputPath)) {
-                                matInfo.transmittancePath = outputPath;
-                                m_writtenTexturePaths[tex.hash] = outputPath;
-                                
-                                if (m_debugOutput) {
-                                    Msg("[LegacyTextureProcessor] Wrote transmittance texture for glass: %s\n", outputPath.c_str());
-                                }
-                            } else if (m_debugOutput) {
-                                Msg("[LegacyTextureProcessor] Failed to write transmittance DDS for glass: %s\n", transmittanceTexPath.c_str());
-                            }
-                        } else if (m_debugOutput) {
-                            Msg("[LegacyTextureProcessor] Failed to extract transmittance texture data for glass: %s\n", transmittanceTexPath.c_str());
-                        }
-                    }
-                } else if (m_debugOutput) {
-                    Msg("[LegacyTextureProcessor] Failed to read VTF file for glass transmittance texture: %s\n", transmittanceTexPath.c_str());
-                }
-            }
-        }
-    }
-    
-    // Write height/displacement map to disk if available
-    // Use $parallaxmap or auto-discovered height map
-    std::string heightMapPath;
-    if (props.hasParallaxMap && !props.parallaxMapPath.empty()) {
-        heightMapPath = props.parallaxMapPath;
-    } else if (props.hasDiscoveredHeight && !props.discoveredHeightPath.empty()) {
-        heightMapPath = props.discoveredHeightPath;
-    }
-    
-    if (!heightMapPath.empty()) {
-        uint64_t heightHash = GenerateTextureHash(heightMapPath + "_height", 0, 0);
-        std::string expectedOutputPath = GenerateOutputPath(heightHash, "_height");
-        
-        // Check if the file already exists
-        if (FileExists(expectedOutputPath)) {
-            matInfo.heightPath = expectedOutputPath;
-            matInfo.heightScale = props.hasParallaxMapScale ? props.parallaxMapScale : 0.025f;
-            m_writtenTexturePaths[heightHash] = expectedOutputPath;
-            skippedCount++;
-            
-            if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] Skipping existing height texture: %s\n", expectedOutputPath.c_str());
-            }
-        } else {
-            std::vector<uint8_t> heightFileData;
-            if (ReadVTFFile(heightMapPath, heightFileData)) {
-                VTFFileHeader heightHeader;
-                if (ParseVTFHeader(heightFileData, heightHeader)) {
-                    ConvertedTexture heightTex;
-                    heightTex.isNormalMap = false;
-                    if (ExtractVTFPixelData(heightFileData, heightHeader, heightTex, false)) {
-                        heightTex.hash = GenerateTextureHash(heightMapPath + "_height", heightTex.width, heightTex.height);
-                        std::string outputPath = GenerateOutputPath(heightTex.hash, "_height");
-                        
-                        if (WriteTextureToDDS(heightTex, outputPath)) {
-                            matInfo.heightPath = outputPath;
-                            matInfo.heightScale = props.hasParallaxMapScale ? props.parallaxMapScale : 0.025f;
-                            m_writtenTexturePaths[heightTex.hash] = outputPath;
-                            
-                            if (m_debugOutput) {
-                                Msg("[LegacyTextureProcessor] Wrote height/displacement texture: %s (scale=%.4f)\n", 
-                                    outputPath.c_str(), matInfo.heightScale);
-                            }
-                        }
-                    }
-                }
-            } else if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] Failed to read height map: %s\n", heightMapPath.c_str());
-            }
-        }
-    }
-    
-    // Store for USDA generation
-    m_processedMaterialInfo[textureHash] = matInfo;
-    m_stats.materialsProcessed++;
-    
-    if (m_debugOutput) {
-        Msg("[LegacyTextureProcessor] Processed material '%s' (hash 0x%llX): roughness=%.2f, metallic=%.2f%s%s%s%s%s\n",
-            props.materialName.c_str(), textureHash, props.roughness, props.metallic,
-            !matInfo.normalPath.empty() ? " [normal]" : "",
-            !matInfo.roughnessPath.empty() ? " [roughness]" : "",
-            !matInfo.metallicPath.empty() ? " [metallic]" : "",
-            !matInfo.heightPath.empty() ? " [height]" : "",
-            skippedCount > 0 ? " (some textures already existed)" : "");
-    }
-    
-    return true;
+    return false;
 }
 
 int TextureProcessor::ProcessAllTrackedMaterials() {
@@ -4631,18 +3588,9 @@ void TextureProcessor::WriteUSDAIfNeeded() {
 }
 
 // Helper to convert absolute path to relative path from mod directory
+// Delegate to USDA module for relative path calculation
 static std::string GetRelativeTexturePath(const std::string& absolutePath, const std::string& outputDir) {
-    // We want a path relative to the mod directory like "./textures/HASH_type.dds"
-    size_t texturesPos = absolutePath.find("textures");
-    if (texturesPos != std::string::npos) {
-        return "./" + absolutePath.substr(texturesPos);
-    }
-    // Fallback: just use filename
-    size_t lastSlash = absolutePath.find_last_of("/\\");
-    if (lastSlash != std::string::npos) {
-        return "./textures/" + absolutePath.substr(lastSlash + 1);
-    }
-    return absolutePath;
+    return USDA::GetRelativeTexturePath(absolutePath, outputDir);
 }
 
 bool TextureProcessor::WriteModUSDA() {
@@ -4650,54 +3598,15 @@ bool TextureProcessor::WriteModUSDA() {
         return false;
     }
     
-    // Get the mod directory (parent of textures directory)
-    std::string modDir = m_outputDirectory;
-    size_t texturesPos = modDir.find("textures");
-    if (texturesPos != std::string::npos && texturesPos > 0) {
-        modDir = modDir.substr(0, texturesPos);
-        // Remove trailing slash
-        while (!modDir.empty() && (modDir.back() == '/' || modDir.back() == '\\')) {
-            modDir.pop_back();
-        }
-    }
+    // Get the mod directory using USDA module utility
+    std::string modDir = USDA::GetModDirectory(m_outputDirectory);
     
-    // Track which hashes are already in the existing USDA
+    // Check existing materials and count new ones
     std::unordered_set<uint64_t> existingHashes;
-    std::string materialsUsdaPath = modDir + "/materials.usda";
-    
-    // Read existing materials.usda to find which hashes are already defined
-    std::ifstream existingFile(materialsUsdaPath);
-    if (existingFile.is_open()) {
-        std::string line;
-        while (std::getline(existingFile, line)) {
-            // Look for lines like: over "mat_HASH"
-            size_t matPos = line.find("over \"mat_");
-            if (matPos != std::string::npos) {
-                size_t hashStart = matPos + 10; // Length of 'over "mat_'
-                size_t hashEnd = line.find("\"", hashStart);
-                if (hashEnd != std::string::npos) {
-                    std::string hashStr = line.substr(hashStart, hashEnd - hashStart);
-                    uint64_t hash = 0;
-                    if (sscanf(hashStr.c_str(), "%llX", (unsigned long long*)&hash) == 1) {
-                        existingHashes.insert(hash);
-                    }
-                }
-            }
-        }
-        existingFile.close();
-        
-        if (m_debugOutput && !existingHashes.empty()) {
-            Msg("[LegacyTextureProcessor] Found %d existing material entries in USDA\n", (int)existingHashes.size());
-        }
-    }
-    
-    // Count how many new materials we'll be adding
     int newMaterialCount = 0;
-    for (const auto& pair : m_processedMaterialInfo) {
-        if (existingHashes.find(pair.first) == existingHashes.end()) {
-            newMaterialCount++;
-        }
-    }
+    std::string materialsUsdaPath = modDir + "/materials.usda";
+    USDA::CheckExistingMaterials(materialsUsdaPath, m_processedMaterialInfo, 
+                                  existingHashes, newMaterialCount, m_debugOutput);
     
     // If no new materials to add and file exists, skip writing
     if (newMaterialCount == 0 && !existingHashes.empty()) {
@@ -4707,179 +3616,15 @@ bool TextureProcessor::WriteModUSDA() {
         return true;
     }
     
-    // Write mod.usda (always write this as it's small)
-    std::string modUsdaPath = modDir + "/mod.usda";
-    std::ofstream modUsda(modUsdaPath);
-    if (!modUsda.is_open()) {
-        Warning("[LegacyTextureProcessor] Failed to create mod.usda at %s\n", modUsdaPath.c_str());
+    // Write mod.usda using USDA module
+    if (!USDA::WriteModUSDAFile(modDir)) {
         return false;
     }
     
-    // Write USDA header
-    modUsda << "#usda 1.0\n";
-    modUsda << "(\n";
-    modUsda << "    customLayerData = {\n";
-    modUsda << "        string lightspeed_game_name = \"Garry's Mod (x64)\"\n";
-    modUsda << "        string lightspeed_layer_type = \"replacement\"\n";
-    modUsda << "    }\n";
-    modUsda << "    metersPerUnit = 0.01\n";
-    modUsda << "    subLayers = [\n";
-    modUsda << "        @./materials.usda@\n";
-    modUsda << "    ]\n";
-    modUsda << "    timeCodesPerSecond = 24\n";
-    modUsda << "    upAxis = \"Z\"\n";
-    modUsda << ")\n\n";
-    modUsda.close();
-    
-    // Write materials.usda with all material definitions (including existing ones we're re-writing)
-    std::ofstream materialsUsda(materialsUsdaPath);
-    if (!materialsUsda.is_open()) {
-        Warning("[LegacyTextureProcessor] Failed to create materials.usda at %s\n", materialsUsdaPath.c_str());
+    // Write materials.usda using USDA module
+    if (!USDA::WriteMaterialsUSDAFile(modDir, m_outputDirectory, m_processedMaterialInfo, m_debugOutput)) {
         return false;
     }
-    
-    // Write USDA header for materials
-    materialsUsda << "#usda 1.0\n";
-    materialsUsda << "(\n";
-    materialsUsda << "    upAxis = \"Z\"\n";
-    materialsUsda << ")\n\n";
-    
-    // Write material overrides
-    materialsUsda << "over \"RootNode\"\n";
-    materialsUsda << "{\n";
-    materialsUsda << "    over \"Looks\"\n";
-    materialsUsda << "    {\n";
-    
-    for (const auto& pair : m_processedMaterialInfo) {
-        const ProcessedMaterialInfo& info = pair.second;
-        uint64_t hash = info.textureHash;
-        
-        // Write material override
-        // Format the hash as uppercase hex without leading zeros
-        char hashStr[32];
-        snprintf(hashStr, sizeof(hashStr), "%llX", (unsigned long long)hash);
-        
-        materialsUsda << "        over \"mat_" << hashStr << "\"\n";
-        materialsUsda << "        {\n";
-        materialsUsda << "            over \"Shader\"\n";
-        materialsUsda << "            {\n";
-        
-        if (info.isGlass) {
-            // Glass materials use AperturePBR_Translucent shader
-            materialsUsda << "                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@\n";
-            materialsUsda << "                uniform token info:mdl:sourceAsset:subIdentifier = \"AperturePBR_Translucent\"\n";
-            
-            // Glass-specific properties
-            materialsUsda << "                float inputs:ior_constant = " << info.ior << "\n";
-            materialsUsda << "                bool inputs:thin_walled = 1\n";  // Most game glass is thin-walled
-            
-            // Use roughness texture if available, otherwise use constant
-            // This allows frosted/textured glass to have varying roughness
-            if (!info.roughnessPath.empty()) {
-                std::string relPath = GetRelativeTexturePath(info.roughnessPath, m_outputDirectory);
-                materialsUsda << "                asset inputs:reflectionroughness_texture = @" << relPath << "@ (\n";
-                materialsUsda << "                    colorSpace = \"raw\"\n";
-                materialsUsda << "                )\n";
-            } else {
-                // Use calculated roughness (default for glass is lower)
-                // If no roughness info, use 0.05 for clear glass
-                float glassRoughness = (info.roughnessConstant >= 0.99f) ? 0.05f : info.roughnessConstant;
-                materialsUsda << "                float inputs:reflection_roughness_constant = " << glassRoughness << "\n";
-            }
-            
-            // Transmittance texture for colored/tinted glass
-            // For Refract shaders: use $refracttinttexture if present
-            // For non-Refract glass (like bottles): use base texture
-            // Note: We DON'T use baseTexture for Refract because the Lua fixer may have set it to normalmap
-            if (!info.transmittancePath.empty()) {
-                std::string relPath = GetRelativeTexturePath(info.transmittancePath, m_outputDirectory);
-                materialsUsda << "                asset inputs:transmittance_texture = @" << relPath << "@ (\n";
-                materialsUsda << "                    colorSpace = \"srgb\"\n";
-                materialsUsda << "                )\n";
-                // use_diffuse_layer controls whether the texture appears as a diffuse surface layer
-                // Enable for both Refract and non-Refract glass, but reduce opacity for Refract
-                materialsUsda << "                bool inputs:use_diffuse_layer = 1\n";
-                
-                // For Refract shaders: reduce diffuse opacity to prevent overly bright/contrasty look
-                if (info.isRefractShader) {
-                    materialsUsda << "                float inputs:diffuse_color_constant_opacity = 0.3\n";
-                }
-            }
-            
-            // Add normal map support for glass (for frosted/textured glass)
-            if (!info.normalPath.empty()) {
-                std::string relPath = GetRelativeTexturePath(info.normalPath, m_outputDirectory);
-                materialsUsda << "                int inputs:encoding = 0\n";  // 0 = octahedral
-                materialsUsda << "                asset inputs:normalmap_texture = @" << relPath << "@ (\n";
-                materialsUsda << "                    colorSpace = \"raw\"\n";
-                materialsUsda << "                )\n";
-            }
-        } else {
-            // Standard opaque materials use AperturePBR_Opaque shader
-            materialsUsda << "                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@\n";
-        
-            // Normal map encoding - octahedral for 2-channel textures
-            if (!info.normalPath.empty()) {
-                std::string relPath = GetRelativeTexturePath(info.normalPath, m_outputDirectory);
-                materialsUsda << "                int inputs:encoding = 0\n";  // 0 = octahedral
-                materialsUsda << "                asset inputs:normalmap_texture = @" << relPath << "@ (\n";
-                materialsUsda << "                    colorSpace = \"raw\"\n";
-                materialsUsda << "                )\n";
-            }
-            
-            // Roughness
-            if (!info.roughnessPath.empty()) {
-                std::string relPath = GetRelativeTexturePath(info.roughnessPath, m_outputDirectory);
-                materialsUsda << "                asset inputs:reflectionroughness_texture = @" << relPath << "@ (\n";
-                materialsUsda << "                    colorSpace = \"raw\"\n";
-                materialsUsda << "                )\n";
-            } else {
-                materialsUsda << "                float inputs:reflection_roughness_constant = " << info.roughnessConstant << "\n";
-            }
-            
-            // Metallic
-            if (!info.metallicPath.empty()) {
-                std::string relPath = GetRelativeTexturePath(info.metallicPath, m_outputDirectory);
-                materialsUsda << "                asset inputs:metallic_texture = @" << relPath << "@ (\n";
-                materialsUsda << "                    colorSpace = \"raw\"\n";
-                materialsUsda << "                )\n";
-            } else {
-                materialsUsda << "                float inputs:metallic_constant = " << info.metallicConstant << "\n";
-            }
-            
-            // Height/Displacement map
-            if (!info.heightPath.empty()) {
-                std::string relPath = GetRelativeTexturePath(info.heightPath, m_outputDirectory);
-                materialsUsda << "                asset inputs:height_texture = @" << relPath << "@ (\n";
-                materialsUsda << "                    colorSpace = \"raw\"\n";
-                materialsUsda << "                )\n";
-                // displace_in is the maximum displacement depth in meters
-                // Source Engine parallax map scale is typically small (0.01-0.05 range)
-                // Convert to a reasonable displacement value (multiply by a factor for game scale)
-                float displaceIn = info.heightScale * 0.5f;  // Scale factor for visual effect
-                materialsUsda << "                float inputs:displace_in = " << displaceIn << "\n";
-            }
-            
-            // Emissive/Self-illumination texture
-            if (!info.emissivePath.empty()) {
-                std::string relPath = GetRelativeTexturePath(info.emissivePath, m_outputDirectory);
-                materialsUsda << "                asset inputs:emissive_mask_texture = @" << relPath << "@ (\n";
-                materialsUsda << "                    colorSpace = \"srgb\"\n";
-                materialsUsda << "                )\n";
-                // Set emissive intensity
-                float emitIntensity = (info.emissionIntensity > 0.0f) ? info.emissionIntensity : 1.0f;
-                materialsUsda << "                float inputs:emissive_intensity = " << emitIntensity << "\n";
-            }
-        }
-        
-        materialsUsda << "            }\n";  // Close Shader
-        materialsUsda << "        }\n\n";  // Close material
-    }
-    
-    materialsUsda << "    }\n";  // Close Looks
-    materialsUsda << "}\n";  // Close RootNode
-    
-    materialsUsda.close();
     
     Msg("[LegacyTextureProcessor] Wrote mod.usda and materials.usda with %d materials (%d new) to %s\n", 
         (int)m_processedMaterialInfo.size(), newMaterialCount, modDir.c_str());
@@ -5054,6 +3799,7 @@ LUA_FUNCTION(LegacyTextureProcessor_InspectMaterial) {
     
     LUA->CreateTable();
     
+    // Basic info
     LUA->PushString(props.materialName.c_str());
     LUA->SetField(-2, "name");
     
@@ -5102,6 +3848,9 @@ LUA_FUNCTION(LegacyTextureProcessor_InspectMaterial) {
     LUA->PushBool(props.normalMapAlphaEnvMapMask);
     LUA->SetField(-2, "normalMapAlphaEnvMapMask");
     
+    LUA->PushBool(props.hasBaseAlphaEnvMapMask);
+    LUA->SetField(-2, "hasBaseAlphaEnvMapMask");
+    
     LUA->PushBool(props.isSelfIllum);
     LUA->SetField(-2, "isSelfIllum");
     
@@ -5123,6 +3872,204 @@ LUA_FUNCTION(LegacyTextureProcessor_InspectMaterial) {
     
     LUA->PushBool(props.hasBaseTextureBrightness);
     LUA->SetField(-2, "hasBaseTextureBrightness");
+    
+    // =========================================================================
+    // PBR Format Detection
+    // =========================================================================
+    
+    // Determine detected format
+    std::string detectedFormat = "Source Engine (Standard)";
+    if (props.isExoPBR) detectedFormat = "ExoPBR";
+    else if (props.isGPBR) detectedFormat = "GPBR (Strata)";
+    else if (props.isMWBPBR) detectedFormat = "MWB PBR Gen";
+    else if (props.isBFTPseudoPBR) detectedFormat = "PseudoPBR (BlueFlyTrap)";
+    
+    LUA->PushString(detectedFormat.c_str());
+    LUA->SetField(-2, "detectedFormat");
+    
+    // ExoPBR
+    LUA->PushBool(props.isExoPBR);
+    LUA->SetField(-2, "isExoPBR");
+    
+    LUA->PushString(props.armTexturePath.c_str());
+    LUA->SetField(-2, "armTexture");
+    
+    LUA->PushBool(props.hasARMTexture);
+    LUA->SetField(-2, "hasARMTexture");
+    
+    LUA->PushString(props.exoNormalPath.c_str());
+    LUA->SetField(-2, "exoNormal");
+    
+    LUA->PushBool(props.hasExoNormal);
+    LUA->SetField(-2, "hasExoNormal");
+    
+    LUA->PushString(props.emissionTexturePath.c_str());
+    LUA->SetField(-2, "emissionTexture");
+    
+    LUA->PushBool(props.hasEmissionTexture);
+    LUA->SetField(-2, "hasEmissionTexture");
+    
+    // GPBR (Strata)
+    LUA->PushBool(props.isGPBR);
+    LUA->SetField(-2, "isGPBR");
+    
+    LUA->PushString(props.mraoTexturePath.c_str());
+    LUA->SetField(-2, "mraoTexture");
+    
+    LUA->PushBool(props.hasMRAOTexture);
+    LUA->SetField(-2, "hasMRAOTexture");
+    
+    LUA->PushString(props.gpbrEmissionPath.c_str());
+    LUA->SetField(-2, "gpbrEmission");
+    
+    LUA->PushBool(props.hasGPBREmission);
+    LUA->SetField(-2, "hasGPBREmission");
+    
+    // BlueFlyTrap PseudoPBR
+    LUA->PushBool(props.isBFTPseudoPBR);
+    LUA->SetField(-2, "isBFTPseudoPBR");
+    
+    // MWB PBR Gen
+    LUA->PushBool(props.isMWBPBR);
+    LUA->SetField(-2, "isMWBPBR");
+    
+    LUA->PushBool(props.isBFTMetallicLayer);
+    LUA->SetField(-2, "isBFTMetallicLayer");
+    
+    LUA->PushBool(props.isBFTDiffuseLayer);
+    LUA->SetField(-2, "isBFTDiffuseLayer");
+    
+    LUA->PushString(props.bftExponentTexturePath.c_str());
+    LUA->SetField(-2, "bftExponentTexture");
+    
+    LUA->PushBool(props.hasBFTExponentTexture);
+    LUA->SetField(-2, "hasBFTExponentTexture");
+    
+    LUA->PushBool(props.hasBFTBlendTintByBaseAlpha);
+    LUA->SetField(-2, "hasBFTBlendTintByBaseAlpha");
+    
+    LUA->PushBool(props.hasBFTColor2);
+    LUA->SetField(-2, "hasBFTColor2");
+    
+    if (props.hasBFTColor2) {
+        LUA->CreateTable();
+        LUA->PushNumber(props.bftColor2[0]);
+        LUA->SetField(-2, "r");
+        LUA->PushNumber(props.bftColor2[1]);
+        LUA->SetField(-2, "g");
+        LUA->PushNumber(props.bftColor2[2]);
+        LUA->SetField(-2, "b");
+        LUA->SetField(-2, "bftColor2");
+    }
+    
+    // =========================================================================
+    // Auto-discovered textures
+    // =========================================================================
+    LUA->PushString(props.discoveredNormalPath.c_str());
+    LUA->SetField(-2, "discoveredNormal");
+    
+    LUA->PushBool(props.hasDiscoveredNormal);
+    LUA->SetField(-2, "hasDiscoveredNormal");
+    
+    LUA->PushString(props.discoveredHeightPath.c_str());
+    LUA->SetField(-2, "discoveredHeight");
+    
+    LUA->PushBool(props.hasDiscoveredHeight);
+    LUA->SetField(-2, "hasDiscoveredHeight");
+    
+    LUA->PushString(props.discoveredMaskPath.c_str());
+    LUA->SetField(-2, "discoveredMask");
+    
+    LUA->PushBool(props.hasDiscoveredMask);
+    LUA->SetField(-2, "hasDiscoveredMask");
+    
+    LUA->PushString(props.discoveredAOPath.c_str());
+    LUA->SetField(-2, "discoveredAO");
+    
+    LUA->PushBool(props.hasDiscoveredAO);
+    LUA->SetField(-2, "hasDiscoveredAO");
+    
+    // =========================================================================
+    // Envmap properties
+    // =========================================================================
+    LUA->PushBool(props.hasEnvMap);
+    LUA->SetField(-2, "hasEnvMap");
+    
+    LUA->PushBool(props.hasEnvMapTint);
+    LUA->SetField(-2, "hasEnvMapTint");
+    
+    if (props.hasEnvMapTint) {
+        LUA->CreateTable();
+        LUA->PushNumber(props.envMapTint[0]);
+        LUA->SetField(-2, "r");
+        LUA->PushNumber(props.envMapTint[1]);
+        LUA->SetField(-2, "g");
+        LUA->PushNumber(props.envMapTint[2]);
+        LUA->SetField(-2, "b");
+        LUA->SetField(-2, "envMapTint");
+    }
+    
+    LUA->PushNumber(props.envMapContrast);
+    LUA->SetField(-2, "envMapContrast");
+    
+    LUA->PushBool(props.hasEnvMapContrast);
+    LUA->SetField(-2, "hasEnvMapContrast");
+    
+    LUA->PushNumber(props.envMapSaturation);
+    LUA->SetField(-2, "envMapSaturation");
+    
+    LUA->PushBool(props.hasEnvMapSaturation);
+    LUA->SetField(-2, "hasEnvMapSaturation");
+    
+    // =========================================================================
+    // Phong fresnel
+    // =========================================================================
+    LUA->PushBool(props.hasPhongFresnelRanges);
+    LUA->SetField(-2, "hasPhongFresnelRanges");
+    
+    if (props.hasPhongFresnelRanges) {
+        LUA->CreateTable();
+        LUA->PushNumber(1);
+        LUA->PushNumber(props.phongFresnelRanges[0]);
+        LUA->SetTable(-3);
+        LUA->PushNumber(2);
+        LUA->PushNumber(props.phongFresnelRanges[1]);
+        LUA->SetTable(-3);
+        LUA->PushNumber(3);
+        LUA->PushNumber(props.phongFresnelRanges[2]);
+        LUA->SetTable(-3);
+        LUA->SetField(-2, "phongFresnelRanges");
+    }
+    
+    // =========================================================================
+    // Rim lighting
+    // =========================================================================
+    LUA->PushBool(props.hasRimLight);
+    LUA->SetField(-2, "hasRimLight");
+    
+    LUA->PushNumber(props.rimLightExponent);
+    LUA->SetField(-2, "rimLightExponent");
+    
+    LUA->PushNumber(props.rimLightBoost);
+    LUA->SetField(-2, "rimLightBoost");
+    
+    // =========================================================================
+    // Self-illum / Emissive
+    // =========================================================================
+    LUA->PushString(props.selfIllumMaskPath.c_str());
+    LUA->SetField(-2, "selfIllumMask");
+    
+    LUA->PushBool(props.hasSelfIllumMask);
+    LUA->SetField(-2, "hasSelfIllumMask");
+    
+    // =========================================================================
+    // Parallax
+    // =========================================================================
+    LUA->PushString(props.parallaxMapPath.c_str());
+    LUA->SetField(-2, "parallaxMap");
+    
+    LUA->PushBool(props.hasParallaxMap);
+    LUA->SetField(-2, "hasParallaxMap");
     
     return 1;
 }

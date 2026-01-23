@@ -130,6 +130,44 @@ function RTXToPBR.ProcessAllMaterials()
 end
 
 --[[
+    Get material from what the player is looking at (trace)
+]]--
+function RTXToPBR.GetMaterialFromTrace()
+    local ply = LocalPlayer()
+    if not IsValid(ply) then return nil, nil end
+    
+    local tr = ply:GetEyeTrace()
+    if not tr.Hit then return nil, nil end
+    
+    -- Try to get material from entity first (models)
+    if IsValid(tr.Entity) and tr.Entity:GetClass() ~= "worldspawn" then
+        local ent = tr.Entity
+        local materials = ent:GetMaterials()
+        if materials and #materials > 0 then
+            -- Return first material and entity info
+            return materials[1], {
+                type = "entity",
+                entity = ent,
+                class = ent:GetClass(),
+                model = ent:GetModel(),
+                allMaterials = materials
+            }
+        end
+    end
+    
+    -- Fall back to brush/world material
+    if tr.HitTexture and tr.HitTexture ~= "" and tr.HitTexture ~= "**empty**" then
+        return tr.HitTexture, {
+            type = "brush",
+            hitPos = tr.HitPos,
+            hitNormal = tr.HitNormal
+        }
+    end
+    
+    return nil, nil
+end
+
+--[[
     Inspect a specific material's PBR properties
 ]]--
 function RTXToPBR.InspectMaterial(materialName)
@@ -146,14 +184,34 @@ function RTXToPBR.InspectMaterial(materialName)
     local props = processor.InspectMaterial(materialName)
     
     MsgC(Color(100, 200, 255), string.format("\n[RTX ToPBR] Material: %s\n", materialName))
-    MsgC(Color(100, 200, 255), string.rep("=", 60) .. "\n")
+    MsgC(Color(100, 200, 255), string.rep("=", 70) .. "\n")
     
     if not props then
         MsgC(Color(255, 100, 100), "  Failed to load material\n")
         return nil
     end
     
-    -- Base texture
+    -- =========================================================================
+    -- Detected Format (most important info first!)
+    -- =========================================================================
+    local formatColor = Color(200, 200, 200)
+    local formatStr = props.detectedFormat or "Source Engine (Standard)"
+    
+    if props.isExoPBR then
+        formatColor = Color(100, 255, 200)
+    elseif props.isGPBR then
+        formatColor = Color(200, 100, 255)
+    elseif props.isBFTPseudoPBR then
+        formatColor = Color(255, 200, 100)
+    end
+    
+    MsgC(formatColor, string.format("  ★ Detected Format: %s\n", formatStr))
+    MsgC(Color(150, 150, 150), string.format("  Shader: %s\n", props.shaderName or "(unknown)"))
+    
+    -- =========================================================================
+    -- Base Textures
+    -- =========================================================================
+    MsgC(Color(100, 200, 255), "\n  --- Textures ---\n")
     MsgC(Color(200, 200, 200), string.format("  Base Texture: %s\n", props.baseTexture or "(none)"))
     
     -- Bumpmap/Normal
@@ -167,49 +225,194 @@ function RTXToPBR.InspectMaterial(materialName)
         MsgC(Color(255, 200, 100), "  ✗ Bumpmap: (none)\n")
     end
     
-    -- Phong/Roughness
-    if props.hasPhong then
-        MsgC(Color(100, 255, 100), string.format("  ✓ Phong Exponent: %.1f\n", props.phongExponent))
-        MsgC(Color(150, 150, 150), string.format("    → Calculated Roughness: %.2f\n", props.roughness))
-    else
-        MsgC(Color(255, 200, 100), "  ✗ Phong Exponent: (none) → Default Roughness: 0.50\n")
-    end
-    
-    if props.phongBoost and props.phongBoost > 0 then
-        MsgC(Color(200, 200, 200), string.format("  Phong Boost: %.2f\n", props.phongBoost))
+    -- Phong exponent texture
+    if props.hasPhongExponentTexture then
+        MsgC(Color(100, 255, 100), string.format("  ✓ Phong Exponent Texture: %s\n", props.phongExponentTexture))
     end
     
     -- Envmap mask
     if props.hasEnvMapMask then
         MsgC(Color(100, 255, 100), string.format("  ✓ Envmap Mask: %s\n", props.envMapMask))
-        MsgC(Color(150, 150, 150), string.format("    → Metallic hint: %.2f\n", props.metallic))
-    else
-        MsgC(Color(255, 200, 100), "  ✗ Envmap Mask: (none)\n")
     end
     
-    -- Calculated values
-    MsgC(Color(100, 200, 255), "  --- Calculated PBR Values ---\n")
-    MsgC(Color(200, 200, 200), string.format("  Roughness: %.2f\n", props.roughness))
-    MsgC(Color(200, 200, 200), string.format("  Metallic: %.2f\n", props.metallic))
+    -- =========================================================================
+    -- Format-specific info
+    -- =========================================================================
+    if props.isExoPBR then
+        MsgC(Color(100, 255, 200), "\n  --- ExoPBR Format ---\n")
+        if props.hasARMTexture then
+            MsgC(Color(100, 255, 100), string.format("  ✓ ARM Texture: %s\n", props.armTexture))
+        end
+        if props.hasExoNormal then
+            MsgC(Color(100, 255, 100), string.format("  ✓ ExoPBR Normal: %s\n", props.exoNormal))
+        end
+        if props.hasEmissionTexture then
+            MsgC(Color(100, 255, 100), string.format("  ✓ Emission: %s\n", props.emissionTexture))
+        end
+    end
     
-    -- Flags
-    if props.isSelfIllum then
-        MsgC(Color(255, 200, 100), "  ! Self-illuminated (emissive)\n")
+    if props.isGPBR then
+        MsgC(Color(200, 100, 255), "\n  --- GPBR (Strata) Format ---\n")
+        if props.hasMRAOTexture then
+            MsgC(Color(100, 255, 100), string.format("  ✓ MRAO Texture: %s\n", props.mraoTexture))
+        end
+        if props.hasGPBREmission then
+            MsgC(Color(100, 255, 100), string.format("  ✓ Emission: %s\n", props.gpbrEmission))
+        end
     end
-    if props.isTranslucent then
-        MsgC(Color(255, 200, 100), "  ! Translucent material\n")
+    
+    if props.isBFTPseudoPBR then
+        MsgC(Color(255, 200, 100), "\n  --- PseudoPBR (BlueFlyTrap/MWB) ---\n")
+        if props.hasBFTExponentTexture then
+            MsgC(Color(100, 255, 100), string.format("  ✓ Exponent Texture (roughness): %s\n", props.bftExponentTexture))
+        end
+        if props.isBFTMetallicLayer then
+            MsgC(Color(255, 200, 100), "  ! Metallic Layer ($translucent + $phongalbedotint)\n")
+        end
+        if props.isBFTDiffuseLayer then
+            MsgC(Color(255, 200, 100), "  ! Diffuse Layer (uses $blendTintByBaseAlpha)\n")
+        end
+        if props.hasBFTBlendTintByBaseAlpha then
+            MsgC(Color(255, 150, 100), "  ! $blendTintByBaseAlpha detected (alpha = metallic mask)\n")
+        end
+        if props.hasBFTColor2 and props.bftColor2 then
+            MsgC(Color(200, 200, 200), string.format("  $color2: [%.2f %.2f %.2f]\n", 
+                props.bftColor2.r or 0, props.bftColor2.g or 0, props.bftColor2.b or 0))
+        end
     end
-    if props.isGlass then
-        MsgC(Color(100, 200, 255), "  ✓ GLASS MATERIAL (will use RTX Translucent shader with IOR 1.5)\n")
+    
+    -- =========================================================================
+    -- Auto-discovered textures
+    -- =========================================================================
+    local hasDiscovered = props.hasDiscoveredNormal or props.hasDiscoveredHeight or 
+                          props.hasDiscoveredMask or props.hasDiscoveredAO
+    if hasDiscovered then
+        MsgC(Color(100, 200, 255), "\n  --- Auto-Discovered Textures ---\n")
+        if props.hasDiscoveredNormal then
+            MsgC(Color(100, 255, 100), string.format("  ✓ Normal: %s\n", props.discoveredNormal))
+        end
+        if props.hasDiscoveredHeight then
+            MsgC(Color(100, 255, 100), string.format("  ✓ Height: %s\n", props.discoveredHeight))
+        end
+        if props.hasDiscoveredMask then
+            MsgC(Color(100, 255, 100), string.format("  ✓ Mask/Spec: %s\n", props.discoveredMask))
+        end
+        if props.hasDiscoveredAO then
+            MsgC(Color(100, 255, 100), string.format("  ✓ AO: %s\n", props.discoveredAO))
+        end
     end
-    if props.shaderName and props.shaderName ~= "" then
-        MsgC(Color(150, 150, 150), string.format("  Shader: %s\n", props.shaderName))
+    
+    -- =========================================================================
+    -- Roughness Sources
+    -- =========================================================================
+    MsgC(Color(100, 200, 255), "\n  --- Roughness Sources ---\n")
+    local roughnessSource = "Default (0.5)"
+    
+    if props.hasPhongExponentTexture then
+        roughnessSource = "Phong Exponent Texture (best)"
+    elseif props.normalMapAlphaEnvMapMask and props.hasBumpMap then
+        roughnessSource = "Normal Map Alpha ($normalmapalphaenvmapmask)"
+    elseif props.hasBaseAlphaEnvMapMask then
+        roughnessSource = "Base Texture Alpha ($basealphaenvmapmask)"
+    elseif props.hasBaseMapAlphaPhongMask then
+        roughnessSource = "Base Texture Alpha ($basemapalphaphongmask)"
+    elseif props.hasEnvMapMask then
+        roughnessSource = "Envmap Mask Texture"
+    elseif props.hasDiscoveredMask then
+        roughnessSource = "Auto-discovered Mask/Spec"
+    elseif props.hasPhong then
+        roughnessSource = string.format("Phong Exponent (%.1f)", props.phongExponent or 0)
     end
+    
+    MsgC(Color(200, 200, 200), string.format("  Source: %s\n", roughnessSource))
+    
+    -- =========================================================================
+    -- Calculated PBR Values
+    -- =========================================================================
+    MsgC(Color(100, 200, 255), "\n  --- Calculated PBR Values ---\n")
+    MsgC(Color(200, 200, 200), string.format("  Roughness: %.2f\n", props.roughness or 0.5))
+    MsgC(Color(200, 200, 200), string.format("  Metallic: %.2f\n", props.metallic or 0))
+    
+    if props.hasBaseTextureBrightness then
+        MsgC(Color(150, 150, 150), string.format("  Base Texture Brightness: %.2f\n", props.baseTextureBrightness or 0))
+    end
+    
+    -- =========================================================================
+    -- Envmap Properties
+    -- =========================================================================
+    if props.hasEnvMap or props.hasEnvMapTint then
+        MsgC(Color(100, 200, 255), "\n  --- Environment Map ---\n")
+        if props.hasEnvMap then
+            MsgC(Color(100, 255, 100), "  ✓ Has Envmap\n")
+        end
+        if props.hasEnvMapTint and props.envMapTint then
+            MsgC(Color(200, 200, 200), string.format("  $envmaptint: [%.2f %.2f %.2f]\n", 
+                props.envMapTint.r or 0, props.envMapTint.g or 0, props.envMapTint.b or 0))
+        end
+        if props.hasEnvMapContrast then
+            MsgC(Color(200, 200, 200), string.format("  $envmapcontrast: %.2f\n", props.envMapContrast or 1))
+        end
+        if props.hasEnvMapSaturation then
+            MsgC(Color(200, 200, 200), string.format("  $envmapsaturation: %.2f\n", props.envMapSaturation or 1))
+        end
+    end
+    
+    -- =========================================================================
+    -- Phong Properties
+    -- =========================================================================
+    if props.hasPhong or props.hasPhongFresnelRanges or props.hasRimLight then
+        MsgC(Color(100, 200, 255), "\n  --- Phong/Specular ---\n")
+        if props.hasPhong then
+            MsgC(Color(200, 200, 200), string.format("  Exponent: %.1f\n", props.phongExponent or 0))
+        end
+        if props.phongBoost and props.phongBoost > 0 then
+            MsgC(Color(200, 200, 200), string.format("  Boost: %.2f\n", props.phongBoost))
+        end
+        if props.hasPhongFresnelRanges and props.phongFresnelRanges then
+            MsgC(Color(200, 200, 200), string.format("  Fresnel: [%.2f %.2f %.2f]\n", 
+                props.phongFresnelRanges[1] or 0, props.phongFresnelRanges[2] or 0, props.phongFresnelRanges[3] or 0))
+        end
+        if props.hasRimLight then
+            MsgC(Color(200, 200, 200), string.format("  Rim Light: exp=%.1f boost=%.2f\n", 
+                props.rimLightExponent or 0, props.rimLightBoost or 0))
+        end
+    end
+    
+    -- =========================================================================
+    -- Material Flags
+    -- =========================================================================
+    local hasFlags = props.isSelfIllum or props.isTranslucent or props.isGlass
+    if hasFlags then
+        MsgC(Color(100, 200, 255), "\n  --- Flags ---\n")
+        if props.isSelfIllum then
+            MsgC(Color(255, 200, 100), "  ! Self-illuminated (emissive)\n")
+            if props.hasSelfIllumMask then
+                MsgC(Color(150, 150, 150), string.format("    Mask: %s\n", props.selfIllumMask))
+            end
+        end
+        if props.isTranslucent then
+            MsgC(Color(255, 200, 100), "  ! Translucent material\n")
+        end
+        if props.isGlass then
+            MsgC(Color(100, 200, 255), "  ✓ GLASS MATERIAL (RTX Translucent shader, IOR 1.5)\n")
+        end
+    end
+    
+    -- =========================================================================
+    -- Surface Properties
+    -- =========================================================================
     if props.surfaceProp and props.surfaceProp ~= "" then
+        MsgC(Color(100, 200, 255), "\n  --- Surface ---\n")
         MsgC(Color(150, 150, 150), string.format("  Surface Prop: %s\n", props.surfaceProp))
     end
     
-    MsgC(Color(100, 200, 255), string.rep("=", 60) .. "\n\n")
+    -- Parallax
+    if props.hasParallaxMap then
+        MsgC(Color(100, 200, 255), "\n  --- Parallax ---\n")
+        MsgC(Color(100, 255, 100), string.format("  ✓ Parallax Map: %s\n", props.parallaxMap))
+    end
+    
+    MsgC(Color(100, 200, 255), string.rep("=", 70) .. "\n\n")
     
     return props
 end
@@ -259,14 +462,41 @@ concommand.Add("rtx_topbr_process", function()
 end, nil, "Process all tracked materials for PBR conversion")
 
 concommand.Add("rtx_topbr_inspect", function(ply, cmd, args)
-    if not args[1] then
-        MsgC(Color(255, 200, 100), "Usage: rtx_topbr_inspect <material_name>\n")
-        MsgC(Color(255, 200, 100), "Example: rtx_topbr_inspect concrete/concretefloor001a\n")
-        return
+    if not args[1] or args[1] == "" then
+        -- No material specified - try to get from what player is looking at
+        local matName, traceInfo = RTXToPBR.GetMaterialFromTrace()
+        
+        if not matName then
+            MsgC(Color(255, 200, 100), "Usage: rtx_topbr_inspect [material_name]\n")
+            MsgC(Color(255, 200, 100), "  If no material specified, looks at what you're aiming at.\n")
+            MsgC(Color(255, 200, 100), "Example: rtx_topbr_inspect concrete/concretefloor001a\n")
+            return
+        end
+        
+        -- Show trace info
+        if traceInfo then
+            if traceInfo.type == "entity" then
+                MsgC(Color(100, 200, 255), string.format("[RTX ToPBR] Looking at entity: %s\n", traceInfo.class or "unknown"))
+                if traceInfo.model then
+                    MsgC(Color(150, 150, 150), string.format("  Model: %s\n", traceInfo.model))
+                end
+                if traceInfo.allMaterials and #traceInfo.allMaterials > 1 then
+                    MsgC(Color(150, 150, 150), string.format("  Entity has %d materials. Showing first one.\n", #traceInfo.allMaterials))
+                    MsgC(Color(150, 150, 150), "  All materials:\n")
+                    for i, mat in ipairs(traceInfo.allMaterials) do
+                        MsgC(Color(120, 120, 120), string.format("    [%d] %s\n", i, mat))
+                    end
+                end
+            elseif traceInfo.type == "brush" then
+                MsgC(Color(100, 200, 255), "[RTX ToPBR] Looking at brush/world surface\n")
+            end
+        end
+        
+        RTXToPBR.InspectMaterial(matName)
+    else
+        RTXToPBR.InspectMaterial(args[1])
     end
-    
-    RTXToPBR.InspectMaterial(args[1])
-end, nil, "Inspect a material's PBR properties")
+end, nil, "Inspect a material's PBR properties. If no material specified, inspects what you're looking at.")
 
 concommand.Add("rtx_topbr_stats", function()
     local stats = RTXToPBR.GetStats()
@@ -313,7 +543,7 @@ end, nil, "Enable/disable auto-discovery of companion textures (_normal, _mask, 
 
 concommand.Add("rtx_topbr_help", function()
     MsgC(Color(100, 200, 255), "\n[RTX ToPBR] Runtime PBR Material Converter\n")
-    MsgC(Color(100, 200, 255), string.rep("=", 60) .. "\n")
+    MsgC(Color(100, 200, 255), string.rep("=", 70) .. "\n")
     MsgC(Color(255, 255, 255), [[
 This module automatically converts Source Engine materials to PBR
 materials in RTX Remix at runtime.
@@ -324,17 +554,24 @@ It uses C++ code to:
 - Upload textures via Remix API
 - Create PBR materials with calculated roughness/metallic
 
+SUPPORTED PBR FORMATS:
+- ExoPBR (screenspace_general_8tex shader with ARM textures)
+- GPBR/Strata ("PBR" shader with MRAO textures)
+- PseudoPBR (BlueFlyTrap/MWB phong-based PBR encoding)
+- Standard Source Engine materials (phong, envmap, etc.)
+
 Commands:
-  rtx_topbr_process    - Process all tracked materials now
-  rtx_topbr_inspect    - Inspect a specific material
-  rtx_topbr_stats      - Show conversion statistics
-  rtx_topbr_clear      - Clear conversion cache
-  rtx_topbr_debug 1/0  - Enable/disable debug output
-  rtx_topbr_metallic 1/0 - Enable/disable experimental metallic
-                          generation (WARNING: may cause black materials)
-  rtx_topbr_autodiscover 1/0 - Enable/disable auto-discovery of 
-                          companion textures (_normal, _mask, _spec)
-  rtx_topbr_help       - Show this help
+  rtx_topbr_inspect [material] - Inspect material's PBR properties
+                                 (no argument = look at what you're aiming at)
+  rtx_topbr_process           - Process all tracked materials now
+  rtx_topbr_stats             - Show conversion statistics
+  rtx_topbr_clear             - Clear conversion cache
+  rtx_topbr_debug 1/0         - Enable/disable debug output
+  rtx_topbr_metallic 1/0      - Enable/disable experimental metallic
+                                (WARNING: may cause black materials)
+  rtx_topbr_autodiscover 1/0  - Enable/disable auto-discovery of 
+                                companion textures (_normal, _mask, _spec)
+  rtx_topbr_help              - Show this help
 
 ConVars:
   rtx_topbr_enabled    - Enable/disable conversion (default: 1)
