@@ -22,16 +22,32 @@ std::string VMTParseResult::findValue(const std::string& key) const {
     size_t pos = contentLower.find(keyLower);
     if (pos == std::string::npos) return "";
     
-    // Find the value after the key
-    pos = content.find_first_of("\"'", pos + key.length());
-    if (pos == std::string::npos) return "";
+    // Move past the key
+    pos += key.length();
     
-    char quote = content[pos];
-    size_t start = pos + 1;
-    size_t end = content.find(quote, start);
-    if (end == std::string::npos) return "";
+    // Skip any whitespace and closing quote of the key (if key was quoted)
+    while (pos < content.length() && (content[pos] == ' ' || content[pos] == '\t' || content[pos] == '"' || content[pos] == '\'')) {
+        pos++;
+    }
     
-    return content.substr(start, end - start);
+    // Now we should be at the start of the value
+    // Check if value is quoted
+    if (pos < content.length() && (content[pos] == '"' || content[pos] == '\'')) {
+        // Quoted value
+        char quote = content[pos];
+        size_t start = pos + 1;
+        size_t end = content.find(quote, start);
+        if (end == std::string::npos) return "";
+        return content.substr(start, end - start);
+    } else {
+        // Unquoted value - read until whitespace or newline
+        size_t start = pos;
+        while (pos < content.length() && content[pos] != ' ' && content[pos] != '\t' && 
+               content[pos] != '\r' && content[pos] != '\n' && content[pos] != '"' && content[pos] != '\'') {
+            pos++;
+        }
+        return content.substr(start, pos - start);
+    }
 }
 
 // =========================================================================
