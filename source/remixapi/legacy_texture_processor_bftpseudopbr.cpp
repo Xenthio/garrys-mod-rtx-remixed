@@ -262,13 +262,14 @@ void ExtractProperties(const VMTParseResult& vmt, MaterialPBRProperties& props) 
 // =========================================================================
 // BFT Roughness Decoding from Exponent Texture
 // =========================================================================
-// BlueFlyTrap uses SIMPLE LINEAR encoding for roughness:
-//   - Exponent red channel stores inverted roughness (255 = smooth, 0 = rough)
-//   - No pow() transformation is applied
+// BlueFlyTrap encoding for roughness:
+//   - BFT encodes gloss using a levels adjustment with middle point around 0.24
+//   - Exponent red channel stores encoded gloss value (255 = smooth, 0 = rough)
 //
 // To decode back to roughness:
 //   1. Normalize: value / 255.0
-//   2. Invert: roughness = 1.0 - normalized
+//   2. Apply inverse gamma: pow(normalized, 0.24)
+//   3. Invert to get roughness: 1.0 - gloss
 //
 // NOTE: This is DIFFERENT from MWB PBR Gen which uses pow(gloss, 4.0) encoding.
 // MWB materials are handled by MWBPBR::ProcessTextures() instead.
@@ -278,9 +279,10 @@ static float ExponentToRoughness(uint8_t expValue) {
     // Normalize to 0-1 range
     float normalized = static_cast<float>(expValue) / 255.0f;
     
-    // BFT uses simple linear inversion (no pow() transform)
-    // High exponent value = smooth/glossy = low roughness
-    float roughness = 1.0f - normalized;
+    // BFT encoding: gloss -> levels(middle=0.24) -> texture
+    // Reverse: normalize -> pow(0.24) -> invert
+    float gloss = std::pow(normalized, 0.24f);
+    float roughness = 1.0f - gloss;
     
     // Clamp to valid PBR range
     if (roughness < 0.04f) roughness = 0.04f;
