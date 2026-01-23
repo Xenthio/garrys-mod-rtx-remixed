@@ -208,12 +208,9 @@ bool Detect(const VMTParseResult& vmt) {
     std::string normAlphaEnvMask = vmt.findValue("$normalmapalphaenvmapmask");
     if (!normAlphaEnvMask.empty() && atoi(normAlphaEnvMask.c_str()) == 1) {
         // Only count this as a marker if we also have the _e exponent texture
-        if (!expTex.empty()) {
-            std::string expTexLower = expTex;
-            std::transform(expTexLower.begin(), expTexLower.end(), expTexLower.begin(), ::tolower);
-            if (expTexLower.length() >= 2 && expTexLower.substr(expTexLower.length() - 2) == "_e") {
-                hasMarker = true;
-            }
+        // Note: expLower was already computed earlier in this function
+        if (expLower.length() >= 2 && expLower.substr(expLower.length() - 2) == "_e") {
+            hasMarker = true;
         }
     }
     
