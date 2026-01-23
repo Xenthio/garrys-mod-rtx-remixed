@@ -21,13 +21,17 @@
 //   - $normalmapalphaenvmapmask "1" with *_e exponent texture
 //   - Characteristic $phongfresnelranges patterns
 //
-// Roughness encoding in $phongexponenttexture:
-//   Original: gloss -> levels(middle=0.24) -> red channel
-//   Reverse: roughness = 1.0 - pow(value/255, 0.24)
+// MWB PBR Gen Texture Encoding (from MaterialManipulation.cs):
+//   Albedo (_rgb): Original albedo + metalness in alpha channel
+//   Exponent (_e):
+//     - Red: pow(inverted_roughness, 4.0) * metalness_lerp
+//     - Green: Direct metalness value
+//     - Alpha: Roughness for rimlight
+//   Normal (_n): Normal map + pow(roughness, 2.5) in alpha
 //
-// Metallic detection:
-//   Metallic layer has $translucent "1" + $phongalbedotint "1"
-//   OR $blendTintByBaseAlpha "1" + $color2 "[0 0 0]" (alpha = metallic mask)
+// Decoding (Source → PBR):
+//   Roughness: pow(exponent_red / 255, 0.25) then invert (1 - value)
+//   Metallic: From albedo alpha OR exponent green channel
 // =========================================================================
 
 #ifdef _WIN64
@@ -296,12 +300,32 @@ void ExtractProperties(const VMTParseResult& vmt, MaterialPBRProperties& props) 
 // Texture Processing
 // =========================================================================
 
-// Convert BFT exponent value to roughness
+// =========================================================================
+// Roughness Decoding from Exponent Texture
+// =========================================================================
+// MWB PBR Gen encoding (from MaterialManipulation.cs):
+//   1. Original roughness is INVERTED first to get gloss
+//   2. Then pow(gloss, 4.0) is applied before storing in red channel
+//   3. Additional metalness lerp may affect the value
+//
+// To decode back to roughness:
+//   1. Normalize: value / 255.0
+//   2. Reverse the pow(4.0): pow(normalized, 1/4.0) = pow(normalized, 0.25)
+//   3. Invert to convert gloss back to roughness: roughness = 1.0 - gloss
+//
+// Note: MWB also stores metalness in the GREEN channel of the exponent texture.
+// This provides an alternative/verification source for metallic information.
+// =========================================================================
+
 static float ExponentToRoughness(uint8_t expValue) {
-    // BFT encoding: gloss -> levels(middle=0.24) -> texture
-    // Reverse: normalize -> pow(0.24) -> invert
+    // Normalize to 0-1 range
     float normalized = static_cast<float>(expValue) / 255.0f;
-    float gloss = std::pow(normalized, 0.24f);
+    
+    // Reverse the pow(4.0) transformation used during encoding
+    // pow(gloss, 4.0) was applied, so we use pow(value, 0.25) = 4th root
+    float gloss = std::pow(normalized, 0.25f);
+    
+    // Convert gloss to roughness (MWB inverted roughness before encoding)
     float roughness = 1.0f - gloss;
     
     // Clamp to valid PBR range
@@ -309,6 +333,13 @@ static float ExponentToRoughness(uint8_t expValue) {
     if (roughness > 1.0f) roughness = 1.0f;
     
     return roughness;
+}
+
+// Extract metalness from exponent texture green channel
+// MWB stores metalness directly in the green channel
+static uint8_t ExponentGreenToMetallic(uint8_t greenValue) {
+    // Green channel is direct metalness value from MWB encoding
+    return greenValue;
 }
 
 // =========================================================================
@@ -630,7 +661,18 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
         }
     }
     
-    // Process $phongexponenttexture to extract roughness
+    // =========================================================================
+    // EXPONENT TEXTURE PROCESSING
+    // =========================================================================
+    // MWB PBR Gen encodes multiple channels in the exponent texture:
+    //   - Red channel: Encoded roughness (pow(gloss, 4.0))
+    //   - Green channel: Metalness (direct value)
+    //   - Alpha channel: Roughness for rimlight
+    //
+    // We extract:
+    //   1. Roughness from red channel (reversed with pow(value, 0.25))
+    //   2. Metallic from green channel (if not already extracted from base alpha)
+    // =========================================================================
     if (props.hasBFTExponentTexture && !props.bftExponentTexturePath.empty()) {
         std::vector<uint8_t> fileData;
         if (ctx.readVTFFile(props.bftExponentTexturePath, fileData)) {
@@ -640,17 +682,21 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
                 expTex.isNormalMap = false;
                 
                 if (ctx.extractPixelData(fileData, header, expTex, false)) {
-                    // Convert exponent texture to roughness
+                    uint32_t totalPixels = expTex.width * expTex.height;
+                    
+                    // =============================================================
+                    // Extract ROUGHNESS from red channel
+                    // =============================================================
                     ConvertedTexture roughTex;
                     roughTex.width = expTex.width;
                     roughTex.height = expTex.height;
                     roughTex.mipLevels = 1;
                     roughTex.format = REMIXAPI_FORMAT_R8G8B8A8_UNORM;
                     roughTex.isNormalMap = false;
-                    roughTex.pixelData.resize(expTex.width * expTex.height * 4);
+                    roughTex.pixelData.resize(totalPixels * 4);
                     
-                    for (uint32_t i = 0; i < expTex.width * expTex.height; i++) {
-                        // Red channel contains the encoded gloss
+                    for (uint32_t i = 0; i < totalPixels; i++) {
+                        // Red channel contains the encoded gloss (pow(gloss, 4.0))
                         uint8_t expValue = expTex.pixelData[i * 4 + 0];
                         float roughness = ExponentToRoughness(expValue);
                         uint8_t roughByte = static_cast<uint8_t>(roughness * 255.0f);
@@ -661,16 +707,68 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
                         roughTex.pixelData[i * 4 + 3] = 255;
                     }
                     
-                    uint64_t hash = ctx.generateHash(props.bftExponentTexturePath + "_rough", roughTex.width, roughTex.height);
-                    std::string path = ctx.generateOutputPath(hash, "_roughness");
+                    uint64_t roughHash = ctx.generateHash(props.bftExponentTexturePath + "_rough", roughTex.width, roughTex.height);
+                    std::string roughPath = ctx.generateOutputPath(roughHash, "_roughness");
                     
-                    if (ctx.fileExists(path)) {
-                        result.roughnessPath = path;
+                    if (ctx.fileExists(roughPath)) {
+                        result.roughnessPath = roughPath;
                         result.skippedCount++;
-                    } else if (ctx.writeDDS(roughTex, path)) {
-                        result.roughnessPath = path;
+                    } else if (ctx.writeDDS(roughTex, roughPath)) {
+                        result.roughnessPath = roughPath;
                         if (ctx.materialsWithRoughness) (*ctx.materialsWithRoughness)++;
-                        if (ctx.debugOutput) Msg("[BFT] Wrote roughness from exponent: %s\n", path.c_str());
+                        if (ctx.debugOutput) Msg("[BFT] Wrote roughness from exponent red channel: %s\n", roughPath.c_str());
+                    }
+                    
+                    // =============================================================
+                    // Extract METALLIC from green channel (MWB stores metalness here)
+                    // =============================================================
+                    // Only extract if we don't already have a metallic texture from alpha
+                    if (result.metallicPath.empty()) {
+                        // Check if green channel has meaningful metallic information
+                        uint8_t minGreen = 255;
+                        uint8_t maxGreen = 0;
+                        for (uint32_t i = 0; i < totalPixels; i += ALPHA_SAMPLE_STEP) {
+                            uint8_t g = expTex.pixelData[i * 4 + 1]; // Green channel
+                            if (g < minGreen) minGreen = g;
+                            if (g > maxGreen) maxGreen = g;
+                        }
+                        
+                        // Only use green channel if it has meaningful variation
+                        if ((maxGreen - minGreen) > ALPHA_VARIATION_THRESHOLD) {
+                            if (ctx.debugOutput) {
+                                Msg("[BFT] Exponent green channel has metallic info (min=%d, max=%d)\n", 
+                                    minGreen, maxGreen);
+                            }
+                            
+                            ConvertedTexture metallicTex;
+                            metallicTex.width = expTex.width;
+                            metallicTex.height = expTex.height;
+                            metallicTex.mipLevels = 1;
+                            metallicTex.format = REMIXAPI_FORMAT_R8G8B8A8_UNORM;
+                            metallicTex.isNormalMap = false;
+                            metallicTex.pixelData.resize(totalPixels * 4);
+                            
+                            for (uint32_t i = 0; i < totalPixels; i++) {
+                                // Green channel = metallic value in MWB encoding
+                                uint8_t metallic = ExponentGreenToMetallic(expTex.pixelData[i * 4 + 1]);
+                                
+                                metallicTex.pixelData[i * 4 + 0] = metallic;
+                                metallicTex.pixelData[i * 4 + 1] = metallic;
+                                metallicTex.pixelData[i * 4 + 2] = metallic;
+                                metallicTex.pixelData[i * 4 + 3] = 255;
+                            }
+                            
+                            uint64_t metalHash = ctx.generateHash(props.bftExponentTexturePath + "_metallic", metallicTex.width, metallicTex.height);
+                            std::string metalPath = ctx.generateOutputPath(metalHash, "_metallic");
+                            
+                            if (ctx.fileExists(metalPath)) {
+                                result.metallicPath = metalPath;
+                                result.skippedCount++;
+                            } else if (ctx.writeDDS(metallicTex, metalPath)) {
+                                result.metallicPath = metalPath;
+                                if (ctx.debugOutput) Msg("[BFT] Extracted metallic from exponent green channel: %s\n", metalPath.c_str());
+                            }
+                        }
                     }
                 }
             }
