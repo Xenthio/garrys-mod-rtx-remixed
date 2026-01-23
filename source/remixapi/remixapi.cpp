@@ -2,6 +2,7 @@
 #include "remixapi.h"
 #include "bsp_geometry_manager.h"
 #include "rtx_option_defaults.h"
+#include "legacy_texture_processor.h"
 #include <Windows.h>
 #include <remix/remix_c.h>
 #include <tier0/dbg.h>
@@ -89,6 +90,10 @@ bool RemixAPI::Initialize(remix::Interface* remixInterface, GarrysMod::Lua::ILua
         m_resourceManager->InitializeLuaBindings();
         m_lightManager->InitializeLuaBindings();
         m_bspGeometryManager->InitializeLuaBindings();
+        
+        // Initialize VTF texture converter and its Lua bindings
+        LegacyTextureProcessor::TextureProcessor::Instance().Initialize(remixInterface);
+        LegacyTextureProcessor::InitializeLegacyTextureProcessorLuaBindings(LUA);
 
     m_initialized = true;
 #ifdef _DEBUG
@@ -100,6 +105,9 @@ bool RemixAPI::Initialize(remix::Interface* remixInterface, GarrysMod::Lua::ILua
 void RemixAPI::Shutdown() {
     if (!m_initialized) return;
 
+    // Shutdown VTF converter first
+    LegacyTextureProcessor::TextureProcessor::Instance().Shutdown();
+    
     m_bspGeometryManager.reset();
     m_resourceManager.reset();
     m_lightManager.reset();
