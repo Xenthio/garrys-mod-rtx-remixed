@@ -3739,6 +3739,69 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
 }
 
 
+// Helper to create ProcessingContext for modular format handlers
+ProcessingContext TextureProcessor::CreateProcessingContext() {
+    ProcessingContext ctx;
+    
+    // Bind member functions to the context
+    ctx.readVTFFile = [this](const std::string& path, std::vector<uint8_t>& data) {
+        return ReadVTFFile(path, data);
+    };
+    ctx.parseVTFHeader = [this](const std::vector<uint8_t>& data, VTFFileHeader& header) {
+        return ParseVTFHeader(data, header);
+    };
+    ctx.extractPixelData = [this](const std::vector<uint8_t>& data, const VTFFileHeader& header, 
+                                   ConvertedTexture& tex, bool convertNormal) {
+        return ExtractVTFPixelData(data, header, tex, convertNormal);
+    };
+    ctx.writeDDS = [this](const ConvertedTexture& tex, const std::string& path) {
+        return WriteTextureToDDS(tex, path);
+    };
+    ctx.convertToOctahedral = [this](ConvertedTexture& tex) {
+        ConvertNormalMapToOctahedral(tex);
+    };
+    ctx.convertSSBumpToNormal = [this](ConvertedTexture& tex) {
+        ConvertSSBumpToNormal(tex);
+    };
+    ctx.generateHash = [this](const std::string& name, uint32_t w, uint32_t h) {
+        return GenerateTextureHash(name, w, h);
+    };
+    ctx.generateOutputPath = [this](uint64_t hash, const std::string& suffix) {
+        return GenerateOutputPath(hash, suffix.c_str());
+    };
+    ctx.fileExists = [this](const std::string& path) {
+        return FileExists(path);
+    };
+    
+    ctx.debugOutput = m_debugOutput;
+    ctx.materialsWithNormals = &m_stats.materialsWithNormals;
+    ctx.materialsWithRoughness = &m_stats.materialsWithRoughness;
+    
+    return ctx;
+}
+
+// Helper to copy ProcessedMaterial results to ProcessedMaterialInfo
+static void CopyProcessedMaterial(const ProcessedMaterial& src, ProcessedMaterialInfo& dst) {
+    if (!src.normalPath.empty()) dst.normalPath = src.normalPath;
+    if (!src.roughnessPath.empty()) dst.roughnessPath = src.roughnessPath;
+    if (!src.metallicPath.empty()) dst.metallicPath = src.metallicPath;
+    if (!src.heightPath.empty()) {
+        dst.heightPath = src.heightPath;
+        dst.heightScale = src.heightScale;
+    }
+    if (!src.emissivePath.empty()) {
+        dst.emissivePath = src.emissivePath;
+        dst.emissionIntensity = src.emissionIntensity;
+    }
+    if (!src.transmittancePath.empty()) dst.transmittancePath = src.transmittancePath;
+    if (src.roughnessConstant != 0.5f) dst.roughnessConstant = src.roughnessConstant;
+    if (src.metallicConstant != 0.0f) dst.metallicConstant = src.metallicConstant;
+    if (src.isGlass) {
+        dst.isGlass = src.isGlass;
+        dst.ior = src.ior;
+    }
+}
+
 bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uint64_t textureHash) {
     if (textureHash == 0) {
         return false;
@@ -3766,889 +3829,75 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
     matInfo.ior = props.isGlass ? 1.5f : 1.0f;  // Default glass IOR is 1.5
     matInfo.emissionIntensity = props.hasEmissionScale ? props.emissionScale : 1.0f;
     
-    int skippedCount = 0;
+    // Create processing context for modular handlers
+    ProcessingContext ctx = CreateProcessingContext();
     
     // =========================================================================
-    // ExoPBR community PBR format processing
-    // ExoPBR provides direct PBR textures - we use them directly instead of
-    // deriving PBR properties from Source Engine material parameters
+    // Delegate to format-specific handlers (defined in separate files)
+    // Priority: ExoPBR -> GPBR -> BFT -> SourceEngine (fallback)
     // =========================================================================
+    
+    // ExoPBR format
     if (props.isExoPBR) {
-        if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] Processing ExoPBR material: %s\n", props.materialName.c_str());
+        ProcessedMaterial result = ExoPBR::ProcessTextures(props, textureHash, ctx);
+        if (result.success) {
+            CopyProcessedMaterial(result, matInfo);
+            m_processedMaterialInfo[textureHash] = matInfo;
+            WriteModUSDA();
+            m_stats.materialsProcessed++;
+            return true;
         }
-        
-        // Process ARM texture ($texture1) - split into roughness and metallic
-        if (props.hasARMTexture && !props.armTexturePath.empty()) {
-            std::string vtfPath = props.armTexturePath;
-            std::vector<uint8_t> fileData;
-            
-            if (ReadVTFFile(vtfPath, fileData)) {
-                VTFFileHeader header;
-                if (ParseVTFHeader(fileData, header)) {
-                    ConvertedTexture armTex;
-                    armTex.isNormalMap = false;
-                    
-                    if (ExtractVTFPixelData(fileData, header, armTex, false)) {
-                        // ARM map layout:
-                        // R = Ambient Occlusion (not used directly in PBR output)
-                        // G = Roughness
-                        // B = Metallic
-                        // A = Height (optional)
-                        
-                        // Create roughness texture from green channel
-                        {
-                            ConvertedTexture roughTex;
-                            roughTex.width = armTex.width;
-                            roughTex.height = armTex.height;
-                            roughTex.mipLevels = 1;
-                            roughTex.format = REMIXAPI_FORMAT_R8G8B8A8_UNORM;
-                            roughTex.isNormalMap = false;
-                            roughTex.pixelData.resize(armTex.width * armTex.height * 4);
-                            
-                            for (uint32_t i = 0; i < armTex.width * armTex.height; i++) {
-                                uint8_t roughness = armTex.pixelData[i * 4 + 1];  // Green channel
-                                roughTex.pixelData[i * 4 + 0] = roughness;
-                                roughTex.pixelData[i * 4 + 1] = roughness;
-                                roughTex.pixelData[i * 4 + 2] = roughness;
-                                roughTex.pixelData[i * 4 + 3] = 255;
-                            }
-                            
-                            uint64_t roughHash = GenerateTextureHash(props.armTexturePath + "_roughness", roughTex.width, roughTex.height);
-                            std::string outputPath = GenerateOutputPath(roughHash, "_roughness");
-                            
-                            if (FileExists(outputPath)) {
-                                matInfo.roughnessPath = outputPath;
-                                skippedCount++;
-                            } else if (WriteTextureToDDS(roughTex, outputPath)) {
-                                matInfo.roughnessPath = outputPath;
-                                m_stats.materialsWithRoughness++;
-                                if (m_debugOutput) {
-                                    Msg("[LegacyTextureProcessor] [ExoPBR] Wrote roughness from ARM: %s\n", outputPath.c_str());
-                                }
-                            }
-                        }
-                        
-                        // Create metallic texture from blue channel
-                        {
-                            ConvertedTexture metalTex;
-                            metalTex.width = armTex.width;
-                            metalTex.height = armTex.height;
-                            metalTex.mipLevels = 1;
-                            metalTex.format = REMIXAPI_FORMAT_R8G8B8A8_UNORM;
-                            metalTex.isNormalMap = false;
-                            metalTex.pixelData.resize(armTex.width * armTex.height * 4);
-                            
-                            for (uint32_t i = 0; i < armTex.width * armTex.height; i++) {
-                                uint8_t metallic = armTex.pixelData[i * 4 + 2];  // Blue channel
-                                metalTex.pixelData[i * 4 + 0] = metallic;
-                                metalTex.pixelData[i * 4 + 1] = metallic;
-                                metalTex.pixelData[i * 4 + 2] = metallic;
-                                metalTex.pixelData[i * 4 + 3] = 255;
-                            }
-                            
-                            uint64_t metalHash = GenerateTextureHash(props.armTexturePath + "_metallic", metalTex.width, metalTex.height);
-                            std::string outputPath = GenerateOutputPath(metalHash, "_metallic");
-                            
-                            if (FileExists(outputPath)) {
-                                matInfo.metallicPath = outputPath;
-                                skippedCount++;
-                            } else if (WriteTextureToDDS(metalTex, outputPath)) {
-                                matInfo.metallicPath = outputPath;
-                                if (m_debugOutput) {
-                                    Msg("[LegacyTextureProcessor] [ExoPBR] Wrote metallic from ARM: %s\n", outputPath.c_str());
-                                }
-                            }
-                        }
-                        
-                        // Create height texture from alpha channel if present
-                        {
-                            bool hasHeightData = false;
-                            for (uint32_t i = 0; i < armTex.width * armTex.height && !hasHeightData; i++) {
-                                if (armTex.pixelData[i * 4 + 3] != 255) {
-                                    hasHeightData = true;
-                                }
-                            }
-                            
-                            if (hasHeightData) {
-                                ConvertedTexture heightTex;
-                                heightTex.width = armTex.width;
-                                heightTex.height = armTex.height;
-                                heightTex.mipLevels = 1;
-                                heightTex.format = REMIXAPI_FORMAT_R8G8B8A8_UNORM;
-                                heightTex.isNormalMap = false;
-                                heightTex.pixelData.resize(armTex.width * armTex.height * 4);
-                                
-                                for (uint32_t i = 0; i < armTex.width * armTex.height; i++) {
-                                    uint8_t height = armTex.pixelData[i * 4 + 3];  // Alpha channel
-                                    heightTex.pixelData[i * 4 + 0] = height;
-                                    heightTex.pixelData[i * 4 + 1] = height;
-                                    heightTex.pixelData[i * 4 + 2] = height;
-                                    heightTex.pixelData[i * 4 + 3] = 255;
-                                }
-                                
-                                uint64_t heightHash = GenerateTextureHash(props.armTexturePath + "_height", heightTex.width, heightTex.height);
-                                std::string outputPath = GenerateOutputPath(heightHash, "_height");
-                                
-                                if (FileExists(outputPath)) {
-                                    matInfo.heightPath = outputPath;
-                                    skippedCount++;
-                                } else if (WriteTextureToDDS(heightTex, outputPath)) {
-                                    matInfo.heightPath = outputPath;
-                                    if (m_debugOutput) {
-                                        Msg("[LegacyTextureProcessor] [ExoPBR] Wrote height from ARM alpha: %s\n", outputPath.c_str());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        // Process ExoPBR normal map ($texture2) - DirectX Y- format needs green channel flip
-        if (props.hasExoNormal && !props.exoNormalPath.empty()) {
-            std::string vtfPath = props.exoNormalPath;
-            std::vector<uint8_t> fileData;
-            
-            if (ReadVTFFile(vtfPath, fileData)) {
-                VTFFileHeader header;
-                if (ParseVTFHeader(fileData, header)) {
-                    ConvertedTexture normalTex;
-                    normalTex.isNormalMap = true;
-                    
-                    if (ExtractVTFPixelData(fileData, header, normalTex, false)) {
-                        // ExoPBR uses DirectX Y- format - flip green channel
-                        for (uint32_t i = 0; i < normalTex.width * normalTex.height; i++) {
-                            normalTex.pixelData[i * 4 + 1] = 255 - normalTex.pixelData[i * 4 + 1];
-                        }
-                        
-                        // Convert to octahedral for RTX Remix
-                        ConvertNormalMapToOctahedral(normalTex);
-                        
-                        uint64_t normalHash = GenerateTextureHash(props.exoNormalPath + "_normal", normalTex.width, normalTex.height);
-                        std::string outputPath = GenerateOutputPath(normalHash, "_normal");
-                        
-                        if (FileExists(outputPath)) {
-                            matInfo.normalPath = outputPath;
-                            skippedCount++;
-                        } else if (WriteTextureToDDS(normalTex, outputPath)) {
-                            matInfo.normalPath = outputPath;
-                            m_stats.materialsWithNormals++;
-                            if (m_debugOutput) {
-                                Msg("[LegacyTextureProcessor] [ExoPBR] Wrote normal map (Y- flipped): %s\n", outputPath.c_str());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        // Process emission texture ($texture3)
-        if (props.hasEmissionTexture && !props.emissionTexturePath.empty()) {
-            std::string vtfPath = props.emissionTexturePath;
-            std::vector<uint8_t> fileData;
-            
-            if (ReadVTFFile(vtfPath, fileData)) {
-                VTFFileHeader header;
-                if (ParseVTFHeader(fileData, header)) {
-                    ConvertedTexture emitTex;
-                    emitTex.isNormalMap = false;
-                    
-                    if (ExtractVTFPixelData(fileData, header, emitTex, false)) {
-                        uint64_t emitHash = GenerateTextureHash(props.emissionTexturePath + "_emit", emitTex.width, emitTex.height);
-                        std::string outputPath = GenerateOutputPath(emitHash, "_emit");
-                        
-                        if (FileExists(outputPath)) {
-                            matInfo.emissivePath = outputPath;
-                            skippedCount++;
-                        } else if (WriteTextureToDDS(emitTex, outputPath)) {
-                            matInfo.emissivePath = outputPath;
-                            if (m_debugOutput) {
-                                Msg("[LegacyTextureProcessor] [ExoPBR] Wrote emission texture: %s\n", outputPath.c_str());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        // Store and write USDA
-        m_processedMaterialInfo[textureHash] = matInfo;
-        WriteModUSDA();
-        m_stats.materialsProcessed++;
-        
-        if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] [ExoPBR] Material processed: %s (skipped %d existing)\n", 
-                props.materialName.c_str(), skippedCount);
-        }
-        
-        return true;
     }
     
-    // =========================================================================
-    // GPBR (Strata Source) community PBR format processing
-    // GPBR provides direct PBR textures - MRAO map (Metallic/Roughness/AO), normal, emission
-    // =========================================================================
+    // GPBR format
     if (props.isGPBR) {
-        if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] Processing GPBR material: %s\n", props.materialName.c_str());
+        ProcessedMaterial result = GPBR::ProcessTextures(props, textureHash, ctx);
+        if (result.success) {
+            CopyProcessedMaterial(result, matInfo);
+            m_processedMaterialInfo[textureHash] = matInfo;
+            WriteModUSDA();
+            m_stats.materialsProcessed++;
+            return true;
         }
-        
-        // Process MRAO texture ($mraotexture) - split into roughness and metallic
-        // MRAO layout: R=Metallic, G=Roughness, B=AO
-        if (props.hasMRAOTexture && !props.mraoTexturePath.empty()) {
-            std::string vtfPath = props.mraoTexturePath;
-            std::vector<uint8_t> fileData;
-            
-            if (ReadVTFFile(vtfPath, fileData)) {
-                VTFFileHeader header;
-                if (ParseVTFHeader(fileData, header)) {
-                    ConvertedTexture mraoTex;
-                    mraoTex.isNormalMap = false;
-                    
-                    if (ExtractVTFPixelData(fileData, header, mraoTex, false)) {
-                        float mraoScale = props.hasMRAOScale ? props.mraoScale : 1.0f;
-                        
-                        // Create roughness texture from GREEN channel
-                        {
-                            ConvertedTexture roughTex;
-                            roughTex.width = mraoTex.width;
-                            roughTex.height = mraoTex.height;
-                            roughTex.mipLevels = 1;
-                            roughTex.format = REMIXAPI_FORMAT_R8G8B8A8_UNORM;
-                            roughTex.isNormalMap = false;
-                            roughTex.pixelData.resize(mraoTex.width * mraoTex.height * 4);
-                            
-                            for (uint32_t i = 0; i < mraoTex.width * mraoTex.height; i++) {
-                                uint8_t roughness = mraoTex.pixelData[i * 4 + 1];  // Green channel
-                                roughness = (uint8_t)(roughness * mraoScale);
-                                roughTex.pixelData[i * 4 + 0] = roughness;
-                                roughTex.pixelData[i * 4 + 1] = roughness;
-                                roughTex.pixelData[i * 4 + 2] = roughness;
-                                roughTex.pixelData[i * 4 + 3] = 255;
-                            }
-                            
-                            uint64_t roughHash = GenerateTextureHash(props.mraoTexturePath + "_roughness", roughTex.width, roughTex.height);
-                            std::string outputPath = GenerateOutputPath(roughHash, "_roughness");
-                            
-                            if (FileExists(outputPath)) {
-                                matInfo.roughnessPath = outputPath;
-                                skippedCount++;
-                            } else if (WriteTextureToDDS(roughTex, outputPath)) {
-                                matInfo.roughnessPath = outputPath;
-                                m_stats.materialsWithRoughness++;
-                                if (m_debugOutput) {
-                                    Msg("[LegacyTextureProcessor] [GPBR] Wrote roughness from MRAO: %s\n", outputPath.c_str());
-                                }
-                            }
-                        }
-                        
-                        // Create metallic texture from RED channel
-                        {
-                            ConvertedTexture metalTex;
-                            metalTex.width = mraoTex.width;
-                            metalTex.height = mraoTex.height;
-                            metalTex.mipLevels = 1;
-                            metalTex.format = REMIXAPI_FORMAT_R8G8B8A8_UNORM;
-                            metalTex.isNormalMap = false;
-                            metalTex.pixelData.resize(mraoTex.width * mraoTex.height * 4);
-                            
-                            for (uint32_t i = 0; i < mraoTex.width * mraoTex.height; i++) {
-                                uint8_t metallic = mraoTex.pixelData[i * 4 + 0];  // Red channel
-                                metallic = (uint8_t)(metallic * mraoScale);
-                                metalTex.pixelData[i * 4 + 0] = metallic;
-                                metalTex.pixelData[i * 4 + 1] = metallic;
-                                metalTex.pixelData[i * 4 + 2] = metallic;
-                                metalTex.pixelData[i * 4 + 3] = 255;
-                            }
-                            
-                            uint64_t metalHash = GenerateTextureHash(props.mraoTexturePath + "_metallic", metalTex.width, metalTex.height);
-                            std::string outputPath = GenerateOutputPath(metalHash, "_metallic");
-                            
-                            if (FileExists(outputPath)) {
-                                matInfo.metallicPath = outputPath;
-                                skippedCount++;
-                            } else if (WriteTextureToDDS(metalTex, outputPath)) {
-                                matInfo.metallicPath = outputPath;
-                                if (m_debugOutput) {
-                                    Msg("[LegacyTextureProcessor] [GPBR] Wrote metallic from MRAO: %s\n", outputPath.c_str());
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        // Process normal map ($bumpmap) - also check for height in alpha when parallax enabled
-        if (props.hasBumpMap && !props.bumpMapPath.empty()) {
-            std::string vtfPath = props.bumpMapPath;
-            std::vector<uint8_t> fileData;
-            
-            if (ReadVTFFile(vtfPath, fileData)) {
-                VTFFileHeader header;
-                if (ParseVTFHeader(fileData, header)) {
-                    ConvertedTexture normalTex;
-                    normalTex.isNormalMap = true;
-                    
-                    if (ExtractVTFPixelData(fileData, header, normalTex, true)) {
-                        // Write normal map
-                        uint64_t normalHash = GenerateTextureHash(props.bumpMapPath + "_normal", normalTex.width, normalTex.height);
-                        std::string outputPath = GenerateOutputPath(normalHash, "_normal");
-                        
-                        if (FileExists(outputPath)) {
-                            matInfo.normalPath = outputPath;
-                            skippedCount++;
-                        } else if (WriteTextureToDDS(normalTex, outputPath)) {
-                            matInfo.normalPath = outputPath;
-                            m_stats.materialsWithNormals++;
-                            if (m_debugOutput) {
-                                Msg("[LegacyTextureProcessor] [GPBR] Wrote normal map: %s\n", outputPath.c_str());
-                            }
-                        }
-                        
-                        // If parallax is enabled, extract height from normal map alpha
-                        if (props.gpbrParallax) {
-                            ConvertedTexture heightTex;
-                            heightTex.width = normalTex.width;
-                            heightTex.height = normalTex.height;
-                            heightTex.mipLevels = 1;
-                            heightTex.format = REMIXAPI_FORMAT_R8G8B8A8_UNORM;
-                            heightTex.isNormalMap = false;
-                            heightTex.pixelData.resize(normalTex.width * normalTex.height * 4);
-                            
-                            for (uint32_t i = 0; i < normalTex.width * normalTex.height; i++) {
-                                uint8_t height = normalTex.pixelData[i * 4 + 3];  // Alpha channel
-                                heightTex.pixelData[i * 4 + 0] = height;
-                                heightTex.pixelData[i * 4 + 1] = height;
-                                heightTex.pixelData[i * 4 + 2] = height;
-                                heightTex.pixelData[i * 4 + 3] = 255;
-                            }
-                            
-                            uint64_t heightHash = GenerateTextureHash(props.bumpMapPath + "_height", heightTex.width, heightTex.height);
-                            std::string heightPath = GenerateOutputPath(heightHash, "_height");
-                            
-                            if (FileExists(heightPath)) {
-                                matInfo.heightPath = heightPath;
-                                matInfo.heightScale = props.gpbrParallaxDepth;
-                                skippedCount++;
-                            } else if (WriteTextureToDDS(heightTex, heightPath)) {
-                                matInfo.heightPath = heightPath;
-                                matInfo.heightScale = props.gpbrParallaxDepth;
-                                if (m_debugOutput) {
-                                    Msg("[LegacyTextureProcessor] [GPBR] Wrote height from normal alpha: %s (depth=%.3f)\n", heightPath.c_str(), props.gpbrParallaxDepth);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        // Process emission texture ($emissiontexture)
-        if (props.hasGPBREmission && !props.gpbrEmissionPath.empty()) {
-            std::string vtfPath = props.gpbrEmissionPath;
-            std::vector<uint8_t> fileData;
-            
-            if (ReadVTFFile(vtfPath, fileData)) {
-                VTFFileHeader header;
-                if (ParseVTFHeader(fileData, header)) {
-                    ConvertedTexture emissionTex;
-                    emissionTex.isNormalMap = false;
-                    
-                    if (ExtractVTFPixelData(fileData, header, emissionTex, false)) {
-                        uint64_t emissionHash = GenerateTextureHash(props.gpbrEmissionPath + "_emission", emissionTex.width, emissionTex.height);
-                        std::string outputPath = GenerateOutputPath(emissionHash, "_emission");
-                        
-                        if (FileExists(outputPath)) {
-                            matInfo.emissivePath = outputPath;
-                            matInfo.emissionIntensity = props.hasGPBREmissionScale ? props.gpbrEmissionScale : 1.0f;
-                            skippedCount++;
-                        } else if (WriteTextureToDDS(emissionTex, outputPath)) {
-                            matInfo.emissivePath = outputPath;
-                            matInfo.emissionIntensity = props.hasGPBREmissionScale ? props.gpbrEmissionScale : 1.0f;
-                            if (m_debugOutput) {
-                                Msg("[LegacyTextureProcessor] [GPBR] Wrote emission texture: %s\n", outputPath.c_str());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        // Store and write USDA
-        m_processedMaterialInfo[textureHash] = matInfo;
-        WriteModUSDA();
-        m_stats.materialsProcessed++;
-        
-        if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] [GPBR] Material processed: %s (skipped %d existing)\n", 
-                props.materialName.c_str(), skippedCount);
-        }
-        
-        return true;
     }
     
-    // =========================================================================
-    // BlueFlyTrap PseudoPBR format processing
-    // Extracts roughness from $phongexponenttexture (inverted gloss encoding)
-    // Metallic is determined by layer type (base=dielectric, metallic=metal)
-    // =========================================================================
+    // BlueFlyTrap PseudoPBR format
     if (props.isBFTPseudoPBR) {
-        if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] Processing BlueFlyTrap PseudoPBR material: %s (%s layer)\n", 
-                props.materialName.c_str(), props.isBFTMetallicLayer ? "metallic" : "base");
+        ProcessedMaterial result = BFTPseudoPBR::ProcessTextures(props, textureHash, ctx);
+        if (result.success) {
+            CopyProcessedMaterial(result, matInfo);
+            m_processedMaterialInfo[textureHash] = matInfo;
+            WriteModUSDA();
+            m_stats.materialsProcessed++;
+            return true;
         }
+    }
+    
+    // =========================================================================
+    // Standard Source Engine material processing (fallback)
+    // For non-PBR format materials, use the SourceEngine handler
+    // =========================================================================
+    ProcessedMaterial result = SourceEngine::ProcessTextures(props, textureHash, ctx);
+    if (result.success) {
+        CopyProcessedMaterial(result, matInfo);
         
-        // Process normal map (standard Source Engine bumpmap)
-        if (props.hasBumpMap && !props.bumpMapPath.empty()) {
-            std::string vtfPath = props.bumpMapPath;
-            std::vector<uint8_t> fileData;
-            
-            if (ReadVTFFile(vtfPath, fileData)) {
-                VTFFileHeader header;
-                if (ParseVTFHeader(fileData, header)) {
-                    ConvertedTexture normalTex;
-                    normalTex.isNormalMap = true;
-                    
-                    if (ExtractVTFPixelData(fileData, header, normalTex, false)) {
-                        // Handle SSBump if needed
-                        if (props.isSSBump) {
-                            ConvertSSBumpToNormal(normalTex);
-                        }
-                        
-                        ConvertNormalMapToOctahedral(normalTex);
-                        
-                        uint64_t normalHash = GenerateTextureHash(props.bumpMapPath + "_normal", normalTex.width, normalTex.height);
-                        std::string outputPath = GenerateOutputPath(normalHash, "_normal");
-                        
-                        if (FileExists(outputPath)) {
-                            matInfo.normalPath = outputPath;
-                            skippedCount++;
-                        } else if (WriteTextureToDDS(normalTex, outputPath)) {
-                            matInfo.normalPath = outputPath;
-                            m_stats.materialsWithNormals++;
-                            if (m_debugOutput) {
-                                Msg("[LegacyTextureProcessor] [BFT] Wrote normal map: %s\n", outputPath.c_str());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        // Process $phongexponenttexture to extract roughness
-        // BlueFlyTrap encodes glossiness in the red channel with a gamma curve
-        // Conversion: roughness = 1.0 - pow(exponent_value/255, 0.24)
-        if (props.hasBFTExponentTexture && !props.bftExponentTexturePath.empty()) {
-            std::string vtfPath = props.bftExponentTexturePath;
-            std::vector<uint8_t> fileData;
-            
-            if (ReadVTFFile(vtfPath, fileData)) {
-                VTFFileHeader header;
-                if (ParseVTFHeader(fileData, header)) {
-                    ConvertedTexture expTex;
-                    expTex.isNormalMap = false;
-                    
-                    if (ExtractVTFPixelData(fileData, header, expTex, false)) {
-                        // Create roughness texture from exponent texture
-                        ConvertedTexture roughTex;
-                        roughTex.width = expTex.width;
-                        roughTex.height = expTex.height;
-                        roughTex.mipLevels = 1;
-                        roughTex.format = REMIXAPI_FORMAT_R8G8B8A8_UNORM;
-                        roughTex.isNormalMap = false;
-                        roughTex.pixelData.resize(expTex.width * expTex.height * 4);
-                        
-                        for (uint32_t i = 0; i < expTex.width * expTex.height; i++) {
-                            // Red channel contains the encoded gloss
-                            uint8_t expValue = expTex.pixelData[i * 4 + 0];
-                            
-                            // Reverse the BFT encoding: levels middle input 0.24
-                            // gloss = (exp/255)^0.24, roughness = 1 - gloss
-                            float normalized = static_cast<float>(expValue) / 255.0f;
-                            float gloss = std::pow(normalized, 0.24f);
-                            float roughness = 1.0f - gloss;
-                            
-                            // Clamp and convert back to byte
-                            if (roughness < 0.04f) roughness = 0.04f;
-                            if (roughness > 1.0f) roughness = 1.0f;
-                            uint8_t roughByte = static_cast<uint8_t>(roughness * 255.0f);
-                            
-                            roughTex.pixelData[i * 4 + 0] = roughByte;
-                            roughTex.pixelData[i * 4 + 1] = roughByte;
-                            roughTex.pixelData[i * 4 + 2] = roughByte;
-                            roughTex.pixelData[i * 4 + 3] = 255;
-                        }
-                        
-                        uint64_t roughHash = GenerateTextureHash(props.bftExponentTexturePath + "_roughness", roughTex.width, roughTex.height);
-                        std::string outputPath = GenerateOutputPath(roughHash, "_roughness");
-                        
-                        if (FileExists(outputPath)) {
-                            matInfo.roughnessPath = outputPath;
-                            skippedCount++;
-                        } else if (WriteTextureToDDS(roughTex, outputPath)) {
-                            matInfo.roughnessPath = outputPath;
-                            m_stats.materialsWithRoughness++;
-                            if (m_debugOutput) {
-                                Msg("[LegacyTextureProcessor] [BFT] Wrote roughness from exponent: %s\n", outputPath.c_str());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        // Set metallic based on layer type
-        if (props.isBFTMetallicLayer) {
-            matInfo.metallicConstant = 0.9f;  // High metallic for metal layers
-        } else {
-            matInfo.metallicConstant = 0.0f;  // Dielectric for base layers
-        }
-        
-        // Store and write USDA
+        // Store for USDA generation
         m_processedMaterialInfo[textureHash] = matInfo;
-        WriteModUSDA();
         m_stats.materialsProcessed++;
         
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] [BFT] Material processed: %s (skipped %d existing)\n", 
-                props.materialName.c_str(), skippedCount);
+            Msg("[LegacyTextureProcessor] Processed material '%s' (hash 0x%llX): roughness=%.2f, metallic=%.2f%s%s%s%s\n",
+                props.materialName.c_str(), textureHash, matInfo.roughnessConstant, matInfo.metallicConstant,
+                !matInfo.normalPath.empty() ? " [normal]" : "",
+                !matInfo.roughnessPath.empty() ? " [roughness]" : "",
+                !matInfo.metallicPath.empty() ? " [metallic]" : "",
+                !matInfo.heightPath.empty() ? " [height]" : "");
         }
         
         return true;
     }
     
-    // =========================================================================
-    // Standard Source Engine material processing (non-ExoPBR/GPBR/BFT path)
-    // =========================================================================
-    
-    // Write normal map to disk if available
-    if (props.hasBumpMap && !props.bumpMapPath.empty()) {
-        // Generate the expected output path first to check if it exists
-        uint64_t normalHash = GenerateTextureHash(props.bumpMapPath + "_normal", 0, 0);
-        std::string expectedOutputPath = GenerateOutputPath(normalHash, "_normal");
-        
-        // Check if the file already exists
-        if (FileExists(expectedOutputPath)) {
-            // File already exists, just use it
-            matInfo.normalPath = expectedOutputPath;
-            m_writtenTexturePaths[normalHash] = expectedOutputPath;
-            skippedCount++;
-            
-            if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] Skipping existing normal texture: %s\n", expectedOutputPath.c_str());
-            }
-        } else {
-            std::string vtfPath = props.bumpMapPath;
-            std::vector<uint8_t> fileData;
-            
-            if (ReadVTFFile(vtfPath, fileData)) {
-                VTFFileHeader header;
-                if (ParseVTFHeader(fileData, header)) {
-                    ConvertedTexture normalTex;
-                    normalTex.isNormalMap = true;
-                    
-                    // For SSBump textures, extract raw data first then convert
-                    if (props.isSSBump) {
-                        // Extract without octahedral conversion
-                        if (ExtractVTFPixelData(fileData, header, normalTex, false)) {
-                            // Convert SSBump to standard normal map
-                            ConvertSSBumpToNormal(normalTex);
-                            // Then convert to octahedral for RTX Remix
-                            ConvertNormalMapToOctahedral(normalTex);
-                            
-                            normalTex.hash = GenerateTextureHash(props.bumpMapPath + "_normal", normalTex.width, normalTex.height);
-                            std::string outputPath = GenerateOutputPath(normalTex.hash, "_normal");
-                            
-                            // Double-check with actual dimensions hash
-                            if (FileExists(outputPath)) {
-                                matInfo.normalPath = outputPath;
-                                m_writtenTexturePaths[normalTex.hash] = outputPath;
-                                skippedCount++;
-                                
-                                if (m_debugOutput) {
-                                    Msg("[LegacyTextureProcessor] Skipping existing SSBump-converted normal: %s\n", outputPath.c_str());
-                                }
-                            } else if (WriteTextureToDDS(normalTex, outputPath)) {
-                                matInfo.normalPath = outputPath;
-                                m_writtenTexturePaths[normalTex.hash] = outputPath;
-                                m_stats.materialsWithNormals++;
-                                
-                                if (m_debugOutput) {
-                                    Msg("[LegacyTextureProcessor] Wrote SSBump-converted normal: %s\n", outputPath.c_str());
-                                }
-                            } else if (m_debugOutput) {
-                                Msg("[LegacyTextureProcessor] Failed to write SSBump DDS for %s\n", props.bumpMapPath.c_str());
-                            }
-                        } else if (m_debugOutput) {
-                            Msg("[LegacyTextureProcessor] Failed to extract SSBump pixel data for %s\n", props.bumpMapPath.c_str());
-                        }
-                    } else {
-                        // Standard normal map - extract with octahedral conversion
-                        if (ExtractVTFPixelData(fileData, header, normalTex, true)) {
-                            normalTex.hash = GenerateTextureHash(props.bumpMapPath + "_normal", normalTex.width, normalTex.height);
-                            std::string outputPath = GenerateOutputPath(normalTex.hash, "_normal");
-                            
-                            // Double-check with actual dimensions hash
-                            if (FileExists(outputPath)) {
-                                matInfo.normalPath = outputPath;
-                                m_writtenTexturePaths[normalTex.hash] = outputPath;
-                                skippedCount++;
-                                
-                                if (m_debugOutput) {
-                                    Msg("[LegacyTextureProcessor] Skipping existing normal texture: %s\n", outputPath.c_str());
-                                }
-                            } else if (WriteTextureToDDS(normalTex, outputPath)) {
-                                matInfo.normalPath = outputPath;
-                                m_writtenTexturePaths[normalTex.hash] = outputPath;
-                                m_stats.materialsWithNormals++;
-                                
-                                if (m_debugOutput) {
-                                    Msg("[LegacyTextureProcessor] Wrote normal texture: %s\n", outputPath.c_str());
-                                }
-                            } else if (m_debugOutput) {
-                                Msg("[LegacyTextureProcessor] Failed to write normal DDS for %s\n", props.bumpMapPath.c_str());
-                            }
-                        } else if (m_debugOutput) {
-                            Msg("[LegacyTextureProcessor] Failed to extract pixel data for %s\n", props.bumpMapPath.c_str());
-                        }
-                    }
-                } else if (m_debugOutput) {
-                    Msg("[LegacyTextureProcessor] Failed to parse VTF header for %s\n", props.bumpMapPath.c_str());
-                }
-            } else if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] Failed to read VTF file for bump map: %s\n", props.bumpMapPath.c_str());
-            }
-        }
-    }
-    
-    // Generate and write roughness texture
-    {
-        uint64_t roughnessHash = GenerateTextureHash(props.materialName + "_roughness", 256, 256);
-        std::string outputPath = GenerateOutputPath(roughnessHash, "_rough");
-        
-        // Check if the file already exists
-        if (FileExists(outputPath)) {
-            matInfo.roughnessPath = outputPath;
-            m_writtenTexturePaths[roughnessHash] = outputPath;
-            skippedCount++;
-            
-            if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] Skipping existing roughness texture: %s\n", outputPath.c_str());
-            }
-        } else {
-            ConvertedTexture roughnessTex;
-            if (GenerateRoughnessTexture(props, roughnessTex)) {
-                roughnessTex.hash = GenerateTextureHash(props.materialName + "_roughness", roughnessTex.width, roughnessTex.height);
-                outputPath = GenerateOutputPath(roughnessTex.hash, "_rough");
-                
-                if (FileExists(outputPath)) {
-                    matInfo.roughnessPath = outputPath;
-                    m_writtenTexturePaths[roughnessTex.hash] = outputPath;
-                    skippedCount++;
-                    
-                    if (m_debugOutput) {
-                        Msg("[LegacyTextureProcessor] Skipping existing roughness texture: %s\n", outputPath.c_str());
-                    }
-                } else if (WriteTextureToDDS(roughnessTex, outputPath)) {
-                    matInfo.roughnessPath = outputPath;
-                    m_writtenTexturePaths[roughnessTex.hash] = outputPath;
-                    m_stats.materialsWithRoughness++;
-                    
-                    if (m_debugOutput) {
-                        Msg("[LegacyTextureProcessor] Wrote roughness texture: %s\n", outputPath.c_str());
-                    }
-                }
-            }
-        }
-    }
-    
-    // Generate and write metallic texture if significant
-    if (props.metallic > 0.05f) {
-        uint64_t metallicHash = GenerateTextureHash(props.materialName + "_metallic", 256, 256);
-        std::string outputPath = GenerateOutputPath(metallicHash, "_metal");
-        
-        // Check if the file already exists
-        if (FileExists(outputPath)) {
-            matInfo.metallicPath = outputPath;
-            m_writtenTexturePaths[metallicHash] = outputPath;
-            skippedCount++;
-            
-            if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] Skipping existing metallic texture: %s\n", outputPath.c_str());
-            }
-        } else {
-            ConvertedTexture metallicTex;
-            if (GenerateMetallicTexture(props, metallicTex)) {
-                metallicTex.hash = GenerateTextureHash(props.materialName + "_metallic", metallicTex.width, metallicTex.height);
-                outputPath = GenerateOutputPath(metallicTex.hash, "_metal");
-                
-                if (FileExists(outputPath)) {
-                    matInfo.metallicPath = outputPath;
-                    m_writtenTexturePaths[metallicTex.hash] = outputPath;
-                    skippedCount++;
-                    
-                    if (m_debugOutput) {
-                        Msg("[LegacyTextureProcessor] Skipping existing metallic texture: %s\n", outputPath.c_str());
-                    }
-                } else if (WriteTextureToDDS(metallicTex, outputPath)) {
-                    matInfo.metallicPath = outputPath;
-                    m_writtenTexturePaths[metallicTex.hash] = outputPath;
-                    
-                    if (m_debugOutput) {
-                        Msg("[LegacyTextureProcessor] Wrote metallic texture: %s\n", outputPath.c_str());
-                    }
-                }
-            }
-        }
-    }
-    
-    // For glass materials, handle transmittance texture
-    // For Refract shaders: ONLY use $refracttinttexture (don't use baseTexture - it might be set to normalmap by fixer)
-    // For non-Refract glass (surfaceprop=glass): use baseTexture as transmittance
-    if (props.isGlass) {
-        std::string transmittanceTexPath;
-        std::string transmittanceSuffix;
-        
-        if (props.isRefractShader && !props.refractTintTexturePath.empty()) {
-            // Refract shader: use $refracttinttexture
-            transmittanceTexPath = props.refractTintTexturePath;
-            transmittanceSuffix = "_refracttint";
-            if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] Using $refracttinttexture for Refract glass transmittance: %s\n", transmittanceTexPath.c_str());
-            }
-        } else if (!props.isRefractShader && !props.baseTexturePath.empty()) {
-            // Non-Refract glass (like bottles): use baseTexture
-            transmittanceTexPath = props.baseTexturePath;
-            transmittanceSuffix = "_base";
-            if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] Using $basetexture for glass transmittance: %s\n", transmittanceTexPath.c_str());
-            }
-        }
-        // Note: If Refract shader has no $refracttinttexture, glass will be clear (no transmittance texture)
-        
-        if (!transmittanceTexPath.empty()) {
-            uint64_t texHash = GenerateTextureHash(transmittanceTexPath + transmittanceSuffix, 0, 0);
-            std::string expectedOutputPath = GenerateOutputPath(texHash, transmittanceSuffix.c_str());
-            
-            if (FileExists(expectedOutputPath)) {
-                matInfo.transmittancePath = expectedOutputPath;
-                m_writtenTexturePaths[texHash] = expectedOutputPath;
-                skippedCount++;
-                
-                if (m_debugOutput) {
-                    Msg("[LegacyTextureProcessor] Skipping existing transmittance texture for glass: %s\n", expectedOutputPath.c_str());
-                }
-            } else {
-                std::vector<uint8_t> fileData;
-                
-                if (ReadVTFFile(transmittanceTexPath, fileData)) {
-                    VTFFileHeader header;
-                    if (ParseVTFHeader(fileData, header)) {
-                        ConvertedTexture tex;
-                        tex.isNormalMap = false;
-                        if (ExtractVTFPixelData(fileData, header, tex, false)) {
-                            tex.hash = GenerateTextureHash(transmittanceTexPath + transmittanceSuffix, tex.width, tex.height);
-                            std::string outputPath = GenerateOutputPath(tex.hash, transmittanceSuffix.c_str());
-                            
-                            if (FileExists(outputPath)) {
-                                matInfo.transmittancePath = outputPath;
-                                m_writtenTexturePaths[tex.hash] = outputPath;
-                                skippedCount++;
-                                
-                                if (m_debugOutput) {
-                                    Msg("[LegacyTextureProcessor] Skipping existing transmittance texture: %s\n", outputPath.c_str());
-                                }
-                            } else if (WriteTextureToDDS(tex, outputPath)) {
-                                matInfo.transmittancePath = outputPath;
-                                m_writtenTexturePaths[tex.hash] = outputPath;
-                                
-                                if (m_debugOutput) {
-                                    Msg("[LegacyTextureProcessor] Wrote transmittance texture for glass: %s\n", outputPath.c_str());
-                                }
-                            } else if (m_debugOutput) {
-                                Msg("[LegacyTextureProcessor] Failed to write transmittance DDS for glass: %s\n", transmittanceTexPath.c_str());
-                            }
-                        } else if (m_debugOutput) {
-                            Msg("[LegacyTextureProcessor] Failed to extract transmittance texture data for glass: %s\n", transmittanceTexPath.c_str());
-                        }
-                    }
-                } else if (m_debugOutput) {
-                    Msg("[LegacyTextureProcessor] Failed to read VTF file for glass transmittance texture: %s\n", transmittanceTexPath.c_str());
-                }
-            }
-        }
-    }
-    
-    // Write height/displacement map to disk if available
-    // Use $parallaxmap or auto-discovered height map
-    std::string heightMapPath;
-    if (props.hasParallaxMap && !props.parallaxMapPath.empty()) {
-        heightMapPath = props.parallaxMapPath;
-    } else if (props.hasDiscoveredHeight && !props.discoveredHeightPath.empty()) {
-        heightMapPath = props.discoveredHeightPath;
-    }
-    
-    if (!heightMapPath.empty()) {
-        uint64_t heightHash = GenerateTextureHash(heightMapPath + "_height", 0, 0);
-        std::string expectedOutputPath = GenerateOutputPath(heightHash, "_height");
-        
-        // Check if the file already exists
-        if (FileExists(expectedOutputPath)) {
-            matInfo.heightPath = expectedOutputPath;
-            matInfo.heightScale = props.hasParallaxMapScale ? props.parallaxMapScale : 0.025f;
-            m_writtenTexturePaths[heightHash] = expectedOutputPath;
-            skippedCount++;
-            
-            if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] Skipping existing height texture: %s\n", expectedOutputPath.c_str());
-            }
-        } else {
-            std::vector<uint8_t> heightFileData;
-            if (ReadVTFFile(heightMapPath, heightFileData)) {
-                VTFFileHeader heightHeader;
-                if (ParseVTFHeader(heightFileData, heightHeader)) {
-                    ConvertedTexture heightTex;
-                    heightTex.isNormalMap = false;
-                    if (ExtractVTFPixelData(heightFileData, heightHeader, heightTex, false)) {
-                        heightTex.hash = GenerateTextureHash(heightMapPath + "_height", heightTex.width, heightTex.height);
-                        std::string outputPath = GenerateOutputPath(heightTex.hash, "_height");
-                        
-                        if (WriteTextureToDDS(heightTex, outputPath)) {
-                            matInfo.heightPath = outputPath;
-                            matInfo.heightScale = props.hasParallaxMapScale ? props.parallaxMapScale : 0.025f;
-                            m_writtenTexturePaths[heightTex.hash] = outputPath;
-                            
-                            if (m_debugOutput) {
-                                Msg("[LegacyTextureProcessor] Wrote height/displacement texture: %s (scale=%.4f)\n", 
-                                    outputPath.c_str(), matInfo.heightScale);
-                            }
-                        }
-                    }
-                }
-            } else if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] Failed to read height map: %s\n", heightMapPath.c_str());
-            }
-        }
-    }
-    
-    // Store for USDA generation
-    m_processedMaterialInfo[textureHash] = matInfo;
-    m_stats.materialsProcessed++;
-    
-    if (m_debugOutput) {
-        Msg("[LegacyTextureProcessor] Processed material '%s' (hash 0x%llX): roughness=%.2f, metallic=%.2f%s%s%s%s%s\n",
-            props.materialName.c_str(), textureHash, props.roughness, props.metallic,
-            !matInfo.normalPath.empty() ? " [normal]" : "",
-            !matInfo.roughnessPath.empty() ? " [roughness]" : "",
-            !matInfo.metallicPath.empty() ? " [metallic]" : "",
-            !matInfo.heightPath.empty() ? " [height]" : "",
-            skippedCount > 0 ? " (some textures already existed)" : "");
-    }
-    
-    return true;
+    return false;
 }
 
 int TextureProcessor::ProcessAllTrackedMaterials() {

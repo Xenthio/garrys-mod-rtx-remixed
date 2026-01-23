@@ -27,6 +27,9 @@ class ILuaBase;
 // This system can be extended with custom processors for different texture/material types
 namespace LegacyTextureProcessor {
 
+// Forward declaration for modular format handlers
+struct ProcessingContext;
+
 // VTF file format structures
 #pragma pack(push, 1)
 struct VTFFileHeader {
@@ -379,6 +382,9 @@ private:
     // Discover companion textures that might not be explicitly referenced in the VMT
     // E.g., if basetexture is "metal/metal001", look for "metal/metal001_normal", "_height", "_mask", "_spec"
     void DiscoverCompanionTextures(const std::string& baseTexturePath, MaterialPBRProperties& props);
+    
+    // Create processing context for modular format handlers
+    ProcessingContext CreateProcessingContext();
     
     // Get filesystem interface
     IFileSystem* GetFileSystem();
