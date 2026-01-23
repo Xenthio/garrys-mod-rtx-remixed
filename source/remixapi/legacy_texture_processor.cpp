@@ -3289,6 +3289,7 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
         
         // Store for USDA generation
         m_processedMaterialInfo[textureHash] = matInfo;
+        WriteModUSDA();
         m_stats.materialsProcessed++;
         
         if (m_debugOutput) {
