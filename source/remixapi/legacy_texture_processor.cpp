@@ -1942,6 +1942,27 @@ struct VMTProperties {
     bool hasEmissionScale;
     float emissionTint[3];          // $emissiontint - emission color tint
     bool hasEmissionTint;
+    
+    // =========================================================================
+    // GPBR (Strata Source) community PBR format support ("PBR" shader)
+    // =========================================================================
+    bool isGPBR;                    // Detected GPBR format (shader name = "PBR")
+    std::string mraoTexture;        // $mraotexture - MRAO map (Metallic/Roughness/AO)
+    bool hasMRAOTexture;
+    float mraoScale;                // $mraoscale - MRAO intensity multiplier
+    bool hasMRAOScale;
+    std::string gpbrEmissionTexture; // $emissiontexture - Emission/glow map
+    bool hasGPBREmissionTexture;
+    float gpbrEmissionScale;        // $emissionscale - Emission intensity (different from ExoPBR)
+    bool hasGPBREmissionScale;
+    bool gpbrParallax;              // $parallax - Enable parallax mapping (height in normal alpha)
+    bool hasGPBRParallax;
+    float gpbrParallaxDepth;        // $parallaxdepth - Displacement depth
+    bool hasGPBRParallaxDepth;
+    float gpbrParallaxCenter;       // $parallaxcenter - Parallax center point
+    bool hasGPBRParallaxCenter;
+    float gpbrAlpha;                // $alpha - Transparency value
+    bool hasGPBRAlpha;
 };
 
 // Parse a VMT file and extract properties that FindVar doesn't reliably expose
@@ -2019,6 +2040,23 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
     outProps.emissionScale = 1.0f;
     outProps.hasEmissionTint = false;
     outProps.emissionTint[0] = outProps.emissionTint[1] = outProps.emissionTint[2] = 1.0f;
+    
+    // GPBR (Strata Source) format properties
+    outProps.isGPBR = false;
+    outProps.hasMRAOTexture = false;
+    outProps.hasMRAOScale = false;
+    outProps.mraoScale = 1.0f;
+    outProps.hasGPBREmissionTexture = false;
+    outProps.hasGPBREmissionScale = false;
+    outProps.gpbrEmissionScale = 1.0f;
+    outProps.hasGPBRParallax = false;
+    outProps.gpbrParallax = false;
+    outProps.hasGPBRParallaxDepth = false;
+    outProps.gpbrParallaxDepth = 0.1f;
+    outProps.hasGPBRParallaxCenter = false;
+    outProps.gpbrParallaxCenter = 0.5f;
+    outProps.hasGPBRAlpha = false;
+    outProps.gpbrAlpha = 1.0f;
     
     // Build VMT path
     std::string vmtPath = "materials/" + materialName;
@@ -2469,6 +2507,91 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
         }
     }
     
+    // =========================================================================
+    // GPBR (Strata Source) community PBR format detection
+    // GPBR uses the "PBR" shader name
+    // =========================================================================
+    if (shaderLower == "pbr") {
+        outProps.isGPBR = true;
+        
+        // $mraotexture - MRAO map (Metallic=R, Roughness=G, AO=B)
+        if (contentLower.find("$mraotexture") != std::string::npos) {
+            outProps.mraoTexture = findValue("$mraotexture");
+            outProps.hasMRAOTexture = !outProps.mraoTexture.empty();
+        }
+        
+        // $mraoscale - MRAO intensity multiplier
+        if (contentLower.find("$mraoscale") != std::string::npos) {
+            std::string value = findValue("$mraoscale");
+            if (!value.empty()) {
+                outProps.mraoScale = (float)atof(value.c_str());
+                outProps.hasMRAOScale = true;
+            }
+        }
+        
+        // $emissiontexture - Emission/glow map
+        if (contentLower.find("$emissiontexture") != std::string::npos) {
+            outProps.gpbrEmissionTexture = findValue("$emissiontexture");
+            outProps.hasGPBREmissionTexture = !outProps.gpbrEmissionTexture.empty();
+        }
+        
+        // $emissionscale - Emission intensity (note: reuses name from ExoPBR but separate field)
+        if (contentLower.find("$emissionscale") != std::string::npos) {
+            std::string value = findValue("$emissionscale");
+            if (!value.empty()) {
+                // Handle both single float and vector format
+                if (value[0] == '[') {
+                    float r = 1.0f, g = 1.0f, b = 1.0f;
+                    if (sscanf(value.c_str(), "[%f %f %f]", &r, &g, &b) >= 3) {
+                        // Use average as scale
+                        outProps.gpbrEmissionScale = (r + g + b) / 3.0f;
+                    } else {
+                        outProps.gpbrEmissionScale = (float)atof(value.c_str() + 1);
+                    }
+                } else {
+                    outProps.gpbrEmissionScale = (float)atof(value.c_str());
+                }
+                outProps.hasGPBREmissionScale = true;
+            }
+        }
+        
+        // $parallax - Enable parallax mapping (height in normal map alpha)
+        if (contentLower.find("$parallax") != std::string::npos) {
+            std::string value = findValue("$parallax");
+            if (!value.empty()) {
+                outProps.gpbrParallax = (atoi(value.c_str()) != 0);
+                outProps.hasGPBRParallax = true;
+            }
+        }
+        
+        // $parallaxdepth - Parallax/displacement depth
+        if (contentLower.find("$parallaxdepth") != std::string::npos) {
+            std::string value = findValue("$parallaxdepth");
+            if (!value.empty()) {
+                outProps.gpbrParallaxDepth = (float)atof(value.c_str());
+                outProps.hasGPBRParallaxDepth = true;
+            }
+        }
+        
+        // $parallaxcenter - Parallax center point
+        if (contentLower.find("$parallaxcenter") != std::string::npos) {
+            std::string value = findValue("$parallaxcenter");
+            if (!value.empty()) {
+                outProps.gpbrParallaxCenter = (float)atof(value.c_str());
+                outProps.hasGPBRParallaxCenter = true;
+            }
+        }
+        
+        // $alpha - Transparency value
+        if (contentLower.find("$alpha") != std::string::npos) {
+            std::string value = findValue("$alpha");
+            if (!value.empty()) {
+                outProps.gpbrAlpha = (float)atof(value.c_str());
+                outProps.hasGPBRAlpha = true;
+            }
+        }
+    }
+    
     if (debugOutput) {
         Msg("[LegacyTextureProcessor] VMT direct parse for '%s':\n", materialName.c_str());
         Msg("  shader='%s', $basetexture='%s', $bumpmap='%s'\n",
@@ -2502,6 +2625,16 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
             if (outProps.hasTexture3) Msg("    $texture3 (Emission)='%s'\n", outProps.texture3.c_str());
             if (outProps.hasEmissionScale) Msg("    $emissionscale=%.2f\n", outProps.emissionScale);
             if (outProps.hasEmissionTint) Msg("    $emissiontint=[%.2f %.2f %.2f]\n", outProps.emissionTint[0], outProps.emissionTint[1], outProps.emissionTint[2]);
+        }
+        // GPBR specific logging
+        if (outProps.isGPBR) {
+            Msg("  [GPBR] Detected Strata Source PBR format!\n");
+            if (outProps.hasMRAOTexture) Msg("    $mraotexture='%s'\n", outProps.mraoTexture.c_str());
+            if (outProps.hasMRAOScale) Msg("    $mraoscale=%.2f\n", outProps.mraoScale);
+            if (outProps.hasGPBREmissionTexture) Msg("    $emissiontexture='%s'\n", outProps.gpbrEmissionTexture.c_str());
+            if (outProps.hasGPBREmissionScale) Msg("    $emissionscale=%.2f\n", outProps.gpbrEmissionScale);
+            if (outProps.hasGPBRParallax) Msg("    $parallax=%d, depth=%.3f\n", outProps.gpbrParallax ? 1 : 0, outProps.gpbrParallaxDepth);
+            if (outProps.hasGPBRAlpha) Msg("    $alpha=%.2f\n", outProps.gpbrAlpha);
         }
     }
     
@@ -2621,6 +2754,21 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     outProps.hasEmissionScale = false;
     outProps.emissionTint[0] = outProps.emissionTint[1] = outProps.emissionTint[2] = 1.0f;
     outProps.hasEmissionTint = false;
+    
+    // GPBR (Strata Source) community PBR format
+    outProps.isGPBR = false;
+    outProps.mraoTexturePath = "";
+    outProps.hasMRAOTexture = false;
+    outProps.mraoScale = 1.0f;
+    outProps.hasMRAOScale = false;
+    outProps.gpbrEmissionPath = "";
+    outProps.hasGPBREmission = false;
+    outProps.gpbrEmissionScale = 1.0f;
+    outProps.hasGPBREmissionScale = false;
+    outProps.gpbrParallax = false;
+    outProps.gpbrParallaxDepth = 0.1f;
+    outProps.gpbrAlpha = 1.0f;
+    outProps.hasGPBRAlpha = false;
     
     // Get the shader name
     const char* shaderName = pMaterial->GetShaderName();
@@ -3252,6 +3400,66 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     }
     
     // =========================================================================
+    // GPBR (Strata Source) community PBR format detection
+    // GPBR provides direct PBR textures - MRAO map, normal, emission
+    // =========================================================================
+    if (hasVMTParsed && vmtParsed.isGPBR) {
+        outProps.isGPBR = true;
+        
+        // Copy MRAO texture path
+        if (vmtParsed.hasMRAOTexture && IsValidTexturePath(vmtParsed.mraoTexture)) {
+            outProps.mraoTexturePath = vmtParsed.mraoTexture;
+            outProps.hasMRAOTexture = true;
+            if (m_debugOutput) {
+                Msg("[LegacyTextureProcessor] %s: [GPBR] MRAO texture = %s\n", materialName.c_str(), vmtParsed.mraoTexture.c_str());
+            }
+        }
+        
+        // MRAO scale
+        if (vmtParsed.hasMRAOScale) {
+            outProps.mraoScale = vmtParsed.mraoScale;
+            outProps.hasMRAOScale = true;
+        }
+        
+        // Emission texture
+        if (vmtParsed.hasGPBREmissionTexture && IsValidTexturePath(vmtParsed.gpbrEmissionTexture)) {
+            outProps.gpbrEmissionPath = vmtParsed.gpbrEmissionTexture;
+            outProps.hasGPBREmission = true;
+            if (m_debugOutput) {
+                Msg("[LegacyTextureProcessor] %s: [GPBR] Emission texture = %s\n", materialName.c_str(), vmtParsed.gpbrEmissionTexture.c_str());
+            }
+        }
+        
+        // Emission scale
+        if (vmtParsed.hasGPBREmissionScale) {
+            outProps.gpbrEmissionScale = vmtParsed.gpbrEmissionScale;
+            outProps.hasGPBREmissionScale = true;
+        }
+        
+        // Parallax settings
+        if (vmtParsed.hasGPBRParallax) {
+            outProps.gpbrParallax = vmtParsed.gpbrParallax;
+        }
+        if (vmtParsed.hasGPBRParallaxDepth) {
+            outProps.gpbrParallaxDepth = vmtParsed.gpbrParallaxDepth;
+        }
+        
+        // Alpha transparency
+        if (vmtParsed.hasGPBRAlpha) {
+            outProps.gpbrAlpha = vmtParsed.gpbrAlpha;
+            outProps.hasGPBRAlpha = true;
+        }
+        
+        // GPBR materials have direct PBR data
+        outProps.roughness = 0.5f;  // Default, will be overridden by MRAO map
+        outProps.metallic = 0.0f;   // Default, will be overridden by MRAO map
+        
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: [GPBR] Material detected - using direct PBR path\n", materialName.c_str());
+        }
+    }
+    
+    // =========================================================================
     // END: Additional VMT-parsed properties
     // =========================================================================
     
@@ -3660,7 +3868,212 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
     }
     
     // =========================================================================
-    // Standard Source Engine material processing (non-ExoPBR path)
+    // GPBR (Strata Source) community PBR format processing
+    // GPBR provides direct PBR textures - MRAO map (Metallic/Roughness/AO), normal, emission
+    // =========================================================================
+    if (props.isGPBR) {
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] Processing GPBR material: %s\n", props.materialName.c_str());
+        }
+        
+        // Process MRAO texture ($mraotexture) - split into roughness and metallic
+        // MRAO layout: R=Metallic, G=Roughness, B=AO
+        if (props.hasMRAOTexture && !props.mraoTexturePath.empty()) {
+            std::string vtfPath = props.mraoTexturePath;
+            std::vector<uint8_t> fileData;
+            
+            if (ReadVTFFile(vtfPath, fileData)) {
+                VTFFileHeader header;
+                if (ParseVTFHeader(fileData, header)) {
+                    ConvertedTexture mraoTex;
+                    mraoTex.isNormalMap = false;
+                    
+                    if (ExtractVTFPixelData(fileData, header, mraoTex, false)) {
+                        float mraoScale = props.hasMRAOScale ? props.mraoScale : 1.0f;
+                        
+                        // Create roughness texture from GREEN channel
+                        {
+                            ConvertedTexture roughTex;
+                            roughTex.width = mraoTex.width;
+                            roughTex.height = mraoTex.height;
+                            roughTex.mipLevels = 1;
+                            roughTex.format = REMIXAPI_FORMAT_R8G8B8A8_UNORM;
+                            roughTex.isNormalMap = false;
+                            roughTex.pixelData.resize(mraoTex.width * mraoTex.height * 4);
+                            
+                            for (uint32_t i = 0; i < mraoTex.width * mraoTex.height; i++) {
+                                uint8_t roughness = mraoTex.pixelData[i * 4 + 1];  // Green channel
+                                roughness = (uint8_t)(roughness * mraoScale);
+                                roughTex.pixelData[i * 4 + 0] = roughness;
+                                roughTex.pixelData[i * 4 + 1] = roughness;
+                                roughTex.pixelData[i * 4 + 2] = roughness;
+                                roughTex.pixelData[i * 4 + 3] = 255;
+                            }
+                            
+                            uint64_t roughHash = GenerateTextureHash(props.mraoTexturePath + "_roughness", roughTex.width, roughTex.height);
+                            std::string outputPath = GenerateOutputPath(roughHash, "_roughness");
+                            
+                            if (FileExists(outputPath)) {
+                                matInfo.roughnessPath = outputPath;
+                                skippedCount++;
+                            } else if (WriteTextureToDDS(roughTex, outputPath)) {
+                                matInfo.roughnessPath = outputPath;
+                                m_stats.materialsWithRoughness++;
+                                if (m_debugOutput) {
+                                    Msg("[LegacyTextureProcessor] [GPBR] Wrote roughness from MRAO: %s\n", outputPath.c_str());
+                                }
+                            }
+                        }
+                        
+                        // Create metallic texture from RED channel
+                        {
+                            ConvertedTexture metalTex;
+                            metalTex.width = mraoTex.width;
+                            metalTex.height = mraoTex.height;
+                            metalTex.mipLevels = 1;
+                            metalTex.format = REMIXAPI_FORMAT_R8G8B8A8_UNORM;
+                            metalTex.isNormalMap = false;
+                            metalTex.pixelData.resize(mraoTex.width * mraoTex.height * 4);
+                            
+                            for (uint32_t i = 0; i < mraoTex.width * mraoTex.height; i++) {
+                                uint8_t metallic = mraoTex.pixelData[i * 4 + 0];  // Red channel
+                                metallic = (uint8_t)(metallic * mraoScale);
+                                metalTex.pixelData[i * 4 + 0] = metallic;
+                                metalTex.pixelData[i * 4 + 1] = metallic;
+                                metalTex.pixelData[i * 4 + 2] = metallic;
+                                metalTex.pixelData[i * 4 + 3] = 255;
+                            }
+                            
+                            uint64_t metalHash = GenerateTextureHash(props.mraoTexturePath + "_metallic", metalTex.width, metalTex.height);
+                            std::string outputPath = GenerateOutputPath(metalHash, "_metallic");
+                            
+                            if (FileExists(outputPath)) {
+                                matInfo.metallicPath = outputPath;
+                                skippedCount++;
+                            } else if (WriteTextureToDDS(metalTex, outputPath)) {
+                                matInfo.metallicPath = outputPath;
+                                m_stats.materialsWithMetallic++;
+                                if (m_debugOutput) {
+                                    Msg("[LegacyTextureProcessor] [GPBR] Wrote metallic from MRAO: %s\n", outputPath.c_str());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Process normal map ($bumpmap) - also check for height in alpha when parallax enabled
+        if (props.hasBumpMap && !props.bumpMapPath.empty()) {
+            std::string vtfPath = props.bumpMapPath;
+            std::vector<uint8_t> fileData;
+            
+            if (ReadVTFFile(vtfPath, fileData)) {
+                VTFFileHeader header;
+                if (ParseVTFHeader(fileData, header)) {
+                    ConvertedTexture normalTex;
+                    normalTex.isNormalMap = true;
+                    
+                    if (ExtractVTFPixelData(fileData, header, normalTex, true)) {
+                        // Write normal map
+                        uint64_t normalHash = GenerateTextureHash(props.bumpMapPath + "_normal", normalTex.width, normalTex.height);
+                        std::string outputPath = GenerateOutputPath(normalHash, "_normal");
+                        
+                        if (FileExists(outputPath)) {
+                            matInfo.normalPath = outputPath;
+                            skippedCount++;
+                        } else if (WriteTextureToDDS(normalTex, outputPath)) {
+                            matInfo.normalPath = outputPath;
+                            m_stats.materialsWithNormal++;
+                            if (m_debugOutput) {
+                                Msg("[LegacyTextureProcessor] [GPBR] Wrote normal map: %s\n", outputPath.c_str());
+                            }
+                        }
+                        
+                        // If parallax is enabled, extract height from normal map alpha
+                        if (props.gpbrParallax) {
+                            ConvertedTexture heightTex;
+                            heightTex.width = normalTex.width;
+                            heightTex.height = normalTex.height;
+                            heightTex.mipLevels = 1;
+                            heightTex.format = REMIXAPI_FORMAT_R8G8B8A8_UNORM;
+                            heightTex.isNormalMap = false;
+                            heightTex.pixelData.resize(normalTex.width * normalTex.height * 4);
+                            
+                            for (uint32_t i = 0; i < normalTex.width * normalTex.height; i++) {
+                                uint8_t height = normalTex.pixelData[i * 4 + 3];  // Alpha channel
+                                heightTex.pixelData[i * 4 + 0] = height;
+                                heightTex.pixelData[i * 4 + 1] = height;
+                                heightTex.pixelData[i * 4 + 2] = height;
+                                heightTex.pixelData[i * 4 + 3] = 255;
+                            }
+                            
+                            uint64_t heightHash = GenerateTextureHash(props.bumpMapPath + "_height", heightTex.width, heightTex.height);
+                            std::string heightPath = GenerateOutputPath(heightHash, "_height");
+                            
+                            if (FileExists(heightPath)) {
+                                matInfo.heightPath = heightPath;
+                                matInfo.heightScale = props.gpbrParallaxDepth;
+                                skippedCount++;
+                            } else if (WriteTextureToDDS(heightTex, heightPath)) {
+                                matInfo.heightPath = heightPath;
+                                matInfo.heightScale = props.gpbrParallaxDepth;
+                                if (m_debugOutput) {
+                                    Msg("[LegacyTextureProcessor] [GPBR] Wrote height from normal alpha: %s (depth=%.3f)\n", heightPath.c_str(), props.gpbrParallaxDepth);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Process emission texture ($emissiontexture)
+        if (props.hasGPBREmission && !props.gpbrEmissionPath.empty()) {
+            std::string vtfPath = props.gpbrEmissionPath;
+            std::vector<uint8_t> fileData;
+            
+            if (ReadVTFFile(vtfPath, fileData)) {
+                VTFFileHeader header;
+                if (ParseVTFHeader(fileData, header)) {
+                    ConvertedTexture emissionTex;
+                    emissionTex.isNormalMap = false;
+                    
+                    if (ExtractVTFPixelData(fileData, header, emissionTex, false)) {
+                        uint64_t emissionHash = GenerateTextureHash(props.gpbrEmissionPath + "_emission", emissionTex.width, emissionTex.height);
+                        std::string outputPath = GenerateOutputPath(emissionHash, "_emission");
+                        
+                        if (FileExists(outputPath)) {
+                            matInfo.emissionPath = outputPath;
+                            matInfo.emissionIntensity = props.hasGPBREmissionScale ? props.gpbrEmissionScale : 1.0f;
+                            skippedCount++;
+                        } else if (WriteTextureToDDS(emissionTex, outputPath)) {
+                            matInfo.emissionPath = outputPath;
+                            matInfo.emissionIntensity = props.hasGPBREmissionScale ? props.gpbrEmissionScale : 1.0f;
+                            if (m_debugOutput) {
+                                Msg("[LegacyTextureProcessor] [GPBR] Wrote emission texture: %s\n", outputPath.c_str());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Store and write USDA
+        m_processedMaterialInfo[textureHash] = matInfo;
+        WriteUSDAFile();
+        m_stats.materialsProcessed++;
+        
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] [GPBR] Material processed: %s (skipped %d existing)\n", 
+                props.materialName.c_str(), skippedCount);
+        }
+        
+        return true;
+    }
+    
+    // =========================================================================
+    // Standard Source Engine material processing (non-ExoPBR/GPBR path)
     // =========================================================================
     
     // Write normal map to disk if available

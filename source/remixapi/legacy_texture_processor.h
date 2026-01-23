@@ -201,6 +201,23 @@ struct MaterialPBRProperties {
     bool hasEmissionScale;
     float emissionTint[3];              // $emissiontint - emission color tint
     bool hasEmissionTint;
+    
+    // =========================================================================
+    // GPBR (Strata Source) community PBR format support ("PBR" shader)
+    // =========================================================================
+    bool isGPBR;                        // Detected GPBR format (shader name = "PBR")
+    std::string mraoTexturePath;        // $mraotexture - MRAO map (Metallic/Roughness/AO)
+    bool hasMRAOTexture;
+    float mraoScale;                    // $mraoscale - MRAO intensity multiplier
+    bool hasMRAOScale;
+    std::string gpbrEmissionPath;       // $emissiontexture - Emission/glow map
+    bool hasGPBREmission;
+    float gpbrEmissionScale;            // $emissionscale - Emission intensity
+    bool hasGPBREmissionScale;
+    bool gpbrParallax;                  // $parallax - Enable parallax mapping
+    float gpbrParallaxDepth;            // $parallaxdepth - Displacement depth
+    float gpbrAlpha;                    // $alpha - Transparency value
+    bool hasGPBRAlpha;
 };
 
 // Main converter class - core VTF to DDS/PBR conversion
