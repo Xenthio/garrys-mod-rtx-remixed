@@ -252,7 +252,7 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
                     }
                     
                     if (ctx.debugOutput) {
-                        Msg("[BFT] Applying metallic albedo boost: [%.2f %.2f %.2f]\n", 
+                        Msg("[BFT] Applying metallic albedo boost: [%.2f %.2f %.2f] (masked by alpha channel)\n", 
                             boostR, boostG, boostB);
                     }
                     
@@ -272,31 +272,47 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
                         float b = static_cast<float>(baseTex.pixelData[i * 4 + 2]) / 255.0f;
                         uint8_t a = baseTex.pixelData[i * 4 + 3];
                         
-                        // Apply boost (metals reflect their color, so boosting dark metals reveals their true color)
-                        r = min(1.0f, r * boostR);
-                        g = min(1.0f, g * boostG);
-                        b = min(1.0f, b * boostB);
+                        // Use alpha channel as metallic mask - only brighten metallic parts
+                        // Alpha = 255 means fully metallic, alpha = 0 means non-metallic
+                        float metallicMask = static_cast<float>(a) / 255.0f;
+                        
+                        // Save original colors for non-metallic parts
+                        float origR = r;
+                        float origG = g;
+                        float origB = b;
+                        
+                        // Calculate boosted metallic colors
+                        float metalR = min(1.0f, r * boostR);
+                        float metalG = min(1.0f, g * boostG);
+                        float metalB = min(1.0f, b * boostB);
                         
                         // Apply saturation boost for metals to recover gold, copper, bronze tones
-                        float luminance = 0.2126f * r + 0.7152f * g + 0.0722f * b;
-                        r = min(1.0f, luminance + (r - luminance) * METALLIC_SATURATION_BOOST);
-                        g = min(1.0f, luminance + (g - luminance) * METALLIC_SATURATION_BOOST);
-                        b = min(1.0f, luminance + (b - luminance) * METALLIC_SATURATION_BOOST);
+                        float luminance = 0.2126f * metalR + 0.7152f * metalG + 0.0722f * metalB;
+                        metalR = min(1.0f, luminance + (metalR - luminance) * METALLIC_SATURATION_BOOST);
+                        metalG = min(1.0f, luminance + (metalG - luminance) * METALLIC_SATURATION_BOOST);
+                        metalB = min(1.0f, luminance + (metalB - luminance) * METALLIC_SATURATION_BOOST);
                         
                         // Ensure minimum brightness for metals (no true black metals exist)
-                        if (r < MIN_METALLIC_BRIGHTNESS && g < MIN_METALLIC_BRIGHTNESS && b < MIN_METALLIC_BRIGHTNESS) {
+                        if (metalR < MIN_METALLIC_BRIGHTNESS && metalG < MIN_METALLIC_BRIGHTNESS && metalB < MIN_METALLIC_BRIGHTNESS) {
                             // Scale up to minimum brightness while preserving hue
-                            float maxC = max(r, max(g, b));
+                            float maxC = max(metalR, max(metalG, metalB));
                             if (maxC > 0.01f) {
                                 float scale = MIN_METALLIC_BRIGHTNESS / maxC;
-                                r *= scale;
-                                g *= scale;
-                                b *= scale;
+                                metalR *= scale;
+                                metalG *= scale;
+                                metalB *= scale;
                             } else {
                                 // Pure black - default to neutral metal (like chrome/silver)
-                                r = g = b = DEFAULT_NEUTRAL_METAL;
+                                metalR = metalG = metalB = DEFAULT_NEUTRAL_METAL;
                             }
                         }
+                        
+                        // Blend between original (non-metallic) and boosted (metallic) based on mask
+                        // metallicMask = 1.0 → fully boosted metal color
+                        // metallicMask = 0.0 → original color unchanged
+                        r = origR + (metalR - origR) * metallicMask;
+                        g = origG + (metalG - origG) * metallicMask;
+                        b = origB + (metalB - origB) * metallicMask;
                         
                         albedoTex.pixelData[i * 4 + 0] = static_cast<uint8_t>(r * 255.0f);
                         albedoTex.pixelData[i * 4 + 1] = static_cast<uint8_t>(g * 255.0f);
