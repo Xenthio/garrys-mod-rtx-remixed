@@ -3781,7 +3781,7 @@ ProcessingContext TextureProcessor::CreateProcessingContext() {
 }
 
 // Helper to copy ProcessedMaterial results to ProcessedMaterialInfo
-static void CopyProcessedMaterial(const ProcessedMaterial& src, ProcessedMaterialInfo& dst) {
+static void CopyProcessedMaterial(const ProcessedMaterial& src, TextureProcessor::ProcessedMaterialInfo& dst) {
     if (!src.normalPath.empty()) dst.normalPath = src.normalPath;
     if (!src.roughnessPath.empty()) dst.roughnessPath = src.roughnessPath;
     if (!src.metallicPath.empty()) dst.metallicPath = src.metallicPath;

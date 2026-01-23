@@ -277,6 +277,25 @@ public:
     };
     Stats GetStats() const;
     
+    // Processed material info for USDA generation (public for static helper access)
+    struct ProcessedMaterialInfo {
+        uint64_t textureHash;
+        std::string normalPath;
+        std::string roughnessPath;
+        std::string metallicPath;
+        std::string heightPath;       // Displacement/height map path
+        std::string emissivePath;     // Emission/self-illumination texture path
+        std::string baseTexturePath;  // For non-Refract glass: used as transmittance_texture to color the glass
+        std::string transmittancePath;  // For Refract glass: $refracttinttexture converted to DDS
+        float roughnessConstant;
+        float metallicConstant;
+        float heightScale;            // Displacement scale (from $parallaxmapscale, default 0.025)
+        bool isGlass;               // Whether this material should use the translucent glass shader
+        bool isRefractShader;       // Whether this is a Refract shader (don't use baseTexture for transmittance)
+        float ior;                  // Index of Refraction (for glass, default 1.5)
+        float emissionIntensity;    // Emission intensity (from $emissionscale)
+    };
+    
     // Clear processed materials cache (for map changes)
     void ClearCache();
     
@@ -411,23 +430,6 @@ private:
     std::unordered_map<uint64_t, std::string> m_writtenTexturePaths;
     
     // Track material data for USDA generation
-    struct ProcessedMaterialInfo {
-        uint64_t textureHash;
-        std::string normalPath;
-        std::string roughnessPath;
-        std::string metallicPath;
-        std::string heightPath;       // Displacement/height map path
-        std::string emissivePath;     // Emission/self-illumination texture path
-        std::string baseTexturePath;  // For non-Refract glass: used as transmittance_texture to color the glass
-        std::string transmittancePath;  // For Refract glass: $refracttinttexture converted to DDS
-        float roughnessConstant;
-        float metallicConstant;
-        float heightScale;            // Displacement scale (from $parallaxmapscale, default 0.025)
-        bool isGlass;               // Whether this material should use the translucent glass shader
-        bool isRefractShader;       // Whether this is a Refract shader (don't use baseTexture for transmittance)
-        float ior;                  // Index of Refraction (for glass, default 1.5)
-        float emissionIntensity;    // Emission intensity (from $emissionscale)
-    };
     std::unordered_map<uint64_t, ProcessedMaterialInfo> m_processedMaterialInfo;
     
     // Flag to indicate USDA needs to be rewritten
