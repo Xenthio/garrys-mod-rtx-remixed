@@ -324,10 +324,6 @@ extern "C" {
     const remixapi_MeshInfo*  info,
     remixapi_MeshHandle*      out_handle);
 
-  typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_CreateMeshBatched)(
-    const remixapi_MeshInfo*  info,
-    remixapi_MeshHandle*      out_handle);
-
   typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_DestroyMesh)(
     remixapi_MeshHandle       handle);
 
@@ -775,7 +771,6 @@ extern "C" {
     PFN_remixapi_CreateMaterial     CreateMaterial;
     PFN_remixapi_DestroyMaterial    DestroyMaterial;
     PFN_remixapi_CreateMesh         CreateMesh;
-    PFN_remixapi_CreateMeshBatched  CreateMeshBatched;
     PFN_remixapi_DestroyMesh        DestroyMesh;
     PFN_remixapi_SetupCamera        SetupCamera;
     PFN_remixapi_DrawInstance       DrawInstance;
@@ -803,13 +798,13 @@ extern "C" {
 
     PFN_remixapi_Startup            Startup;
     PFN_remixapi_Present            Present;
-    remixapi_UIState                (*GetUIState)(void);
-    remixapi_ErrorCode              (*SetUIState)(remixapi_UIState state);
 
     // Optional extension functions (present starting in v0.5.1+)
     PFN_remixapi_RegisterCallbacks          RegisterCallbacks;
     PFN_remixapi_AutoInstancePersistentLights AutoInstancePersistentLights;
     PFN_remixapi_UpdateLightDefinition      UpdateLightDefinition;
+    remixapi_UIState                (*GetUIState)(void);
+    remixapi_ErrorCode              (*SetUIState)(remixapi_UIState state);
   } remixapi_Interface;
 
   REMIXAPI remixapi_ErrorCode REMIXAPI_CALL remixapi_InitializeLibrary(

@@ -172,7 +172,6 @@ namespace remix {
     Result< remixapi_MaterialHandle > CreateMaterial(const remixapi_MaterialInfo& info);
     Result< void >                    DestroyMaterial(remixapi_MaterialHandle handle);
     Result< remixapi_MeshHandle >     CreateMesh(const remixapi_MeshInfo& info);
-    Result< remixapi_MeshHandle >     CreateMeshBatched(const remixapi_MeshInfo& info);
     Result< void >                    DestroyMesh(remixapi_MeshHandle handle);
     Result< void >                    SetupCamera(const remixapi_CameraInfo& info);
          Result< void >                    DrawInstance(const remixapi_InstanceInfo& info);
@@ -182,6 +181,12 @@ namespace remix {
     Result< void >                    DrawLightInstance(remixapi_LightHandle handle);
     // Deferred update of an analytical light definition. Applied on render thread.
     Result< void >                    UpdateLightDefinition(remixapi_LightHandle handle, const remixapi_LightInfo& info);
+    // Optional frame-boundary callbacks (present starting in v0.5.1+)
+    Result< void >                    RegisterCallbacks(PFN_remixapi_BridgeCallback beginSceneCallback,
+                                                        PFN_remixapi_BridgeCallback endSceneCallback,
+                                                        PFN_remixapi_BridgeCallback presentCallback);
+    // Internal helper to auto-instance persistent external API lights once per frame
+    Result< void >                    AutoInstancePersistentLights();
     Result< void >                    SetConfigVariable(const char* key, const char* value);
     Result< void >                    AddTextureHash(const char* textureCategory, const char* textureHash);
     Result< void >                    RemoveTextureHash(const char* textureCategory, const char* textureHash);
@@ -225,7 +230,7 @@ namespace remix {
         return status;
       }
 
-      static_assert(sizeof(remixapi_Interface) == 264,
+      static_assert(sizeof(remixapi_Interface) == 256,
                     "Change version, update C++ wrapper when adding new functions");
 
       remix::Interface interfaceInCpp = {};
@@ -711,15 +716,6 @@ namespace remix {
     return handle;
   }
 
-  inline Result< remixapi_MeshHandle > Interface::CreateMeshBatched(const remixapi_MeshInfo& info) {
-    remixapi_MeshHandle handle = nullptr;
-    remixapi_ErrorCode status = m_CInterface.CreateMeshBatched(&info, &handle);
-    if (status != REMIXAPI_ERROR_CODE_SUCCESS) {
-      return status;
-    }
-    return handle;
-  }
-
   inline Result< void > Interface::DestroyMesh(remixapi_MeshHandle handle) {
     return m_CInterface.DestroyMesh(handle);
   }
@@ -1062,6 +1058,22 @@ namespace remix {
   inline Result< void > Interface::UpdateLightDefinition(remixapi_LightHandle handle, const remixapi_LightInfo& info) {
     if (m_CInterface.UpdateLightDefinition) {
       return m_CInterface.UpdateLightDefinition(handle, &info);
+    }
+    return REMIXAPI_ERROR_CODE_GET_PROC_ADDRESS_FAILURE;
+  }
+
+  inline Result< void > Interface::RegisterCallbacks(PFN_remixapi_BridgeCallback beginSceneCallback,
+                                                     PFN_remixapi_BridgeCallback endSceneCallback,
+                                                     PFN_remixapi_BridgeCallback presentCallback) {
+    if (m_CInterface.RegisterCallbacks) {
+      return m_CInterface.RegisterCallbacks(beginSceneCallback, endSceneCallback, presentCallback);
+    }
+    return REMIXAPI_ERROR_CODE_GET_PROC_ADDRESS_FAILURE;
+  }
+
+  inline Result< void > Interface::AutoInstancePersistentLights() {
+    if (m_CInterface.AutoInstancePersistentLights) {
+      return m_CInterface.AutoInstancePersistentLights();
     }
     return REMIXAPI_ERROR_CODE_GET_PROC_ADDRESS_FAILURE;
   }
