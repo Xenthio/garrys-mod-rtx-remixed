@@ -18,11 +18,13 @@
 #include <cstdint>
 
 // Forward declarations
-struct VTFFileHeader;
-struct ConvertedTexture;
 class IFileSystem;
 
 namespace LegacyTextureProcessor {
+
+// Forward declarations within namespace
+struct VTFFileHeader;
+struct ConvertedTexture;
 namespace VTF {
 
 // =========================================================================

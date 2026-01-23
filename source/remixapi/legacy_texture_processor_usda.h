@@ -12,12 +12,12 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <cstdint>
+#include <ostream>
+
+// Include full header for TextureProcessor::ProcessedMaterialInfo type
+#include "legacy_texture_processor.h"
 
 namespace LegacyTextureProcessor {
-
-// Forward declarations
-struct ProcessedMaterialInfo;
-
 namespace USDA {
 
 // =========================================================================
@@ -32,7 +32,7 @@ namespace USDA {
 // @param debugOutput - Whether to output debug messages
 // @return true if file was read successfully (or didn't exist)
 bool CheckExistingMaterials(const std::string& materialsUsdaPath,
-                            const std::unordered_map<uint64_t, ProcessedMaterialInfo>& materialInfo,
+                            const std::unordered_map<uint64_t, TextureProcessor::ProcessedMaterialInfo>& materialInfo,
                             std::unordered_set<uint64_t>& existingHashes,
                             int& newMaterialCount,
                             bool debugOutput = false);
@@ -49,7 +49,7 @@ bool WriteModUSDAFile(const std::string& modDir);
 // @return true on success
 bool WriteMaterialsUSDAFile(const std::string& modDir,
                             const std::string& outputDirectory,
-                            const std::unordered_map<uint64_t, ProcessedMaterialInfo>& materialInfo,
+                            const std::unordered_map<uint64_t, TextureProcessor::ProcessedMaterialInfo>& materialInfo,
                             bool debugOutput = false);
 
 // Write a single glass material entry to the stream
@@ -59,7 +59,7 @@ bool WriteMaterialsUSDAFile(const std::string& modDir,
 // @param outputDirectory - For relative path calculation
 void WriteGlassMaterial(std::ostream& stream,
                         uint64_t hash,
-                        const ProcessedMaterialInfo& info,
+                        const TextureProcessor::ProcessedMaterialInfo& info,
                         const std::string& outputDirectory);
 
 // Write a single opaque material entry to the stream
@@ -69,7 +69,7 @@ void WriteGlassMaterial(std::ostream& stream,
 // @param outputDirectory - For relative path calculation
 void WriteOpaqueMaterial(std::ostream& stream,
                          uint64_t hash,
-                         const ProcessedMaterialInfo& info,
+                         const TextureProcessor::ProcessedMaterialInfo& info,
                          const std::string& outputDirectory);
 
 // =========================================================================

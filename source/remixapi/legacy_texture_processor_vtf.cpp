@@ -176,8 +176,8 @@ size_t GetTotalMipmapSize(uint32_t width, uint32_t height, uint8_t mipmapCount, 
     
     for (int i = 0; i < mipmapCount; i++) {
         totalSize += GetImageDataSize(w, h, format);
-        w = std::max(1u, w / 2);
-        h = std::max(1u, h / 2);
+        w = max(1u, w / 2);
+        h = max(1u, h / 2);
     }
     
     return totalSize;
@@ -407,8 +407,8 @@ bool ExtractVTFPixelData(const std::vector<uint8_t>& fileData,
     // Skip all smaller mipmaps and all frames except the first
     size_t smallerMipsSize = 0;
     for (int mip = mipmapCount - 1; mip >= 1; mip--) {
-        uint32_t mipW = std::max(1u, header.width >> mip);
-        uint32_t mipH = std::max(1u, header.height >> mip);
+        uint32_t mipW = max(1u, header.width >> mip);
+        uint32_t mipH = max(1u, header.height >> mip);
         smallerMipsSize += GetImageDataSize(mipW, mipH, srcFormat) * frameCount;
     }
     
@@ -421,8 +421,8 @@ bool ExtractVTFPixelData(const std::vector<uint8_t>& fileData,
         // Try alternative: maybe single frame with no low-res image
         dataOffset = header.headerSize;
         for (int mip = mipmapCount - 1; mip >= 1; mip--) {
-            uint32_t mipW = std::max(1u, header.width >> mip);
-            uint32_t mipH = std::max(1u, header.height >> mip);
+            uint32_t mipW = max(1u, header.width >> mip);
+            uint32_t mipH = max(1u, header.height >> mip);
             dataOffset += GetImageDataSize(mipW, mipH, srcFormat);
         }
         
@@ -551,7 +551,7 @@ void ConvertNormalMapToOctahedral(ConvertedTexture& texture, bool debugOutput) {
         }
         
         // Convert to octahedral encoding
-        float absSum = std::abs(nx) + std::abs(ny) + std::abs(nz);
+        float absSum = fabs(nx) + fabs(ny) + fabs(nz);
         float octX = nx / absSum;
         float octY = ny / absSum;
         
