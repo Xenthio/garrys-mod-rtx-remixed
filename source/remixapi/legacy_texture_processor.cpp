@@ -3204,6 +3204,7 @@ static void CopyProcessedMaterial(const ProcessedMaterial& src, TextureProcessor
         dst.emissionIntensity = src.emissionIntensity;
     }
     if (!src.transmittancePath.empty()) dst.transmittancePath = src.transmittancePath;
+    if (!src.albedoPath.empty()) dst.albedoPath = src.albedoPath;
     if (src.roughnessConstant != 0.5f) dst.roughnessConstant = src.roughnessConstant;
     if (src.metallicConstant != 0.0f) dst.metallicConstant = src.metallicConstant;
     if (src.isGlass) {

@@ -201,6 +201,14 @@ void WriteOpaqueMaterial(std::ostream& stream,
     // Standard opaque materials use AperturePBR_Opaque shader
     stream << "                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@\n";
     
+    // Albedo/Diffuse texture override (e.g., BFT metallic albedo reconstruction)
+    if (!info.albedoPath.empty()) {
+        std::string relPath = GetRelativeTexturePath(info.albedoPath, outputDirectory);
+        stream << "                asset inputs:diffuse_texture = @" << relPath << "@ (\n";
+        stream << "                    colorSpace = \"srgb\"\n";
+        stream << "                )\n";
+    }
+    
     // Normal map
     if (!info.normalPath.empty()) {
         std::string relPath = GetRelativeTexturePath(info.normalPath, outputDirectory);

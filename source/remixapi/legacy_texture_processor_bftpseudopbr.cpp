@@ -301,7 +301,9 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
                         albedoTex.pixelData[i * 4 + 0] = static_cast<uint8_t>(r * 255.0f);
                         albedoTex.pixelData[i * 4 + 1] = static_cast<uint8_t>(g * 255.0f);
                         albedoTex.pixelData[i * 4 + 2] = static_cast<uint8_t>(b * 255.0f);
-                        albedoTex.pixelData[i * 4 + 3] = a;  // Preserve alpha
+                        // Set alpha to fully opaque - original alpha was used as a mask,
+                        // not as transparency. RTX Remix diffuse_texture shouldn't have alpha.
+                        albedoTex.pixelData[i * 4 + 3] = 255;
                     }
                     
                     // Write the boosted albedo

@@ -291,6 +291,7 @@ public:
         std::string emissivePath;     // Emission/self-illumination texture path
         std::string baseTexturePath;  // For non-Refract glass: used as transmittance_texture to color the glass
         std::string transmittancePath;  // For Refract glass: $refracttinttexture converted to DDS
+        std::string albedoPath;       // For modified albedo (e.g., BFT metallic reconstruction)
         float roughnessConstant;
         float metallicConstant;
         float heightScale;            // Displacement scale (from $parallaxmapscale, default 0.025)
