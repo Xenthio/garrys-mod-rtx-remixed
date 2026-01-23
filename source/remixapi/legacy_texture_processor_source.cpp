@@ -39,6 +39,9 @@
 namespace LegacyTextureProcessor {
 namespace SourceEngine {
 
+// Constants
+constexpr float MAX_PHONG_EXPONENT = 150.0f;
+
 // =========================================================================
 // Property Extraction
 // =========================================================================
@@ -98,7 +101,7 @@ void ExtractProperties(const VMTParseResult& vmt, MaterialPBRProperties& props) 
 // Roughness Calculation
 // =========================================================================
 
-static float PhongToRoughness(float phongExp, float maxExp = 150.0f) {
+static float PhongToRoughness(float phongExp, float maxExp = MAX_PHONG_EXPONENT) {
     if (phongExp < 1.0f) phongExp = 1.0f;
     if (phongExp > maxExp) phongExp = maxExp;
     
@@ -238,7 +241,7 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
                     for (uint32_t i = 0; i < expTex.width * expTex.height; i++) {
                         // Exponent texture: higher = shinier = lower roughness
                         float exp = static_cast<float>(expTex.pixelData[i * 4 + 0]);
-                        float roughness = PhongToRoughness(exp * 150.0f / 255.0f);
+                        float roughness = PhongToRoughness(exp * MAX_PHONG_EXPONENT / 255.0f);
                         uint8_t roughByte = static_cast<uint8_t>(roughness * 255.0f);
                         
                         roughTex.pixelData[i * 4 + 0] = roughByte;

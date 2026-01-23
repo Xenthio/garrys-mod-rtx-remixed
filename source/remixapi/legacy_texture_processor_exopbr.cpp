@@ -67,7 +67,7 @@ void ExtractProperties(const VMTParseResult& vmt, MaterialPBRProperties& props) 
     // $emissionscale
     std::string scale = vmt.findValue("$emissionscale");
     if (!scale.empty()) {
-        props.emissionScale = std::stof(scale);
+        props.emissionScale = static_cast<float>(atof(scale.c_str()));
         props.hasEmissionScale = true;
     }
     

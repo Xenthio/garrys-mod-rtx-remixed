@@ -1,6 +1,7 @@
 #ifdef _WIN64
 
 #include "remixapi.h"
+#include "legacy_texture_processor_formats.h"
 #include <tier0/dbg.h>
 #include <materialsystem/imaterialsystem.h>
 #include <materialsystem/imaterial.h>
@@ -1963,6 +1964,12 @@ struct VMTProperties {
     bool hasGPBRParallaxCenter;
     float gpbrAlpha;                // $alpha - Transparency value
     bool hasGPBRAlpha;
+    
+    // =========================================================================
+    // BlueFlyTrap PseudoPBR format support
+    // =========================================================================
+    bool isBFTPseudoPBR;            // Detected BlueFlyTrap PseudoPBR format
+    bool isBFTMetallicLayer;        // This is the metallic layer
 };
 
 // Parse a VMT file and extract properties that FindVar doesn't reliably expose
@@ -2057,6 +2064,10 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
     outProps.gpbrParallaxCenter = 0.5f;
     outProps.hasGPBRAlpha = false;
     outProps.gpbrAlpha = 1.0f;
+    
+    // BlueFlyTrap PseudoPBR format properties
+    outProps.isBFTPseudoPBR = false;
+    outProps.isBFTMetallicLayer = false;
     
     // Build VMT path
     std::string vmtPath = "materials/" + materialName;
@@ -2592,6 +2603,62 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
         }
     }
     
+    // =========================================================================
+    // BlueFlyTrap PseudoPBR format detection
+    // Uses VertexlitGeneric with $phongexponenttexture and specific patterns
+    // =========================================================================
+    if (shaderLower == "vertexlitgeneric" && outProps.hasPhongExponentTexture && 
+        !outProps.isExoPBR && !outProps.isGPBR) {
+        
+        bool hasMarker = false;
+        
+        // Check $color2 for black/grey (stacking marker)
+        if (contentLower.find("$color2") != std::string::npos) {
+            std::string color2 = findValue("$color2");
+            float r = 0, g = 0, b = 0;
+            if (sscanf(color2.c_str(), "[%f %f %f]", &r, &g, &b) == 3 ||
+                sscanf(color2.c_str(), "{%f %f %f}", &r, &g, &b) == 3) {
+                // Black (base) or mid-grey (metallic layer)
+                if ((r < 0.1f && g < 0.1f && b < 0.1f) ||
+                    (r >= 0.4f && r <= 0.6f && g >= 0.4f && g <= 0.6f && b >= 0.4f && b <= 0.6f)) {
+                    hasMarker = true;
+                }
+            }
+        }
+        
+        // Check for high phongboost (BFT uses 3-25 range)
+        if (outProps.hasPhongBoost && outProps.phongBoost >= 3.0f && outProps.phongBoost <= 25.0f) {
+            hasMarker = true;
+        }
+        
+        // Check characteristic fresnel ranges
+        if (outProps.hasPhongFresnelRanges) {
+            float f1 = outProps.phongFresnelRanges[0];
+            float f2 = outProps.phongFresnelRanges[1];
+            float f3 = outProps.phongFresnelRanges[2];
+            // Metallic: [0.87 0.9 1.0] or Dielectric: [0.05 0.115 0.945]
+            bool metallic = (f1 >= 0.8f && f1 <= 0.95f) && (f2 >= 0.85f && f2 <= 0.95f) && (f3 >= 0.95f);
+            bool dielectric = (f1 < 0.2f) && (f2 < 0.3f) && (f3 > 0.8f);
+            if (metallic || dielectric) hasMarker = true;
+        }
+        
+        // Check for method comments
+        if (contentLower.find("blueflytrap") != std::string::npos ||
+            contentLower.find("pseudo pbr") != std::string::npos ||
+            contentLower.find("pbr method") != std::string::npos) {
+            hasMarker = true;
+        }
+        
+        if (hasMarker) {
+            outProps.isBFTPseudoPBR = true;
+            
+            // Detect metallic layer: $translucent "1" + $phongalbedotint "1"
+            bool hasTranslucent = outProps.hasTranslucent && outProps.translucent;
+            bool hasAlbedoTint = outProps.hasPhongAlbedoTint && (outProps.phongAlbedoTint != 0);
+            outProps.isBFTMetallicLayer = hasTranslucent && hasAlbedoTint;
+        }
+    }
+    
     if (debugOutput) {
         Msg("[LegacyTextureProcessor] VMT direct parse for '%s':\n", materialName.c_str());
         Msg("  shader='%s', $basetexture='%s', $bumpmap='%s'\n",
@@ -2635,6 +2702,19 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
             if (outProps.hasGPBREmissionScale) Msg("    $emissionscale=%.2f\n", outProps.gpbrEmissionScale);
             if (outProps.hasGPBRParallax) Msg("    $parallax=%d, depth=%.3f\n", outProps.gpbrParallax ? 1 : 0, outProps.gpbrParallaxDepth);
             if (outProps.hasGPBRAlpha) Msg("    $alpha=%.2f\n", outProps.gpbrAlpha);
+        }
+        // BlueFlyTrap PseudoPBR specific logging
+        if (outProps.isBFTPseudoPBR) {
+            Msg("  [BFT-PseudoPBR] Detected BlueFlyTrap PseudoPBR format!\n");
+            if (outProps.hasPhongExponentTexture) {
+                Msg("    $phongexponenttexture='%s' (contains roughness)\n", outProps.phongExponentTexture.c_str());
+            }
+            Msg("    $phongboost=%.2f\n", outProps.phongBoost);
+            if (outProps.hasPhongFresnelRanges) {
+                Msg("    $phongfresnelranges=[%.2f %.2f %.2f]\n", 
+                    outProps.phongFresnelRanges[0], outProps.phongFresnelRanges[1], outProps.phongFresnelRanges[2]);
+            }
+            Msg("    Layer type: %s\n", outProps.isBFTMetallicLayer ? "METALLIC" : "BASE/DIELECTRIC");
         }
     }
     
@@ -2769,6 +2849,12 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     outProps.gpbrParallaxDepth = 0.1f;
     outProps.gpbrAlpha = 1.0f;
     outProps.hasGPBRAlpha = false;
+    
+    // BlueFlyTrap PseudoPBR format
+    outProps.isBFTPseudoPBR = false;
+    outProps.isBFTMetallicLayer = false;
+    outProps.bftExponentTexturePath = "";
+    outProps.hasBFTExponentTexture = false;
     
     // Get the shader name
     const char* shaderName = pMaterial->GetShaderName();
@@ -3460,6 +3546,39 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     }
     
     // =========================================================================
+    // BlueFlyTrap PseudoPBR format detection
+    // Uses $phongexponenttexture for roughness encoding
+    // =========================================================================
+    if (hasVMTParsed && vmtParsed.isBFTPseudoPBR) {
+        outProps.isBFTPseudoPBR = true;
+        outProps.isBFTMetallicLayer = vmtParsed.isBFTMetallicLayer;
+        
+        // The exponent texture contains the roughness info (inverted)
+        if (vmtParsed.hasPhongExponentTexture && IsValidTexturePath(vmtParsed.phongExponentTexture)) {
+            outProps.bftExponentTexturePath = vmtParsed.phongExponentTexture;
+            outProps.hasBFTExponentTexture = true;
+            if (m_debugOutput) {
+                Msg("[LegacyTextureProcessor] %s: [BFT] Exponent texture = %s\n", 
+                    materialName.c_str(), vmtParsed.phongExponentTexture.c_str());
+            }
+        }
+        
+        // Set metallic based on layer type
+        if (outProps.isBFTMetallicLayer) {
+            outProps.metallic = 0.9f;  // High metallic for metallic layers
+        } else {
+            outProps.metallic = 0.0f;  // Non-metallic for base layers
+        }
+        
+        outProps.roughness = 0.5f;  // Will be overridden by exponent texture
+        
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: [BFT] Material detected - %s layer\n", 
+                materialName.c_str(), outProps.isBFTMetallicLayer ? "metallic" : "base");
+        }
+    }
+    
+    // =========================================================================
     // END: Additional VMT-parsed properties
     // =========================================================================
     
@@ -4072,7 +4191,137 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
     }
     
     // =========================================================================
-    // Standard Source Engine material processing (non-ExoPBR/GPBR path)
+    // BlueFlyTrap PseudoPBR format processing
+    // Extracts roughness from $phongexponenttexture (inverted gloss encoding)
+    // Metallic is determined by layer type (base=dielectric, metallic=metal)
+    // =========================================================================
+    if (props.isBFTPseudoPBR) {
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] Processing BlueFlyTrap PseudoPBR material: %s (%s layer)\n", 
+                props.materialName.c_str(), props.isBFTMetallicLayer ? "metallic" : "base");
+        }
+        
+        // Process normal map (standard Source Engine bumpmap)
+        if (props.hasBumpMap && !props.bumpMapPath.empty()) {
+            std::string vtfPath = props.bumpMapPath;
+            std::vector<uint8_t> fileData;
+            
+            if (ReadVTFFile(vtfPath, fileData)) {
+                VTFFileHeader header;
+                if (ParseVTFHeader(fileData, header)) {
+                    ConvertedTexture normalTex;
+                    normalTex.isNormalMap = true;
+                    
+                    if (ExtractVTFPixelData(fileData, header, normalTex, false)) {
+                        // Handle SSBump if needed
+                        if (props.isSSBump) {
+                            ConvertSSBumpToNormal(normalTex);
+                        }
+                        
+                        ConvertNormalMapToOctahedral(normalTex);
+                        
+                        uint64_t normalHash = GenerateTextureHash(props.bumpMapPath + "_normal", normalTex.width, normalTex.height);
+                        std::string outputPath = GenerateOutputPath(normalHash, "_normal");
+                        
+                        if (FileExists(outputPath)) {
+                            matInfo.normalPath = outputPath;
+                            skippedCount++;
+                        } else if (WriteTextureToDDS(normalTex, outputPath)) {
+                            matInfo.normalPath = outputPath;
+                            m_stats.materialsWithNormals++;
+                            if (m_debugOutput) {
+                                Msg("[LegacyTextureProcessor] [BFT] Wrote normal map: %s\n", outputPath.c_str());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Process $phongexponenttexture to extract roughness
+        // BlueFlyTrap encodes glossiness in the red channel with a gamma curve
+        // Conversion: roughness = 1.0 - pow(exponent_value/255, 0.24)
+        if (props.hasBFTExponentTexture && !props.bftExponentTexturePath.empty()) {
+            std::string vtfPath = props.bftExponentTexturePath;
+            std::vector<uint8_t> fileData;
+            
+            if (ReadVTFFile(vtfPath, fileData)) {
+                VTFFileHeader header;
+                if (ParseVTFHeader(fileData, header)) {
+                    ConvertedTexture expTex;
+                    expTex.isNormalMap = false;
+                    
+                    if (ExtractVTFPixelData(fileData, header, expTex, false)) {
+                        // Create roughness texture from exponent texture
+                        ConvertedTexture roughTex;
+                        roughTex.width = expTex.width;
+                        roughTex.height = expTex.height;
+                        roughTex.mipLevels = 1;
+                        roughTex.format = REMIXAPI_FORMAT_R8G8B8A8_UNORM;
+                        roughTex.isNormalMap = false;
+                        roughTex.pixelData.resize(expTex.width * expTex.height * 4);
+                        
+                        for (uint32_t i = 0; i < expTex.width * expTex.height; i++) {
+                            // Red channel contains the encoded gloss
+                            uint8_t expValue = expTex.pixelData[i * 4 + 0];
+                            
+                            // Reverse the BFT encoding: levels middle input 0.24
+                            // gloss = (exp/255)^0.24, roughness = 1 - gloss
+                            float normalized = static_cast<float>(expValue) / 255.0f;
+                            float gloss = std::pow(normalized, 0.24f);
+                            float roughness = 1.0f - gloss;
+                            
+                            // Clamp and convert back to byte
+                            if (roughness < 0.04f) roughness = 0.04f;
+                            if (roughness > 1.0f) roughness = 1.0f;
+                            uint8_t roughByte = static_cast<uint8_t>(roughness * 255.0f);
+                            
+                            roughTex.pixelData[i * 4 + 0] = roughByte;
+                            roughTex.pixelData[i * 4 + 1] = roughByte;
+                            roughTex.pixelData[i * 4 + 2] = roughByte;
+                            roughTex.pixelData[i * 4 + 3] = 255;
+                        }
+                        
+                        uint64_t roughHash = GenerateTextureHash(props.bftExponentTexturePath + "_roughness", roughTex.width, roughTex.height);
+                        std::string outputPath = GenerateOutputPath(roughHash, "_roughness");
+                        
+                        if (FileExists(outputPath)) {
+                            matInfo.roughnessPath = outputPath;
+                            skippedCount++;
+                        } else if (WriteTextureToDDS(roughTex, outputPath)) {
+                            matInfo.roughnessPath = outputPath;
+                            m_stats.materialsWithRoughness++;
+                            if (m_debugOutput) {
+                                Msg("[LegacyTextureProcessor] [BFT] Wrote roughness from exponent: %s\n", outputPath.c_str());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Set metallic based on layer type
+        if (props.isBFTMetallicLayer) {
+            matInfo.metallicConstant = 0.9f;  // High metallic for metal layers
+        } else {
+            matInfo.metallicConstant = 0.0f;  // Dielectric for base layers
+        }
+        
+        // Store and write USDA
+        m_processedMaterialInfo[textureHash] = matInfo;
+        WriteModUSDA();
+        m_stats.materialsProcessed++;
+        
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] [BFT] Material processed: %s (skipped %d existing)\n", 
+                props.materialName.c_str(), skippedCount);
+        }
+        
+        return true;
+    }
+    
+    // =========================================================================
+    // Standard Source Engine material processing (non-ExoPBR/GPBR/BFT path)
     // =========================================================================
     
     // Write normal map to disk if available

@@ -218,6 +218,16 @@ struct MaterialPBRProperties {
     float gpbrParallaxDepth;            // $parallaxdepth - Displacement depth
     float gpbrAlpha;                    // $alpha - Transparency value
     bool hasGPBRAlpha;
+    
+    // =========================================================================
+    // BlueFlyTrap PseudoPBR format support
+    // A technique encoding PBR properties into Source Engine's phong workflow
+    // Detection: VertexlitGeneric + $phongexponenttexture + specific patterns
+    // =========================================================================
+    bool isBFTPseudoPBR;                // Detected BlueFlyTrap PseudoPBR format
+    bool isBFTMetallicLayer;            // This is the metallic layer ($translucent + $phongalbedotint)
+    std::string bftExponentTexturePath; // $phongexponenttexture - encodes roughness (inverted)
+    bool hasBFTExponentTexture;
 };
 
 // Main converter class - core VTF to DDS/PBR conversion

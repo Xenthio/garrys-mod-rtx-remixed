@@ -77,7 +77,9 @@ bool ParseVector3(const std::string& str, float& r, float& g, float& b) {
 
 // Check approximate float equality
 bool ApproxEqual(float a, float b, float epsilon = 0.1f) {
-    return std::abs(a - b) < epsilon;
+    float diff = a - b;
+    if (diff < 0) diff = -diff;
+    return diff < epsilon;
 }
 
 } // namespace LegacyTextureProcessor
