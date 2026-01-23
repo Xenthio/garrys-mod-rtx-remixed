@@ -1376,6 +1376,7 @@ struct VMTProperties {
     // =========================================================================
     bool isBFTPseudoPBR;            // Detected BlueFlyTrap PseudoPBR format
     bool isBFTMetallicLayer;        // This is the metallic layer
+    bool isBFTDiffuseLayer;         // This is the diffuse layer using $blendTintByBaseAlpha
 };
 
 // Parse a VMT file and extract properties that FindVar doesn't reliably expose
@@ -1474,6 +1475,7 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
     // BlueFlyTrap PseudoPBR format properties
     outProps.isBFTPseudoPBR = false;
     outProps.isBFTMetallicLayer = false;
+    outProps.isBFTDiffuseLayer = false;
     
     // Build VMT path
     std::string vmtPath = "materials/" + materialName;
