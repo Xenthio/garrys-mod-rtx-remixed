@@ -109,10 +109,16 @@ static float PhongToRoughness(float phongExp, float maxExp = MAX_PHONG_EXPONENT)
     if (phongExp < 1.0f) phongExp = 1.0f;
     if (phongExp > maxExp) phongExp = maxExp;
     
-    float normalized = phongExp / maxExp;
-    float roughness = std::sqrt(1.0f - normalized);
+    // Convert Source Engine phong exponent to PBR roughness
+    // Use physically-based conversion from Blinn-Phong to GGX roughness
+    // This produces more appropriate shininess for typical Source materials:
+    //   phongExponent 5-10: fairly shiny (0.45-0.55 roughness)
+    //   phongExponent 20-50: very shiny (0.25-0.35 roughness)
+    //   phongExponent 100+: mirror-like (0.10-0.18 roughness)
+    float roughness = std::sqrt(2.0f / (phongExp + 2.0f));
     
     if (roughness < 0.04f) roughness = 0.04f;
+    if (roughness > 1.0f) roughness = 1.0f;
     return roughness;
 }
 
@@ -200,6 +206,8 @@ static bool GenerateRoughnessFromSource(
     bool useAlphaChannel,
     bool isPhongExponentTexture,
     bool isInvertedMask,
+    bool isPhongMask,
+    float constantPhongExponent,
     const std::string& sourcePath,
     const ProcessingContext& ctx,
     ProcessedMaterial& result) {
@@ -220,6 +228,11 @@ static bool GenerateRoughnessFromSource(
     roughTex.isNormalMap = false;
     roughTex.pixelData.resize(sourceTex.width * sourceTex.height * 4);
     
+    // Debug: Track min/max/avg values
+    uint8_t minSource = 255, maxSource = 0;
+    uint8_t minRough = 255, maxRough = 0;
+    uint32_t totalSource = 0, totalRough = 0;
+    
     for (uint32_t i = 0; i < sourceTex.width * sourceTex.height; i++) {
         uint8_t sourceValue;
         
@@ -229,6 +242,11 @@ static bool GenerateRoughnessFromSource(
             sourceValue = sourceTex.pixelData[i * 4 + 0];  // Red channel
         }
         
+        // Track stats
+        if (sourceValue < minSource) minSource = sourceValue;
+        if (sourceValue > maxSource) maxSource = sourceValue;
+        totalSource += sourceValue;
+        
         uint8_t roughness;
         if (isPhongExponentTexture) {
             // $phongexponenttexture: value is phong exponent (0-255)
@@ -236,6 +254,27 @@ static bool GenerateRoughnessFromSource(
             float exp = static_cast<float>(sourceValue);
             float rough = PhongToRoughness(exp * MAX_PHONG_EXPONENT / 255.0f);
             roughness = static_cast<uint8_t>(rough * 255.0f);
+        } else if (isPhongMask) {
+            // Phong mask (bumpmap alpha): modulates the constant $phongexponent
+            // In Source Engine, this is typically painted as a fairly binary mask:
+            //   Black (0) = no phong (matte areas like pores, wrinkles)
+            //   White (255) = full phong (shiny areas like skin highlights)
+            // Use a steep power curve so even modest mask values give mostly-shiny result
+            float maskStrength = static_cast<float>(sourceValue) / 255.0f;
+            float phongRoughness = PhongToRoughness(constantPhongExponent);
+            
+            // Power curve: low mask values stay rough, but it quickly drops to phong roughness
+            // pow(1-mask, 5) gives: mask 0.0?rough 1.0, mask 0.2?rough 0.58, mask 0.5?rough 0.40, mask 1.0?rough 0.378
+            float falloff = std::pow(1.0f - maskStrength, 5.0f);
+            float rough = phongRoughness + (1.0f - phongRoughness) * falloff;
+            
+            roughness = static_cast<uint8_t>(rough * 255.0f);
+            
+            // Debug: Log first few pixels
+            if (ctx.debugOutput && i < 10) {
+                Msg("[Source] Pixel %d: alpha=%d, maskStr=%.3f, falloff=%.3f, phongRough=%.3f, finalRough=%.3f (byte=%d)\n",
+                    i, sourceValue, maskStrength, falloff, phongRoughness, rough, roughness);
+            }
         } else if (isInvertedMask) {
             // $basealphaenvmapmask: white = masked (matte), black = reflective (shiny)
             // So we DON'T invert - high value = high roughness
@@ -245,10 +284,26 @@ static bool GenerateRoughnessFromSource(
             roughness = 255 - sourceValue;
         }
         
+        // Track roughness stats
+        if (roughness < minRough) minRough = roughness;
+        if (roughness > maxRough) maxRough = roughness;
+        totalRough += roughness;
+        
         roughTex.pixelData[i * 4 + 0] = roughness;
         roughTex.pixelData[i * 4 + 1] = roughness;
         roughTex.pixelData[i * 4 + 2] = roughness;
         roughTex.pixelData[i * 4 + 3] = 255;
+    }
+    
+    // Log statistics
+    if (ctx.debugOutput) {
+        uint32_t pixelCount = sourceTex.width * sourceTex.height;
+        float avgSource = static_cast<float>(totalSource) / pixelCount;
+        float avgRough = static_cast<float>(totalRough) / pixelCount;
+        Msg("[Source] Roughness texture stats:\n");
+        Msg("[Source]   Source values: min=%d, max=%d, avg=%.1f\n", minSource, maxSource, avgSource);
+        Msg("[Source]   Roughness values: min=%d, max=%d, avg=%.1f\n", minRough, maxRough, avgRough);
+        Msg("[Source]   PhongExp=%.1f -> BaseRoughness=%.3f\n", constantPhongExponent, PhongToRoughness(constantPhongExponent));
     }
     
     uint64_t hash = ctx.generateHash(sourcePath + "_rough", roughTex.width, roughTex.height);
@@ -334,9 +389,12 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
     bool useAlphaChannel = false;
     bool isPhongExponentTexture = false;
     bool isInvertedMask = false;
+    bool isPhongMask = false;
     
     // =========================================================================
     // PHONG MATERIAL PATH - prioritize phong-specific properties
+    // Default Source Engine behavior: phong uses $bumpmap alpha as mask
+    // Override with $basemapalphaphongmask to use $basetexture alpha instead
     // =========================================================================
     if (props.hasPhong) {
         // Priority 1: $phongexponenttexture (best quality - dedicated roughness data)
@@ -346,30 +404,39 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
             isPhongExponentTexture = true;
             if (ctx.debugOutput) Msg("[Source] [PHONG] Using $phongexponenttexture (best quality)\n");
         }
-        // Priority 2: $basemapalphaphongmask - base texture alpha as phong mask
+        // Priority 2: $basemapalphaphongmask - OVERRIDE to use base texture alpha as phong mask
         else if (props.hasBaseMapAlphaPhongMask && !props.baseTexturePath.empty()) {
             vtfPath = props.baseTexturePath;
             useAlphaChannel = true;
+            isPhongMask = true;
             if (ctx.debugOutput) Msg("[Source] [PHONG] Using base texture alpha ($basemapalphaphongmask)\n");
         }
-        // Priority 3: $normalmapalphaenvmapmask - normal map alpha as mask
+        // Priority 3: $normalmapalphaenvmapmask - explicit normal map alpha mask parameter
         else if (props.normalMapAlphaEnvMapMask && props.hasBumpMap && !props.bumpMapPath.empty()) {
             vtfPath = props.bumpMapPath;
             useAlphaChannel = true;
+            isPhongMask = true;
             if (ctx.debugOutput) Msg("[Source] [PHONG] Using normal map alpha ($normalmapalphaenvmapmask)\n");
         }
-        // Priority 4: Default Source Engine behavior - phong + bumpmap = normal alpha has phong mask
+        // Priority 4: DEFAULT Source Engine behavior - phong + bumpmap = bumpmap alpha is phong mask
         else if (props.hasBumpMap && !props.bumpMapPath.empty()) {
             vtfPath = props.bumpMapPath;
             useAlphaChannel = true;
-            if (ctx.debugOutput) Msg("[Source] [PHONG] Using normal map alpha (default Source behavior)\n");
+            isPhongMask = true;
+            if (ctx.debugOutput) Msg("[Source] [PHONG] Using bumpmap alpha (default phong behavior)\n");
+        }
+        // Priority 5: No bumpmap available - use constant $phongexponent
+        else {
+            if (ctx.debugOutput) Msg("[Source] [PHONG] No bumpmap found, using constant $phongexponent\n");
         }
     }
     
     // =========================================================================
     // NON-PHONG / FALLBACK PATH - use envmap-based properties
+    // Only use these fallbacks if the material doesn't have phong enabled
+    // If phong is enabled but no mask texture was found, use the constant phong exponent
     // =========================================================================
-    if (vtfPath.empty()) {
+    if (vtfPath.empty() && !props.hasPhong) {
         // Priority 5: $envmapmask - separate envmap mask texture
         if (props.hasEnvMapMask && !props.envMapMaskPath.empty()) {
             vtfPath = props.envMapMaskPath;
@@ -439,16 +506,23 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
                     ConvertedTexture sourceTex;
                     if (ctx.extractPixelData(fileData, header, sourceTex, false)) {
                         hasRoughnessTexture = GenerateRoughnessFromSource(
-                            sourceTex, useAlphaChannel, isPhongExponentTexture, isInvertedMask,
-                            vtfPath, ctx, result);
+                            sourceTex, useAlphaChannel, isPhongExponentTexture, isInvertedMask, isPhongMask,
+                            props.phongExponent, vtfPath, ctx, result);
                         
                         if (hasRoughnessTexture && ctx.debugOutput) {
                             Msg("[Source] Generated roughness texture from: %s\n", vtfPath.c_str());
+                        } else if (ctx.debugOutput) {
+                            Msg("[Source] Failed to generate roughness texture (no variation or error)\n");
                         }
                     }
                 }
             }
         }
+    }
+    
+    // For phong materials that failed to generate a texture, ensure we use the constant
+    if (!hasRoughnessTexture && props.hasPhong && ctx.debugOutput) {
+        Msg("[Source] [PHONG] Using constant roughness from $phongexponent: %.2f\n", props.roughness);
     }
     
     // Set constants for materials without textures

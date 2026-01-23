@@ -1541,8 +1541,40 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
     }
     buffer[fileSize] = '\0';
     
-    // Parse the VMT content (simple key-value parsing)
+    // Parse the VMT content - REMOVE COMMENTS FIRST
     std::string content(buffer.data());
+    
+    // Strip out commented lines (// style) to prevent parsing commented-out properties
+    std::string contentWithoutComments;
+    size_t lineStart = 0;
+    for (size_t i = 0; i <= content.size(); ++i) {
+        if (i == content.size() || content[i] == '\n' || content[i] == '\r') {
+            if (i > lineStart) {
+                std::string line = content.substr(lineStart, i - lineStart);
+                
+                // Check if line starts with // (after trimming whitespace)
+                size_t firstChar = line.find_first_not_of(" \t");
+                bool isComment = false;
+                if (firstChar != std::string::npos && firstChar + 1 < line.size()) {
+                    if (line[firstChar] == '/' && line[firstChar + 1] == '/') {
+                        isComment = true;
+                    }
+                }
+                
+                // If not a comment line, keep it
+                if (!isComment) {
+                    contentWithoutComments += line;
+                    if (i < content.size()) {
+                        contentWithoutComments += content[i];  // Preserve newline
+                    }
+                }
+            }
+            lineStart = i + 1;
+        }
+    }
+    
+    // Use the comment-free content for parsing
+    content = contentWithoutComments;
     
     // Convert to lowercase for case-insensitive matching
     std::string contentLower = content;
