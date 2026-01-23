@@ -69,6 +69,20 @@ bool Detect(const VMTParseResult& vmt) {
         }
     }
     
+    // Check for $blendTintByBaseAlpha with dark $color2 (BFT diffuse layer pattern)
+    std::string blendTint = vmt.findValue("$blendtintbybasealpha");
+    if (!blendTint.empty() && atoi(blendTint.c_str()) == 1) {
+        // If blendTintByBaseAlpha is used with a dark color2, this is BFT
+        if (!color2.empty()) {
+            float r, g, b;
+            if (ParseVector3(color2, r, g, b)) {
+                if ((r + g + b) < 0.3f) {
+                    hasMarker = true;
+                }
+            }
+        }
+    }
+    
     // Check for high phongboost (BFT uses 3-25)
     std::string boost = vmt.findValue("$phongboost");
     if (!boost.empty()) {
@@ -92,7 +106,9 @@ bool Detect(const VMTParseResult& vmt) {
     // Check for method comments in VMT
     if (vmt.contentLower.find("blueflytrap") != std::string::npos ||
         vmt.contentLower.find("pseudo pbr") != std::string::npos ||
-        vmt.contentLower.find("pbr method") != std::string::npos) {
+        vmt.contentLower.find("pbr method") != std::string::npos ||
+        vmt.contentLower.find("diffuse texture") != std::string::npos ||  // "1/3 Diffuse Texture"
+        vmt.contentLower.find("metals texture") != std::string::npos) {   // "2/3 Metals Texture"
         hasMarker = true;
     }
     
@@ -113,7 +129,7 @@ void ExtractProperties(const VMTParseResult& vmt, MaterialPBRProperties& props) 
         props.hasBFTExponentTexture = true;
     }
     
-    // Detect if this is the metallic layer
+    // Detect if this is the metallic layer (stack 2/3)
     // Metallic layer has: $translucent "1" + $phongalbedotint "1"
     std::string translucent = vmt.findValue("$translucent");
     std::string albedoTint = vmt.findValue("$phongalbedotint");
@@ -137,9 +153,35 @@ void ExtractProperties(const VMTParseResult& vmt, MaterialPBRProperties& props) 
         }
     }
     
+    // =========================================================================
+    // Detect $blendTintByBaseAlpha pattern (BFT Diffuse/Base layer)
+    // =========================================================================
+    // When $blendTintByBaseAlpha "1" + $color2 "[0 0 0]" is used, the engine
+    // tints the albedo texture's white areas (where alpha > 0) to black.
+    // 
+    // This pattern indicates:
+    // 1. The base texture alpha channel IS the metallic mask!
+    // 2. The albedo would appear black without a runtime fix
+    // 3. We need to extract metallic from alpha and disable the tinting via Lua
+    std::string blendTint = vmt.findValue("$blendtintbybasealpha");
+    bool hasBlendTint = !blendTint.empty() && atoi(blendTint.c_str()) == 1;
+    
+    props.hasBFTBlendTintByBaseAlpha = hasBlendTint;
+    
+    // If we have blendTintByBaseAlpha + dark color2, this is a BFT diffuse layer
+    // where the alpha channel stores the metallic mask
+    if (hasBlendTint && props.hasBFTColor2) {
+        float brightness = props.bftColor2[0] + props.bftColor2[1] + props.bftColor2[2];
+        if (brightness < 0.3f) {  // Dark color2 = tinting to black
+            props.isBFTDiffuseLayer = true;
+        }
+    }
+    
     // Set metallic based on layer type
     if (props.isBFTMetallicLayer) {
-        props.metallic = 0.9f;  // High metallic
+        props.metallic = 0.9f;  // High metallic (explicit metallic layer)
+    } else if (props.isBFTDiffuseLayer) {
+        props.metallic = 0.5f;  // Variable - will come from alpha channel
     } else {
         props.metallic = 0.0f;  // Dielectric
     }
@@ -193,10 +235,64 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
     if (ctx.debugOutput) {
         Msg("[BFT] Processing material: %s (%s layer)\n", 
             props.materialName.c_str(), 
-            props.isBFTMetallicLayer ? "metallic" : "base");
+            props.isBFTMetallicLayer ? "metallic" : 
+            props.isBFTDiffuseLayer ? "diffuse (alpha=metallic)" : "base");
         if (props.hasBFTColor2) {
             Msg("[BFT] $color2: [%.2f %.2f %.2f]\n", 
                 props.bftColor2[0], props.bftColor2[1], props.bftColor2[2]);
+        }
+        if (props.hasBFTBlendTintByBaseAlpha) {
+            Msg("[BFT] $blendTintByBaseAlpha detected - alpha channel is metallic mask\n");
+        }
+    }
+    
+    // =========================================================================
+    // BFT DIFFUSE LAYER METALLIC EXTRACTION
+    // =========================================================================
+    // When $blendTintByBaseAlpha + dark $color2 is used, the base texture's
+    // alpha channel IS the metallic mask. We extract it to a proper metallic
+    // texture. The runtime Lua fix (cl_fix_bft_materials.lua) disables the
+    // tinting so the albedo displays correctly.
+    if (props.isBFTDiffuseLayer && !props.baseTexturePath.empty()) {
+        std::vector<uint8_t> fileData;
+        if (ctx.readVTFFile(props.baseTexturePath, fileData)) {
+            VTFFileHeader header;
+            if (ctx.parseVTFHeader(fileData, header)) {
+                ConvertedTexture baseTex;
+                baseTex.isNormalMap = false;
+                
+                if (ctx.extractPixelData(fileData, header, baseTex, false)) {
+                    // Create metallic texture from alpha channel
+                    ConvertedTexture metallicTex;
+                    metallicTex.width = baseTex.width;
+                    metallicTex.height = baseTex.height;
+                    metallicTex.mipLevels = 1;
+                    metallicTex.format = REMIXAPI_FORMAT_R8G8B8A8_UNORM;
+                    metallicTex.isNormalMap = false;
+                    metallicTex.pixelData.resize(baseTex.width * baseTex.height * 4);
+                    
+                    for (uint32_t i = 0; i < baseTex.width * baseTex.height; i++) {
+                        // Alpha channel = metallic value
+                        uint8_t metallic = baseTex.pixelData[i * 4 + 3];
+                        
+                        metallicTex.pixelData[i * 4 + 0] = metallic;
+                        metallicTex.pixelData[i * 4 + 1] = metallic;
+                        metallicTex.pixelData[i * 4 + 2] = metallic;
+                        metallicTex.pixelData[i * 4 + 3] = 255;
+                    }
+                    
+                    uint64_t hash = ctx.generateHash(props.baseTexturePath + "_bft_metallic", metallicTex.width, metallicTex.height);
+                    std::string path = ctx.generateOutputPath(hash, "_metallic");
+                    
+                    if (ctx.fileExists(path)) {
+                        result.metallicPath = path;
+                        result.skippedCount++;
+                    } else if (ctx.writeDDS(metallicTex, path)) {
+                        result.metallicPath = path;
+                        if (ctx.debugOutput) Msg("[BFT] Extracted metallic from alpha: %s\n", path.c_str());
+                    }
+                }
+            }
         }
     }
     

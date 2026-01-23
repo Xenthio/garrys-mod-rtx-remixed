@@ -235,6 +235,12 @@ struct MaterialPBRProperties {
     // BFT $color2 - used to darken albedo for layer stacking (need to invert for PBR)
     float bftColor2[3];                 // RGB values from $color2
     bool hasBFTColor2;
+    
+    // BFT $blendTintByBaseAlpha - when combined with dark $color2, tints albedo by alpha
+    // This pattern means the alpha channel IS the metallic mask!
+    // We need to: 1) extract metallic from alpha, 2) disable tinting at runtime via Lua fix
+    bool hasBFTBlendTintByBaseAlpha;    // $blendtintbybasealpha "1" detected
+    bool isBFTDiffuseLayer;             // This is a BFT diffuse layer that uses blend tinting
 };
 
 // Main converter class - core VTF to DDS/PBR conversion
