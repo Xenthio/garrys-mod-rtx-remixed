@@ -3851,7 +3851,8 @@ LUA_FUNCTION(LegacyTextureProcessor_InspectMaterial) {
     std::string detectedFormat = "Source Engine (Standard)";
     if (props.isExoPBR) detectedFormat = "ExoPBR";
     else if (props.isGPBR) detectedFormat = "GPBR (Strata)";
-    else if (props.isBFTPseudoPBR) detectedFormat = "PseudoPBR (BlueFlyTrap/MWB)";
+    else if (props.isMWBPBR) detectedFormat = "MWB PBR Gen";
+    else if (props.isBFTPseudoPBR) detectedFormat = "PseudoPBR (BlueFlyTrap)";
     
     LUA->PushString(detectedFormat.c_str());
     LUA->SetField(-2, "detectedFormat");
@@ -3897,6 +3898,10 @@ LUA_FUNCTION(LegacyTextureProcessor_InspectMaterial) {
     // BlueFlyTrap PseudoPBR
     LUA->PushBool(props.isBFTPseudoPBR);
     LUA->SetField(-2, "isBFTPseudoPBR");
+    
+    // MWB PBR Gen
+    LUA->PushBool(props.isMWBPBR);
+    LUA->SetField(-2, "isMWBPBR");
     
     LUA->PushBool(props.isBFTMetallicLayer);
     LUA->SetField(-2, "isBFTMetallicLayer");
