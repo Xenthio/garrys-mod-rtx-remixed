@@ -79,48 +79,14 @@ bool IsChannelOverlayMaterial(const VMTParseResult& vmt, const std::string& mate
 }
 
 // =========================================================================
-// Suffix-based BFT Detection
+// Detection
 // =========================================================================
 // BFT materials often have predictable naming:
 //   base_material      - Base/diffuse layer (has $blendTintByBaseAlpha)
 //   base_material_metal - Metallic layer (has $phongalbedotint, $additive)
-//   base_material_e     - Exponent/roughness texture
+//   base_material_e     - Exponent/roughness texture (key detection marker)
 //   base_material_n     - Normal map
 //   base_material_ch*   - Channel overlays (should be hidden)
-
-bool DetectBySuffix(const std::string& materialPath, const VMTParseResult& vmt) {
-    std::string pathLower = materialPath;
-    std::transform(pathLower.begin(), pathLower.end(), pathLower.begin(), ::tolower);
-    
-    // Check for _metal suffix (BFT metallic layer)
-    if (pathLower.length() >= 6 && 
-        pathLower.substr(pathLower.length() - 6) == "_metal") {
-        // Verify it has BFT metallic layer characteristics
-        std::string albedoTint = vmt.findValue("$phongalbedotint");
-        if (!albedoTint.empty() && atoi(albedoTint.c_str()) == 1) {
-            return true;
-        }
-    }
-    
-    // Check if there's a companion _e texture (exponent/roughness)
-    // This is a strong indicator of BFT even without comments
-    std::string expTex = vmt.findValue("$phongexponenttexture");
-    if (!expTex.empty()) {
-        std::string expLower = expTex;
-        std::transform(expLower.begin(), expLower.end(), expLower.begin(), ::tolower);
-        
-        // If exponent texture ends with _e, strong BFT indicator
-        if (expLower.length() >= 2 && expLower.substr(expLower.length() - 2) == "_e") {
-            return true;
-        }
-    }
-    
-    return false;
-}
-
-// =========================================================================
-// Detection
-// =========================================================================
 
 bool Detect(const VMTParseResult& vmt) {
     std::string shaderLower = vmt.shaderName;
