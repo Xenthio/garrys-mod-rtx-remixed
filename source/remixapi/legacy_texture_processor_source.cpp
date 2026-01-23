@@ -42,6 +42,10 @@ namespace SourceEngine {
 // Constants
 constexpr float MAX_PHONG_EXPONENT = 150.0f;
 
+// Forward declarations
+float CalculateRoughness(const MaterialPBRProperties& props);
+float EstimateMetallic(const MaterialPBRProperties& props, bool enabled);
+
 // =========================================================================
 // Property Extraction
 // =========================================================================
