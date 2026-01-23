@@ -183,6 +183,7 @@ static bool HasAlphaVariation(const std::vector<uint8_t>& pixelData) {
     if (pixelData.size() < 4) return false;
     
     uint8_t firstAlpha = pixelData[3];
+    // Check all alpha values starting at index 7 (second pixel's alpha)
     for (size_t i = 7; i < pixelData.size(); i += 4) {
         if (pixelData[i] != firstAlpha) {
             return true;
