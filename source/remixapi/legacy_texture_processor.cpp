@@ -2271,6 +2271,9 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     outProps.bftColor2[2] = 1.0f;
     outProps.hasBFTColor2 = false;
     
+    // MWB PBR Gen format
+    outProps.isMWBPBR = false;
+    
     // Get the shader name
     const char* shaderName = pMaterial->GetShaderName();
     if (shaderName && shaderName[0] != '\0') {
