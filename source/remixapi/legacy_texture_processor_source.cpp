@@ -177,7 +177,97 @@ float EstimateMetallic(const MaterialPBRProperties& props, bool enabled) {
 }
 
 // =========================================================================
-// Texture Processing
+// Helper: Check if alpha channel has meaningful variation
+// =========================================================================
+static bool HasAlphaVariation(const std::vector<uint8_t>& pixelData) {
+    if (pixelData.size() < 4) return false;
+    
+    uint8_t firstAlpha = pixelData[3];
+    for (size_t i = 7; i < pixelData.size(); i += 4) {
+        if (pixelData[i] != firstAlpha) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// =========================================================================
+// Helper: Generate roughness texture from source data
+// =========================================================================
+static bool GenerateRoughnessFromSource(
+    const ConvertedTexture& sourceTex,
+    bool useAlphaChannel,
+    bool isPhongExponentTexture,
+    bool isInvertedMask,
+    const std::string& sourcePath,
+    const ProcessingContext& ctx,
+    ProcessedMaterial& result) {
+    
+    // If using alpha channel, check for meaningful variation
+    if (useAlphaChannel && !HasAlphaVariation(sourceTex.pixelData)) {
+        if (ctx.debugOutput) {
+            Msg("[Source] Alpha channel has no variation, skipping roughness texture\n");
+        }
+        return false;
+    }
+    
+    ConvertedTexture roughTex;
+    roughTex.width = sourceTex.width;
+    roughTex.height = sourceTex.height;
+    roughTex.mipLevels = 1;
+    roughTex.format = REMIXAPI_FORMAT_R8G8B8A8_UNORM;
+    roughTex.isNormalMap = false;
+    roughTex.pixelData.resize(sourceTex.width * sourceTex.height * 4);
+    
+    for (uint32_t i = 0; i < sourceTex.width * sourceTex.height; i++) {
+        uint8_t sourceValue;
+        
+        if (useAlphaChannel) {
+            sourceValue = sourceTex.pixelData[i * 4 + 3];  // Alpha channel
+        } else {
+            sourceValue = sourceTex.pixelData[i * 4 + 0];  // Red channel
+        }
+        
+        uint8_t roughness;
+        if (isPhongExponentTexture) {
+            // $phongexponenttexture: value is phong exponent (0-255)
+            // Higher = shinier = LOWER roughness
+            float exp = static_cast<float>(sourceValue);
+            float rough = PhongToRoughness(exp * MAX_PHONG_EXPONENT / 255.0f);
+            roughness = static_cast<uint8_t>(rough * 255.0f);
+        } else if (isInvertedMask) {
+            // $basealphaenvmapmask: white = masked (matte), black = reflective (shiny)
+            // So we DON'T invert - high value = high roughness
+            roughness = sourceValue;
+        } else {
+            // Standard envmap mask: bright = reflective = low roughness
+            roughness = 255 - sourceValue;
+        }
+        
+        roughTex.pixelData[i * 4 + 0] = roughness;
+        roughTex.pixelData[i * 4 + 1] = roughness;
+        roughTex.pixelData[i * 4 + 2] = roughness;
+        roughTex.pixelData[i * 4 + 3] = 255;
+    }
+    
+    uint64_t hash = ctx.generateHash(sourcePath + "_rough", roughTex.width, roughTex.height);
+    std::string path = ctx.generateOutputPath(hash, "_roughness");
+    
+    if (ctx.fileExists(path)) {
+        result.roughnessPath = path;
+        result.skippedCount++;
+        return true;
+    } else if (ctx.writeDDS(roughTex, path)) {
+        result.roughnessPath = path;
+        if (ctx.materialsWithRoughness) (*ctx.materialsWithRoughness)++;
+        return true;
+    }
+    
+    return false;
+}
+
+// =========================================================================
+// Texture Processing - Full implementation matching original behavior
 // =========================================================================
 
 ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
@@ -187,6 +277,11 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
     
     if (ctx.debugOutput) {
         Msg("[Source] Processing material: %s\n", props.materialName.c_str());
+        Msg("[Source]   hasPhong=%d, hasPhongExpTex=%d, normMapAlpha=%d, hasBaseMapAlphaPhong=%d\n",
+            props.hasPhong, props.hasPhongExponentTexture, props.normalMapAlphaEnvMapMask, props.hasBaseMapAlphaPhongMask);
+        Msg("[Source]   hasBump=%d, hasEnvMapMask=%d, hasBaseAlphaEnvMapMask=%d, hasEnvMap=%d\n",
+            props.hasBumpMap, props.hasEnvMapMask, props.hasBaseAlphaEnvMapMask, props.hasEnvMap);
+        Msg("[Source]   hasDiscoveredMask=%d (%s)\n", props.hasDiscoveredMask, props.discoveredMaskPath.c_str());
     }
     
     // Process normal map
@@ -222,95 +317,110 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
         }
     }
     
-    // Process roughness from various sources
+    // =========================================================================
+    // Roughness texture generation - comprehensive priority system
+    // =========================================================================
     bool hasRoughnessTexture = false;
+    std::string vtfPath;
+    bool useAlphaChannel = false;
+    bool isPhongExponentTexture = false;
+    bool isInvertedMask = false;
     
-    // Try $phongexponenttexture first (best quality)
-    if (props.hasPhongExponentTexture && !props.phongExponentTexturePath.empty()) {
-        std::vector<uint8_t> fileData;
-        if (ctx.readVTFFile(props.phongExponentTexturePath, fileData)) {
-            VTFFileHeader header;
-            if (ctx.parseVTFHeader(fileData, header)) {
-                ConvertedTexture expTex;
-                if (ctx.extractPixelData(fileData, header, expTex, false)) {
-                    // Convert exponent to roughness
-                    ConvertedTexture roughTex;
-                    roughTex.width = expTex.width;
-                    roughTex.height = expTex.height;
-                    roughTex.mipLevels = 1;
-                    roughTex.format = REMIXAPI_FORMAT_R8G8B8A8_UNORM;
-                    roughTex.isNormalMap = false;
-                    roughTex.pixelData.resize(expTex.width * expTex.height * 4);
-                    
-                    for (uint32_t i = 0; i < expTex.width * expTex.height; i++) {
-                        // Exponent texture: higher = shinier = lower roughness
-                        float exp = static_cast<float>(expTex.pixelData[i * 4 + 0]);
-                        float roughness = PhongToRoughness(exp * MAX_PHONG_EXPONENT / 255.0f);
-                        uint8_t roughByte = static_cast<uint8_t>(roughness * 255.0f);
-                        
-                        roughTex.pixelData[i * 4 + 0] = roughByte;
-                        roughTex.pixelData[i * 4 + 1] = roughByte;
-                        roughTex.pixelData[i * 4 + 2] = roughByte;
-                        roughTex.pixelData[i * 4 + 3] = 255;
-                    }
-                    
-                    uint64_t hash = ctx.generateHash(props.phongExponentTexturePath + "_rough", roughTex.width, roughTex.height);
-                    std::string path = ctx.generateOutputPath(hash, "_roughness");
-                    
-                    if (ctx.fileExists(path)) {
-                        result.roughnessPath = path;
-                        result.skippedCount++;
-                        hasRoughnessTexture = true;
-                    } else if (ctx.writeDDS(roughTex, path)) {
-                        result.roughnessPath = path;
-                        if (ctx.materialsWithRoughness) (*ctx.materialsWithRoughness)++;
-                        hasRoughnessTexture = true;
-                        if (ctx.debugOutput) Msg("[Source] Wrote roughness from exponent: %s\n", path.c_str());
-                    }
-                }
-            }
+    // =========================================================================
+    // PHONG MATERIAL PATH - prioritize phong-specific properties
+    // =========================================================================
+    if (props.hasPhong) {
+        // Priority 1: $phongexponenttexture (best quality - dedicated roughness data)
+        if (props.hasPhongExponentTexture && !props.phongExponentTexturePath.empty()) {
+            vtfPath = props.phongExponentTexturePath;
+            useAlphaChannel = false;
+            isPhongExponentTexture = true;
+            if (ctx.debugOutput) Msg("[Source] [PHONG] Using $phongexponenttexture (best quality)\n");
+        }
+        // Priority 2: $basemapalphaphongmask - base texture alpha as phong mask
+        else if (props.hasBaseMapAlphaPhongMask && !props.baseTexturePath.empty()) {
+            vtfPath = props.baseTexturePath;
+            useAlphaChannel = true;
+            if (ctx.debugOutput) Msg("[Source] [PHONG] Using base texture alpha ($basemapalphaphongmask)\n");
+        }
+        // Priority 3: $normalmapalphaenvmapmask - normal map alpha as mask
+        else if (props.normalMapAlphaEnvMapMask && props.hasBumpMap && !props.bumpMapPath.empty()) {
+            vtfPath = props.bumpMapPath;
+            useAlphaChannel = true;
+            if (ctx.debugOutput) Msg("[Source] [PHONG] Using normal map alpha ($normalmapalphaenvmapmask)\n");
+        }
+        // Priority 4: Default Source Engine behavior - phong + bumpmap = normal alpha has phong mask
+        else if (props.hasBumpMap && !props.bumpMapPath.empty()) {
+            vtfPath = props.bumpMapPath;
+            useAlphaChannel = true;
+            if (ctx.debugOutput) Msg("[Source] [PHONG] Using normal map alpha (default Source behavior)\n");
         }
     }
     
-    // Try $envmapmask if no exponent texture
-    if (!hasRoughnessTexture && props.hasEnvMapMask && !props.envMapMaskPath.empty()) {
+    // =========================================================================
+    // NON-PHONG / FALLBACK PATH - use envmap-based properties
+    // =========================================================================
+    if (vtfPath.empty()) {
+        // Priority 5: $envmapmask - separate envmap mask texture
+        if (props.hasEnvMapMask && !props.envMapMaskPath.empty()) {
+            vtfPath = props.envMapMaskPath;
+            useAlphaChannel = false;
+            if (ctx.debugOutput) Msg("[Source] Using $envmapmask for roughness\n");
+        }
+        // Priority 6: $basealphaenvmapmask - base texture alpha as envmap mask (INVERTED!)
+        else if (props.hasBaseAlphaEnvMapMask && !props.baseTexturePath.empty()) {
+            vtfPath = props.baseTexturePath;
+            useAlphaChannel = true;
+            isInvertedMask = true;
+            if (ctx.debugOutput) Msg("[Source] Using base texture alpha ($basealphaenvmapmask - INVERTED)\n");
+        }
+        // Priority 7: Auto-discovered _mask/_spec textures
+        else if (props.hasDiscoveredMask && !props.discoveredMaskPath.empty()) {
+            vtfPath = props.discoveredMaskPath;
+            useAlphaChannel = false;
+            if (ctx.debugOutput) Msg("[Source] Using auto-discovered mask: %s\n", props.discoveredMaskPath.c_str());
+        }
+        // Priority 8: $normalmapalphaenvmapmask (non-phong path)
+        else if (props.normalMapAlphaEnvMapMask && props.hasBumpMap && !props.bumpMapPath.empty()) {
+            vtfPath = props.bumpMapPath;
+            useAlphaChannel = true;
+            if (ctx.debugOutput) Msg("[Source] Using normal map alpha ($normalmapalphaenvmapmask - non-phong)\n");
+        }
+        // Priority 9: $envmap + normal map alpha (implicit $normalmapalphaenvmapmask)
+        else if ((props.hasEnvMap || props.hasEnvMapTint) && props.hasBumpMap && !props.bumpMapPath.empty()) {
+            vtfPath = props.bumpMapPath;
+            useAlphaChannel = true;
+            if (ctx.debugOutput) Msg("[Source] Trying normal map alpha (implicit envmap roughness)\n");
+        }
+        // Priority 10: $envmap + base texture alpha (implicit $basealphaenvmapmask)
+        else if ((props.hasEnvMap || props.hasEnvMapTint) && !props.baseTexturePath.empty()) {
+            vtfPath = props.baseTexturePath;
+            useAlphaChannel = true;
+            isInvertedMask = true;
+            if (ctx.debugOutput) Msg("[Source] Trying base texture alpha (implicit envmap - INVERTED)\n");
+        }
+        // Priority 11 (LAST RESORT): Try normal map alpha anyway for materials with bumpmap
+        else if (props.hasBumpMap && !props.bumpMapPath.empty()) {
+            vtfPath = props.bumpMapPath;
+            useAlphaChannel = true;
+            if (ctx.debugOutput) Msg("[Source] Last resort - trying normal map alpha\n");
+        }
+    }
+    
+    // Try to generate roughness texture from found source
+    if (!vtfPath.empty()) {
         std::vector<uint8_t> fileData;
-        if (ctx.readVTFFile(props.envMapMaskPath, fileData)) {
+        if (ctx.readVTFFile(vtfPath, fileData)) {
             VTFFileHeader header;
             if (ctx.parseVTFHeader(fileData, header)) {
-                ConvertedTexture maskTex;
-                if (ctx.extractPixelData(fileData, header, maskTex, false)) {
-                    // Envmap mask: bright = reflective = low roughness
-                    ConvertedTexture roughTex;
-                    roughTex.width = maskTex.width;
-                    roughTex.height = maskTex.height;
-                    roughTex.mipLevels = 1;
-                    roughTex.format = REMIXAPI_FORMAT_R8G8B8A8_UNORM;
-                    roughTex.isNormalMap = false;
-                    roughTex.pixelData.resize(maskTex.width * maskTex.height * 4);
+                ConvertedTexture sourceTex;
+                if (ctx.extractPixelData(fileData, header, sourceTex, false)) {
+                    hasRoughnessTexture = GenerateRoughnessFromSource(
+                        sourceTex, useAlphaChannel, isPhongExponentTexture, isInvertedMask,
+                        vtfPath, ctx, result);
                     
-                    for (uint32_t i = 0; i < maskTex.width * maskTex.height; i++) {
-                        uint8_t mask = maskTex.pixelData[i * 4 + 0];
-                        uint8_t roughness = 255 - mask;  // Invert
-                        
-                        roughTex.pixelData[i * 4 + 0] = roughness;
-                        roughTex.pixelData[i * 4 + 1] = roughness;
-                        roughTex.pixelData[i * 4 + 2] = roughness;
-                        roughTex.pixelData[i * 4 + 3] = 255;
-                    }
-                    
-                    uint64_t hash = ctx.generateHash(props.envMapMaskPath + "_rough", roughTex.width, roughTex.height);
-                    std::string path = ctx.generateOutputPath(hash, "_roughness");
-                    
-                    if (ctx.fileExists(path)) {
-                        result.roughnessPath = path;
-                        result.skippedCount++;
-                        hasRoughnessTexture = true;
-                    } else if (ctx.writeDDS(roughTex, path)) {
-                        result.roughnessPath = path;
-                        if (ctx.materialsWithRoughness) (*ctx.materialsWithRoughness)++;
-                        hasRoughnessTexture = true;
-                        if (ctx.debugOutput) Msg("[Source] Wrote roughness from envmapmask: %s\n", path.c_str());
+                    if (hasRoughnessTexture && ctx.debugOutput) {
+                        Msg("[Source] Generated roughness texture from: %s\n", vtfPath.c_str());
                     }
                 }
             }
@@ -320,8 +430,45 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
     // Set constants for materials without textures
     if (!hasRoughnessTexture) {
         result.roughnessConstant = props.roughness;
+        if (ctx.debugOutput) {
+            Msg("[Source] No roughness texture generated, using constant: %.2f\n", props.roughness);
+        }
     }
     result.metallicConstant = props.metallic;
+    
+    // =========================================================================
+    // Height map processing
+    // =========================================================================
+    std::string heightMapPath;
+    if (props.hasParallaxMap && !props.parallaxMapPath.empty()) {
+        heightMapPath = props.parallaxMapPath;
+    } else if (props.hasDiscoveredHeight && !props.discoveredHeightPath.empty()) {
+        heightMapPath = props.discoveredHeightPath;
+    }
+    
+    if (!heightMapPath.empty()) {
+        std::vector<uint8_t> fileData;
+        if (ctx.readVTFFile(heightMapPath, fileData)) {
+            VTFFileHeader header;
+            if (ctx.parseVTFHeader(fileData, header)) {
+                ConvertedTexture heightTex;
+                if (ctx.extractPixelData(fileData, header, heightTex, false)) {
+                    uint64_t hash = ctx.generateHash(heightMapPath + "_height", heightTex.width, heightTex.height);
+                    std::string path = ctx.generateOutputPath(hash, "_height");
+                    
+                    if (ctx.fileExists(path)) {
+                        result.heightPath = path;
+                        result.heightScale = props.hasParallaxMapScale ? props.parallaxMapScale : 0.025f;
+                        result.skippedCount++;
+                    } else if (ctx.writeDDS(heightTex, path)) {
+                        result.heightPath = path;
+                        result.heightScale = props.hasParallaxMapScale ? props.parallaxMapScale : 0.025f;
+                        if (ctx.debugOutput) Msg("[Source] Wrote height: %s\n", path.c_str());
+                    }
+                }
+            }
+        }
+    }
     
     result.success = true;
     if (ctx.debugOutput) {
