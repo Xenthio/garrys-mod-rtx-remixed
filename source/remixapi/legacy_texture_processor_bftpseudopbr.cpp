@@ -41,6 +41,14 @@ bool ApproxEqual(float a, float b, float epsilon);
 namespace BFTPseudoPBR {
 
 // =========================================================================
+// Detection Constants
+// =========================================================================
+// Brightness threshold for detecting dark $color2 values
+// Used to identify BFT layer stacking patterns
+// NOTE: This threshold must match cl_fix_bft_materials.lua for consistency!
+static const float DARK_COLOR2_THRESHOLD = 0.3f;
+
+// =========================================================================
 // Detection
 // =========================================================================
 
@@ -76,7 +84,7 @@ bool Detect(const VMTParseResult& vmt) {
         if (!color2.empty()) {
             float r, g, b;
             if (ParseVector3(color2, r, g, b)) {
-                if ((r + g + b) < 0.3f) {
+                if ((r + g + b) < DARK_COLOR2_THRESHOLD) {
                     hasMarker = true;
                 }
             }
@@ -172,7 +180,7 @@ void ExtractProperties(const VMTParseResult& vmt, MaterialPBRProperties& props) 
     // where the alpha channel stores the metallic mask
     if (hasBlendTint && props.hasBFTColor2) {
         float brightness = props.bftColor2[0] + props.bftColor2[1] + props.bftColor2[2];
-        if (brightness < 0.3f) {  // Dark color2 = tinting to black
+        if (brightness < DARK_COLOR2_THRESHOLD) {  // Dark color2 = tinting to black
             props.isBFTDiffuseLayer = true;
         }
     }

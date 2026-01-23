@@ -21,9 +21,9 @@ local function FixBFTMaterial(mat)
     local color2 = mat:GetVector("$color2")
     if not color2 then return end
     
-    -- Check if color2 is very dark (sum of RGB < 0.1)
+    -- Check if color2 is very dark (sum of RGB < 0.3 - matches C++ threshold)
     local brightness = color2.x + color2.y + color2.z
-    if brightness > 0.1 then return end
+    if brightness > 0.3 then return end
     
     -- This is a BFT material - disable the tinting
     mat:SetInt("$blendtintbybasealpha", 0)
@@ -34,19 +34,6 @@ local function FixBFTMaterial(mat)
         print("[RTX-BFT] Fixed material: " .. mat:GetName())
     end
 end
-
--- Hook into material loading
-hook.Add("PostRender", "RTX_FixBFTMaterials_Init", function()
-    hook.Remove("PostRender", "RTX_FixBFTMaterials_Init")
-    
-    -- Process all loaded materials
-    timer.Simple(1, function()
-        for _, mat in ipairs(Material("___ALL___"):GetString("$basetexture") or {}) do
-            -- This won't work - materials aren't iterable this way
-            -- Instead, we fix materials as they're encountered
-        end
-    end)
-end)
 
 -- Fix materials as entities are created
 hook.Add("OnEntityCreated", "RTX_FixBFTMaterials", function(ent)
