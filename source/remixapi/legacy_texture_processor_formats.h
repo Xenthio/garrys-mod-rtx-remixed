@@ -42,6 +42,7 @@ struct ProcessedMaterial {
     std::string heightPath;
     std::string emissivePath;
     std::string transmittancePath;
+    std::string albedoPath;      // For modified albedo (e.g., BFT metallic reconstruction)
     
     float roughnessConstant = 0.5f;
     float metallicConstant = 0.0f;
@@ -50,6 +51,12 @@ struct ProcessedMaterial {
     
     bool isGlass = false;
     float ior = 1.5f;
+    
+    // Albedo color multiplier (for brightening dark metallic textures)
+    float albedoBoostR = 1.0f;
+    float albedoBoostG = 1.0f;
+    float albedoBoostB = 1.0f;
+    bool hasAlbedoBoost = false;
     
     int skippedCount = 0;  // Files that already existed
     bool success = false;

@@ -2261,6 +2261,10 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     outProps.isBFTMetallicLayer = false;
     outProps.bftExponentTexturePath = "";
     outProps.hasBFTExponentTexture = false;
+    outProps.bftColor2[0] = 1.0f;
+    outProps.bftColor2[1] = 1.0f;
+    outProps.bftColor2[2] = 1.0f;
+    outProps.hasBFTColor2 = false;
     
     // Get the shader name
     const char* shaderName = pMaterial->GetShaderName();

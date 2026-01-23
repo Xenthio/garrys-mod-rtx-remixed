@@ -231,6 +231,10 @@ struct MaterialPBRProperties {
     bool isBFTMetallicLayer;            // This is the metallic layer ($translucent + $phongalbedotint)
     std::string bftExponentTexturePath; // $phongexponenttexture - encodes roughness (inverted)
     bool hasBFTExponentTexture;
+    
+    // BFT $color2 - used to darken albedo for layer stacking (need to invert for PBR)
+    float bftColor2[3];                 // RGB values from $color2
+    bool hasBFTColor2;
 };
 
 // Main converter class - core VTF to DDS/PBR conversion
