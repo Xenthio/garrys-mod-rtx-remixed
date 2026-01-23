@@ -2011,57 +2011,31 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
     
     // =========================================================================
     // BlueFlyTrap PseudoPBR format detection
-    // Uses VertexlitGeneric with $phongexponenttexture and specific patterns
+    // Uses the modular BFTPseudoPBR::Detect() function for comprehensive detection
+    // Supports: BlueFlyTrap, MWB PBR Gen, and similar PseudoPBR tools
     // =========================================================================
-    if (shaderLower == "vertexlitgeneric" && outProps.hasPhongExponentTexture && 
-        !outProps.isExoPBR && !outProps.isGPBR) {
+    if (!outProps.isExoPBR && !outProps.isGPBR) {
+        // Create VMTParseResult for modular detection
+        VMTParseResult vmtParse;
+        vmtParse.shaderName = outProps.shaderName;
+        vmtParse.content = content;
+        vmtParse.contentLower = contentLower;
         
-        bool hasMarker = false;
-        
-        // Check $color2 for black/grey (stacking marker)
-        if (contentLower.find("$color2") != std::string::npos) {
-            std::string color2 = findValue("$color2");
-            float r = 0, g = 0, b = 0;
-            if (sscanf(color2.c_str(), "[%f %f %f]", &r, &g, &b) == 3 ||
-                sscanf(color2.c_str(), "{%f %f %f}", &r, &g, &b) == 3) {
-                // Black (base) or mid-grey (metallic layer)
-                if ((r < 0.1f && g < 0.1f && b < 0.1f) ||
-                    (r >= 0.4f && r <= 0.6f && g >= 0.4f && g <= 0.6f && b >= 0.4f && b <= 0.6f)) {
-                    hasMarker = true;
-                }
-            }
-        }
-        
-        // Check for high phongboost (BFT uses 3-25 range)
-        if (outProps.hasPhongBoost && outProps.phongBoost >= 3.0f && outProps.phongBoost <= 25.0f) {
-            hasMarker = true;
-        }
-        
-        // Check characteristic fresnel ranges
-        if (outProps.hasPhongFresnelRanges) {
-            float f1 = outProps.phongFresnelRanges[0];
-            float f2 = outProps.phongFresnelRanges[1];
-            float f3 = outProps.phongFresnelRanges[2];
-            // Metallic: [0.87 0.9 1.0] or Dielectric: [0.05 0.115 0.945]
-            bool metallic = (f1 >= 0.8f && f1 <= 0.95f) && (f2 >= 0.85f && f2 <= 0.95f) && (f3 >= 0.95f);
-            bool dielectric = (f1 < 0.2f) && (f2 < 0.3f) && (f3 > 0.8f);
-            if (metallic || dielectric) hasMarker = true;
-        }
-        
-        // Check for method comments
-        if (contentLower.find("blueflytrap") != std::string::npos ||
-            contentLower.find("pseudo pbr") != std::string::npos ||
-            contentLower.find("pbr method") != std::string::npos) {
-            hasMarker = true;
-        }
-        
-        if (hasMarker) {
+        if (BFTPseudoPBR::Detect(vmtParse)) {
             outProps.isBFTPseudoPBR = true;
             
             // Detect metallic layer: $translucent "1" + $phongalbedotint "1"
             bool hasTranslucent = outProps.hasTranslucent && outProps.translucent;
             bool hasAlbedoTint = outProps.hasPhongAlbedoTint && (outProps.phongAlbedoTint != 0);
             outProps.isBFTMetallicLayer = hasTranslucent && hasAlbedoTint;
+            
+            // Also check for $blendTintByBaseAlpha diffuse layer pattern
+            if (contentLower.find("$blendtintbybasealpha") != std::string::npos) {
+                std::string blendTint = findValue("$blendtintbybasealpha");
+                if (!blendTint.empty() && atoi(blendTint.c_str()) == 1) {
+                    outProps.isBFTDiffuseLayer = true;
+                }
+            }
         }
     }
     
