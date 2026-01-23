@@ -3954,12 +3954,15 @@ LUA_FUNCTION(LegacyTextureProcessor_InspectMaterial) {
     
     if (props.hasPhongFresnelRanges) {
         LUA->CreateTable();
+        LUA->PushNumber(1);
         LUA->PushNumber(props.phongFresnelRanges[0]);
-        LUA->RawSetI(-2, 1);
+        LUA->SetTable(-3);
+        LUA->PushNumber(2);
         LUA->PushNumber(props.phongFresnelRanges[1]);
-        LUA->RawSetI(-2, 2);
+        LUA->SetTable(-3);
+        LUA->PushNumber(3);
         LUA->PushNumber(props.phongFresnelRanges[2]);
-        LUA->RawSetI(-2, 3);
+        LUA->SetTable(-3);
         LUA->SetField(-2, "phongFresnelRanges");
     }
     
