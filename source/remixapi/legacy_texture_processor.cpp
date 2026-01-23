@@ -1526,8 +1526,35 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
     std::transform(contentLower.begin(), contentLower.end(), contentLower.begin(), ::tolower);
     
     // Extract shader name (first non-whitespace word, possibly in quotes)
-    size_t start = contentLower.find_first_not_of(" \t\r\n");
-    if (start != std::string::npos) {
+    // Skip any comment lines (// or /* */) at the start
+    size_t start = 0;
+    while (start < content.length()) {
+        // Skip whitespace
+        start = content.find_first_not_of(" \t\r\n", start);
+        if (start == std::string::npos) break;
+        
+        // Skip single-line comments
+        if (start + 1 < content.length() && content[start] == '/' && content[start + 1] == '/') {
+            // Find end of line
+            size_t eol = content.find('\n', start);
+            if (eol == std::string::npos) break;
+            start = eol + 1;
+            continue;
+        }
+        
+        // Skip multi-line comments
+        if (start + 1 < content.length() && content[start] == '/' && content[start + 1] == '*') {
+            size_t endComment = content.find("*/", start + 2);
+            if (endComment == std::string::npos) break;
+            start = endComment + 2;
+            continue;
+        }
+        
+        // Found actual content
+        break;
+    }
+    
+    if (start != std::string::npos && start < content.length()) {
         // Skip quotes if present
         if (content[start] == '"') {
             start++;
