@@ -133,7 +133,15 @@ bool Detect(const VMTParseResult& vmt) {
         }
     }
     
-    // Check for $blendTintByBaseAlpha with dark $color2 (BFT diffuse layer pattern)
+    // =========================================================================
+    // Strong BFT marker: $blendTintByBaseAlpha with dark $color2
+    // =========================================================================
+    // This is the PRIMARY detection pattern for BFT base/diffuse layers.
+    // When $blendTintByBaseAlpha "1" + $color2 "[0 0 0]" is used, the engine
+    // darkens the texture based on the alpha channel. This is BFT's method
+    // for encoding the metallic mask in the base texture alpha.
+    //
+    // This pattern is so specific to BFT that we can treat it as a definitive marker.
     std::string blendTint = vmt.findValue("$blendtintbybasealpha");
     if (!blendTint.empty() && atoi(blendTint.c_str()) == 1) {
         // If blendTintByBaseAlpha is used with a dark color2, this is BFT
@@ -141,7 +149,8 @@ bool Detect(const VMTParseResult& vmt) {
             float r, g, b;
             if (ParseVector3(color2, r, g, b)) {
                 if ((r + g + b) < DARK_COLOR2_THRESHOLD) {
-                    hasMarker = true;
+                    // This is a VERY strong indicator - BFT base layer
+                    return true;  // Skip other checks, this is definitely BFT
                 }
             }
         }

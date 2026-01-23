@@ -292,6 +292,9 @@ function RTXToPBR.InspectMaterial(materialName)
         formatColor = Color(100, 255, 200)
     elseif props.isGPBR then
         formatColor = Color(200, 100, 255)
+    elseif props.isMWBPBR then
+        formatColor = Color(150, 255, 150)
+        formatStr = "MWB PBR Gen (Modern Warfare Base)"
     elseif props.isBFTPseudoPBR then
         formatColor = Color(255, 200, 100)
     end
@@ -350,6 +353,21 @@ function RTXToPBR.InspectMaterial(materialName)
         if props.hasGPBREmission then
             MsgC(Color(100, 255, 100), string.format("  ✓ Emission: %s\n", props.gpbrEmission))
         end
+    end
+    
+    if props.isMWBPBR then
+        MsgC(Color(150, 255, 150), "\n  --- MWB PBR Gen Format ---\n")
+        MsgC(Color(200, 200, 200), "  MWB encoding uses $phongexponenttexture for PBR data:\n")
+        if props.hasBFTExponentTexture then
+            MsgC(Color(100, 255, 100), string.format("  ✓ Exponent Texture: %s\n", props.bftExponentTexture))
+            MsgC(Color(150, 150, 150), "    Red channel: pow(gloss, 4.0) → roughness via pow^0.25\n")
+            MsgC(Color(150, 150, 150), "    Green channel: metallic value (direct)\n")
+            MsgC(Color(150, 150, 150), "    Alpha channel: roughness for rimlight\n")
+        end
+        if props.hasBaseTexture then
+            MsgC(Color(150, 150, 150), "  Base texture alpha may contain metallic mask\n")
+        end
+        MsgC(Color(200, 200, 200), "  Note: MWB converts PBR textures to Source Engine phong workflow\n")
     end
     
     if props.isBFTPseudoPBR then

@@ -3052,10 +3052,38 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     }
     
     // =========================================================================
+    // MWB PBR Gen format detection (must check before BFT - more specific)
+    // Uses $phongexponenttexture with special encoding for PBR data
+    // =========================================================================
+    if (hasVMTParsed && vmtParsed.isMWBPBR) {
+        outProps.isMWBPBR = true;
+        
+        // MWB uses $phongexponenttexture for PBR data
+        // Red channel: pow(gloss, 4.0) -> roughness via pow^0.25
+        // Green channel: direct metallic value
+        if (vmtParsed.hasPhongExponentTexture && IsValidTexturePath(vmtParsed.phongExponentTexture)) {
+            outProps.bftExponentTexturePath = vmtParsed.phongExponentTexture;  // Reuse BFT field
+            outProps.hasBFTExponentTexture = true;
+            if (m_debugOutput) {
+                Msg("[LegacyTextureProcessor] %s: [MWB-PBR] Exponent texture = %s\n", 
+                    materialName.c_str(), vmtParsed.phongExponentTexture.c_str());
+            }
+        }
+        
+        // MWB materials have default mid-range values (textures provide actual data)
+        outProps.roughness = 0.5f;  // Will be decoded from exponent texture red channel
+        outProps.metallic = 0.0f;   // Will be extracted from exponent green or base alpha
+        
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: [MWB-PBR] Material detected - using MWB handler\n", 
+                materialName.c_str());
+        }
+    }
+    // =========================================================================
     // BlueFlyTrap PseudoPBR format detection
     // Uses $phongexponenttexture for roughness encoding
     // =========================================================================
-    if (hasVMTParsed && vmtParsed.isBFTPseudoPBR) {
+    else if (hasVMTParsed && vmtParsed.isBFTPseudoPBR) {
         outProps.isBFTPseudoPBR = true;
         outProps.isBFTMetallicLayer = vmtParsed.isBFTMetallicLayer;
         
