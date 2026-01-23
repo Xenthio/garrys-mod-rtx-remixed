@@ -167,6 +167,24 @@ static float ExponentToRoughness(uint8_t expValue) {
     return roughness;
 }
 
+// =========================================================================
+// Metallic Albedo Reconstruction Constants
+// =========================================================================
+// NOTE: Using min()/max() instead of std::min()/std::max() for Windows
+// compatibility. Windows headers define min/max as macros which conflict
+// with std:: versions. The unqualified versions work correctly.
+
+// Default boost factor for recovering metallic color from darkened textures
+static const float DEFAULT_METALLIC_BOOST = 2.5f;
+// Maximum allowed boost to avoid over-brightening
+static const float MAX_METALLIC_BOOST = 4.0f;
+// Saturation enhancement for metals (helps recover gold/copper tones)
+static const float METALLIC_SATURATION_BOOST = 1.2f;
+// Minimum brightness for metals (no true black metals in PBR)
+static const float MIN_METALLIC_BRIGHTNESS = 0.3f;
+// Default fallback color for pure black metals (neutral chrome/silver)
+static const float DEFAULT_NEUTRAL_METAL = 0.7f;
+
 ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
                                    uint64_t textureHash,
                                    const ProcessingContext& ctx) {
@@ -207,30 +225,29 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
                     // Calculate boost factor based on $color2
                     // If $color2 is dark, the original texture was multiplied by that dark color
                     // To recover: boost = 1.0 / color2 (clamped to reasonable range)
-                    float boostR = 2.5f;  // Default boost for metallic recovery
-                    float boostG = 2.5f;
-                    float boostB = 2.5f;
+                    float boostR = DEFAULT_METALLIC_BOOST;
+                    float boostG = DEFAULT_METALLIC_BOOST;
+                    float boostB = DEFAULT_METALLIC_BOOST;
                     
                     if (props.hasBFTColor2) {
                         // Calculate inverse of $color2 to undo the darkening
-                        // Clamp minimum to avoid division by zero, max boost ~4x
                         float c2r = props.bftColor2[0];
                         float c2g = props.bftColor2[1];
                         float c2b = props.bftColor2[2];
                         
                         if (c2r < 0.1f && c2g < 0.1f && c2b < 0.1f) {
                             // Full black $color2 - use standard metallic boost
-                            boostR = boostG = boostB = 2.5f;
+                            boostR = boostG = boostB = DEFAULT_METALLIC_BOOST;
                         } else {
                             // Partial darkening - calculate inverse
                             if (c2r > 0.1f) boostR = 1.0f / c2r;
                             if (c2g > 0.1f) boostG = 1.0f / c2g;
                             if (c2b > 0.1f) boostB = 1.0f / c2b;
                             
-                            // Clamp to reasonable range (1x to 4x boost)
-                            boostR = min(4.0f, max(1.0f, boostR));
-                            boostG = min(4.0f, max(1.0f, boostG));
-                            boostB = min(4.0f, max(1.0f, boostB));
+                            // Clamp to reasonable range (1x to max boost)
+                            boostR = min(MAX_METALLIC_BOOST, max(1.0f, boostR));
+                            boostG = min(MAX_METALLIC_BOOST, max(1.0f, boostG));
+                            boostB = min(MAX_METALLIC_BOOST, max(1.0f, boostB));
                         }
                     }
                     
@@ -260,27 +277,24 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
                         g = min(1.0f, g * boostG);
                         b = min(1.0f, b * boostB);
                         
-                        // Apply a slight saturation boost for metals (they should have some color)
-                        // This helps recover gold, copper, bronze tones from nearly-black textures
+                        // Apply saturation boost for metals to recover gold, copper, bronze tones
                         float luminance = 0.2126f * r + 0.7152f * g + 0.0722f * b;
-                        float satBoost = 1.2f;
-                        r = min(1.0f, luminance + (r - luminance) * satBoost);
-                        g = min(1.0f, luminance + (g - luminance) * satBoost);
-                        b = min(1.0f, luminance + (b - luminance) * satBoost);
+                        r = min(1.0f, luminance + (r - luminance) * METALLIC_SATURATION_BOOST);
+                        g = min(1.0f, luminance + (g - luminance) * METALLIC_SATURATION_BOOST);
+                        b = min(1.0f, luminance + (b - luminance) * METALLIC_SATURATION_BOOST);
                         
                         // Ensure minimum brightness for metals (no true black metals exist)
-                        float minMetal = 0.3f;
-                        if (r < minMetal && g < minMetal && b < minMetal) {
+                        if (r < MIN_METALLIC_BRIGHTNESS && g < MIN_METALLIC_BRIGHTNESS && b < MIN_METALLIC_BRIGHTNESS) {
                             // Scale up to minimum brightness while preserving hue
                             float maxC = max(r, max(g, b));
                             if (maxC > 0.01f) {
-                                float scale = minMetal / maxC;
+                                float scale = MIN_METALLIC_BRIGHTNESS / maxC;
                                 r *= scale;
                                 g *= scale;
                                 b *= scale;
                             } else {
                                 // Pure black - default to neutral metal (like chrome/silver)
-                                r = g = b = 0.7f;
+                                r = g = b = DEFAULT_NEUTRAL_METAL;
                             }
                         }
                         
