@@ -1,0 +1,26 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "path to basetexture"
+	"$bumpmap" "path to normalmap"
+
+	"$phongexponenttexture" "path to exponent"
+
+	"$color2"	"[0 0 0]"
+	"$additive"	"1"
+
+	"$phong" "1"
+	"$phongboost"	"9.9934895"
+
+	"$phongfresnelranges"	"[0.05 0.115 0.945]"
+
+	"$envmap" "env_cubemap"
+	"$normalmapalphaenvmapmask"		"1"
+	"$envmapfresnel"	"1"
+
+	"$envmaptint"		"[.2 .2 .2]"
+}
+
+//	Material using pseudo pbr method 34.2 (Metalness)
+//	Engine branch: Garrys Mod
+//	Hierarchy: Stack 2/6
+//	This vmt affects: Non-metals
