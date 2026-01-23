@@ -186,6 +186,21 @@ struct MaterialPBRProperties {
     bool hasDiscoveredMask;
     std::string discoveredAOPath;       // basetexture_ao (auto-discovered)
     bool hasDiscoveredAO;
+    
+    // =========================================================================
+    // ExoPBR community PBR format support (screenspace_general_8tex shader)
+    // =========================================================================
+    bool isExoPBR;                      // Detected ExoPBR format
+    std::string armTexturePath;         // $texture1 - ARM map (AO/Roughness/Metallic)
+    bool hasARMTexture;
+    std::string exoNormalPath;          // $texture2 - Normal map (DirectX Y- format)
+    bool hasExoNormal;
+    std::string emissionTexturePath;    // $texture3 - Emission texture
+    bool hasEmissionTexture;
+    float emissionScale;                // $emissionscale - emission intensity
+    bool hasEmissionScale;
+    float emissionTint[3];              // $emissiontint - emission color tint
+    bool hasEmissionTint;
 };
 
 // Main converter class - core VTF to DDS/PBR conversion
@@ -369,6 +384,7 @@ private:
         std::string roughnessPath;
         std::string metallicPath;
         std::string heightPath;       // Displacement/height map path
+        std::string emissivePath;     // Emission/self-illumination texture path
         std::string baseTexturePath;  // For non-Refract glass: used as transmittance_texture to color the glass
         std::string transmittancePath;  // For Refract glass: $refracttinttexture converted to DDS
         float roughnessConstant;
@@ -377,6 +393,7 @@ private:
         bool isGlass;               // Whether this material should use the translucent glass shader
         bool isRefractShader;       // Whether this is a Refract shader (don't use baseTexture for transmittance)
         float ior;                  // Index of Refraction (for glass, default 1.5)
+        float emissionIntensity;    // Emission intensity (from $emissionscale)
     };
     std::unordered_map<uint64_t, ProcessedMaterialInfo> m_processedMaterialInfo;
     

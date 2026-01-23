@@ -1927,6 +1927,21 @@ struct VMTProperties {
     bool hasEnvMapContrast;
     float envMapSaturation;
     bool hasEnvMapSaturation;
+    
+    // =========================================================================
+    // ExoPBR community PBR format support (screenspace_general_8tex shader)
+    // =========================================================================
+    bool isExoPBR;                  // Detected ExoPBR format (shader + proxy)
+    std::string texture1;           // $texture1 - ARM map (AO/Roughness/Metallic), alpha=height
+    bool hasTexture1;
+    std::string texture2;           // $texture2 - Normal map (DirectX Y- format)
+    bool hasTexture2;
+    std::string texture3;           // $texture3 - Emission texture
+    bool hasTexture3;
+    float emissionScale;            // $emissionscale - emission intensity
+    bool hasEmissionScale;
+    float emissionTint[3];          // $emissiontint - emission color tint
+    bool hasEmissionTint;
 };
 
 // Parse a VMT file and extract properties that FindVar doesn't reliably expose
@@ -1994,6 +2009,16 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
     outProps.envMapContrast = 0.0f;
     outProps.hasEnvMapSaturation = false;
     outProps.envMapSaturation = 1.0f;
+    
+    // ExoPBR format properties
+    outProps.isExoPBR = false;
+    outProps.hasTexture1 = false;
+    outProps.hasTexture2 = false;
+    outProps.hasTexture3 = false;
+    outProps.hasEmissionScale = false;
+    outProps.emissionScale = 1.0f;
+    outProps.hasEmissionTint = false;
+    outProps.emissionTint[0] = outProps.emissionTint[1] = outProps.emissionTint[2] = 1.0f;
     
     // Build VMT path
     std::string vmtPath = "materials/" + materialName;
@@ -2383,6 +2408,67 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
         }
     }
     
+    // =========================================================================
+    // ExoPBR community PBR format detection
+    // ExoPBR uses screenspace_general_8tex shader with ExoPBR proxy
+    // =========================================================================
+    std::string shaderLower = outProps.shaderName;
+    std::transform(shaderLower.begin(), shaderLower.end(), shaderLower.begin(), ::tolower);
+    
+    if (shaderLower == "screenspace_general_8tex") {
+        // Check for ExoPBR proxy
+        if (contentLower.find("exopbr") != std::string::npos) {
+            outProps.isExoPBR = true;
+            
+            // $texture1 - ARM map (Ambient Occlusion, Roughness, Metallic)
+            // Red: AO, Green: Roughness, Blue: Metallic, Alpha: Height
+            if (contentLower.find("$texture1") != std::string::npos) {
+                outProps.texture1 = findValue("$texture1");
+                outProps.hasTexture1 = !outProps.texture1.empty();
+            }
+            
+            // $texture2 - Normal map (DirectX Y- format)
+            if (contentLower.find("$texture2") != std::string::npos) {
+                outProps.texture2 = findValue("$texture2");
+                outProps.hasTexture2 = !outProps.texture2.empty();
+            }
+            
+            // $texture3 - Emission texture
+            if (contentLower.find("$texture3") != std::string::npos) {
+                outProps.texture3 = findValue("$texture3");
+                outProps.hasTexture3 = !outProps.texture3.empty();
+            }
+            
+            // $emissionscale - emission intensity
+            if (contentLower.find("$emissionscale") != std::string::npos) {
+                std::string val = findValue("$emissionscale");
+                if (!val.empty()) {
+                    try {
+                        outProps.emissionScale = std::stof(val);
+                        outProps.hasEmissionScale = true;
+                    } catch (...) {}
+                }
+            }
+            
+            // $emissiontint - emission color tint (vector3)
+            size_t emTintPos = contentLower.find("$emissiontint");
+            if (emTintPos != std::string::npos) {
+                size_t bracketStart = content.find('[', emTintPos);
+                size_t bracketEnd = content.find(']', emTintPos);
+                if (bracketStart != std::string::npos && bracketEnd != std::string::npos) {
+                    std::string vectorStr = content.substr(bracketStart + 1, bracketEnd - bracketStart - 1);
+                    float r = 1.0f, g = 1.0f, b = 1.0f;
+                    if (sscanf(vectorStr.c_str(), "%f %f %f", &r, &g, &b) >= 3) {
+                        outProps.emissionTint[0] = r;
+                        outProps.emissionTint[1] = g;
+                        outProps.emissionTint[2] = b;
+                        outProps.hasEmissionTint = true;
+                    }
+                }
+            }
+        }
+    }
+    
     if (debugOutput) {
         Msg("[LegacyTextureProcessor] VMT direct parse for '%s':\n", materialName.c_str());
         Msg("  shader='%s', $basetexture='%s', $bumpmap='%s'\n",
@@ -2407,6 +2493,15 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
         }
         if (outProps.hasEnvMapContrast || outProps.hasEnvMapSaturation) {
             Msg("  $envmapcontrast=%.1f, $envmapsaturation=%.1f\n", outProps.envMapContrast, outProps.envMapSaturation);
+        }
+        // ExoPBR specific logging
+        if (outProps.isExoPBR) {
+            Msg("  [ExoPBR] Detected community PBR format!\n");
+            if (outProps.hasTexture1) Msg("    $texture1 (ARM)='%s'\n", outProps.texture1.c_str());
+            if (outProps.hasTexture2) Msg("    $texture2 (Normal)='%s'\n", outProps.texture2.c_str());
+            if (outProps.hasTexture3) Msg("    $texture3 (Emission)='%s'\n", outProps.texture3.c_str());
+            if (outProps.hasEmissionScale) Msg("    $emissionscale=%.2f\n", outProps.emissionScale);
+            if (outProps.hasEmissionTint) Msg("    $emissiontint=[%.2f %.2f %.2f]\n", outProps.emissionTint[0], outProps.emissionTint[1], outProps.emissionTint[2]);
         }
     }
     
@@ -2513,6 +2608,19 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     outProps.hasDiscoveredMask = false;
     outProps.discoveredAOPath = "";
     outProps.hasDiscoveredAO = false;
+    
+    // ExoPBR community PBR format
+    outProps.isExoPBR = false;
+    outProps.armTexturePath = "";
+    outProps.hasARMTexture = false;
+    outProps.exoNormalPath = "";
+    outProps.hasExoNormal = false;
+    outProps.emissionTexturePath = "";
+    outProps.hasEmissionTexture = false;
+    outProps.emissionScale = 1.0f;
+    outProps.hasEmissionScale = false;
+    outProps.emissionTint[0] = outProps.emissionTint[1] = outProps.emissionTint[2] = 1.0f;
+    outProps.hasEmissionTint = false;
     
     // Get the shader name
     const char* shaderName = pMaterial->GetShaderName();
@@ -3091,6 +3199,59 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     }
     
     // =========================================================================
+    // ExoPBR community PBR format detection
+    // ExoPBR provides direct PBR textures - ARM map, normal, emission
+    // =========================================================================
+    if (hasVMTParsed && vmtParsed.isExoPBR) {
+        outProps.isExoPBR = true;
+        
+        if (vmtParsed.hasTexture1 && IsValidTexturePath(vmtParsed.texture1)) {
+            outProps.armTexturePath = vmtParsed.texture1;
+            outProps.hasARMTexture = true;
+            if (m_debugOutput) {
+                Msg("[LegacyTextureProcessor] %s: [ExoPBR] ARM texture = %s\n", materialName.c_str(), vmtParsed.texture1.c_str());
+            }
+        }
+        
+        if (vmtParsed.hasTexture2 && IsValidTexturePath(vmtParsed.texture2)) {
+            outProps.exoNormalPath = vmtParsed.texture2;
+            outProps.hasExoNormal = true;
+            if (m_debugOutput) {
+                Msg("[LegacyTextureProcessor] %s: [ExoPBR] Normal texture = %s\n", materialName.c_str(), vmtParsed.texture2.c_str());
+            }
+        }
+        
+        if (vmtParsed.hasTexture3 && IsValidTexturePath(vmtParsed.texture3)) {
+            outProps.emissionTexturePath = vmtParsed.texture3;
+            outProps.hasEmissionTexture = true;
+            if (m_debugOutput) {
+                Msg("[LegacyTextureProcessor] %s: [ExoPBR] Emission texture = %s\n", materialName.c_str(), vmtParsed.texture3.c_str());
+            }
+        }
+        
+        if (vmtParsed.hasEmissionScale) {
+            outProps.emissionScale = vmtParsed.emissionScale;
+            outProps.hasEmissionScale = true;
+        }
+        
+        if (vmtParsed.hasEmissionTint) {
+            outProps.emissionTint[0] = vmtParsed.emissionTint[0];
+            outProps.emissionTint[1] = vmtParsed.emissionTint[1];
+            outProps.emissionTint[2] = vmtParsed.emissionTint[2];
+            outProps.hasEmissionTint = true;
+        }
+        
+        // ExoPBR materials have direct PBR data - set roughness and metallic to use textures
+        // The ARM map will be split in CreatePBRMaterial
+        outProps.roughness = 0.5f;  // Default, will be overridden by ARM map
+        outProps.metallic = 0.0f;   // Default, will be overridden by ARM map
+        
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] %s: [ExoPBR] Material detected - using direct PBR path\n", materialName.c_str());
+        }
+    }
+    
+    // =========================================================================
     // END: Additional VMT-parsed properties
     // =========================================================================
     
@@ -3276,8 +3437,231 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
     matInfo.isGlass = props.isGlass;
     matInfo.isRefractShader = props.isRefractShader;
     matInfo.ior = props.isGlass ? 1.5f : 1.0f;  // Default glass IOR is 1.5
+    matInfo.emissionIntensity = props.hasEmissionScale ? props.emissionScale : 1.0f;
     
     int skippedCount = 0;
+    
+    // =========================================================================
+    // ExoPBR community PBR format processing
+    // ExoPBR provides direct PBR textures - we use them directly instead of
+    // deriving PBR properties from Source Engine material parameters
+    // =========================================================================
+    if (props.isExoPBR) {
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] Processing ExoPBR material: %s\n", props.materialName.c_str());
+        }
+        
+        // Process ARM texture ($texture1) - split into roughness and metallic
+        if (props.hasARMTexture && !props.armTexturePath.empty()) {
+            std::string vtfPath = props.armTexturePath;
+            std::vector<uint8_t> fileData;
+            
+            if (ReadVTFFile(vtfPath, fileData)) {
+                VTFFileHeader header;
+                if (ParseVTFHeader(fileData, header)) {
+                    ConvertedTexture armTex;
+                    armTex.isNormalMap = false;
+                    
+                    if (ExtractVTFPixelData(fileData, header, armTex, false)) {
+                        // ARM map layout:
+                        // R = Ambient Occlusion (not used directly in PBR output)
+                        // G = Roughness
+                        // B = Metallic
+                        // A = Height (optional)
+                        
+                        // Create roughness texture from green channel
+                        {
+                            ConvertedTexture roughTex;
+                            roughTex.width = armTex.width;
+                            roughTex.height = armTex.height;
+                            roughTex.mipLevels = 1;
+                            roughTex.format = REMIXAPI_FORMAT_R8G8B8A8_UNORM;
+                            roughTex.isNormalMap = false;
+                            roughTex.pixelData.resize(armTex.width * armTex.height * 4);
+                            
+                            for (uint32_t i = 0; i < armTex.width * armTex.height; i++) {
+                                uint8_t roughness = armTex.pixelData[i * 4 + 1];  // Green channel
+                                roughTex.pixelData[i * 4 + 0] = roughness;
+                                roughTex.pixelData[i * 4 + 1] = roughness;
+                                roughTex.pixelData[i * 4 + 2] = roughness;
+                                roughTex.pixelData[i * 4 + 3] = 255;
+                            }
+                            
+                            uint64_t roughHash = GenerateTextureHash(props.armTexturePath + "_roughness", roughTex.width, roughTex.height);
+                            std::string outputPath = GenerateOutputPath(roughHash, "_roughness");
+                            
+                            if (FileExists(outputPath)) {
+                                matInfo.roughnessPath = outputPath;
+                                skippedCount++;
+                            } else if (WriteTextureToDDS(roughTex, outputPath)) {
+                                matInfo.roughnessPath = outputPath;
+                                m_stats.materialsWithRoughness++;
+                                if (m_debugOutput) {
+                                    Msg("[LegacyTextureProcessor] [ExoPBR] Wrote roughness from ARM: %s\n", outputPath.c_str());
+                                }
+                            }
+                        }
+                        
+                        // Create metallic texture from blue channel
+                        {
+                            ConvertedTexture metalTex;
+                            metalTex.width = armTex.width;
+                            metalTex.height = armTex.height;
+                            metalTex.mipLevels = 1;
+                            metalTex.format = REMIXAPI_FORMAT_R8G8B8A8_UNORM;
+                            metalTex.isNormalMap = false;
+                            metalTex.pixelData.resize(armTex.width * armTex.height * 4);
+                            
+                            for (uint32_t i = 0; i < armTex.width * armTex.height; i++) {
+                                uint8_t metallic = armTex.pixelData[i * 4 + 2];  // Blue channel
+                                metalTex.pixelData[i * 4 + 0] = metallic;
+                                metalTex.pixelData[i * 4 + 1] = metallic;
+                                metalTex.pixelData[i * 4 + 2] = metallic;
+                                metalTex.pixelData[i * 4 + 3] = 255;
+                            }
+                            
+                            uint64_t metalHash = GenerateTextureHash(props.armTexturePath + "_metallic", metalTex.width, metalTex.height);
+                            std::string outputPath = GenerateOutputPath(metalHash, "_metallic");
+                            
+                            if (FileExists(outputPath)) {
+                                matInfo.metallicPath = outputPath;
+                                skippedCount++;
+                            } else if (WriteTextureToDDS(metalTex, outputPath)) {
+                                matInfo.metallicPath = outputPath;
+                                if (m_debugOutput) {
+                                    Msg("[LegacyTextureProcessor] [ExoPBR] Wrote metallic from ARM: %s\n", outputPath.c_str());
+                                }
+                            }
+                        }
+                        
+                        // Create height texture from alpha channel if present
+                        {
+                            bool hasHeightData = false;
+                            for (uint32_t i = 0; i < armTex.width * armTex.height && !hasHeightData; i++) {
+                                if (armTex.pixelData[i * 4 + 3] != 255) {
+                                    hasHeightData = true;
+                                }
+                            }
+                            
+                            if (hasHeightData) {
+                                ConvertedTexture heightTex;
+                                heightTex.width = armTex.width;
+                                heightTex.height = armTex.height;
+                                heightTex.mipLevels = 1;
+                                heightTex.format = REMIXAPI_FORMAT_R8G8B8A8_UNORM;
+                                heightTex.isNormalMap = false;
+                                heightTex.pixelData.resize(armTex.width * armTex.height * 4);
+                                
+                                for (uint32_t i = 0; i < armTex.width * armTex.height; i++) {
+                                    uint8_t height = armTex.pixelData[i * 4 + 3];  // Alpha channel
+                                    heightTex.pixelData[i * 4 + 0] = height;
+                                    heightTex.pixelData[i * 4 + 1] = height;
+                                    heightTex.pixelData[i * 4 + 2] = height;
+                                    heightTex.pixelData[i * 4 + 3] = 255;
+                                }
+                                
+                                uint64_t heightHash = GenerateTextureHash(props.armTexturePath + "_height", heightTex.width, heightTex.height);
+                                std::string outputPath = GenerateOutputPath(heightHash, "_height");
+                                
+                                if (FileExists(outputPath)) {
+                                    matInfo.heightPath = outputPath;
+                                    skippedCount++;
+                                } else if (WriteTextureToDDS(heightTex, outputPath)) {
+                                    matInfo.heightPath = outputPath;
+                                    if (m_debugOutput) {
+                                        Msg("[LegacyTextureProcessor] [ExoPBR] Wrote height from ARM alpha: %s\n", outputPath.c_str());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Process ExoPBR normal map ($texture2) - DirectX Y- format needs green channel flip
+        if (props.hasExoNormal && !props.exoNormalPath.empty()) {
+            std::string vtfPath = props.exoNormalPath;
+            std::vector<uint8_t> fileData;
+            
+            if (ReadVTFFile(vtfPath, fileData)) {
+                VTFFileHeader header;
+                if (ParseVTFHeader(fileData, header)) {
+                    ConvertedTexture normalTex;
+                    normalTex.isNormalMap = true;
+                    
+                    if (ExtractVTFPixelData(fileData, header, normalTex, false)) {
+                        // ExoPBR uses DirectX Y- format - flip green channel
+                        for (uint32_t i = 0; i < normalTex.width * normalTex.height; i++) {
+                            normalTex.pixelData[i * 4 + 1] = 255 - normalTex.pixelData[i * 4 + 1];
+                        }
+                        
+                        // Convert to octahedral for RTX Remix
+                        ConvertNormalMapToOctahedral(normalTex);
+                        
+                        uint64_t normalHash = GenerateTextureHash(props.exoNormalPath + "_normal", normalTex.width, normalTex.height);
+                        std::string outputPath = GenerateOutputPath(normalHash, "_normal");
+                        
+                        if (FileExists(outputPath)) {
+                            matInfo.normalPath = outputPath;
+                            skippedCount++;
+                        } else if (WriteTextureToDDS(normalTex, outputPath)) {
+                            matInfo.normalPath = outputPath;
+                            m_stats.materialsWithNormals++;
+                            if (m_debugOutput) {
+                                Msg("[LegacyTextureProcessor] [ExoPBR] Wrote normal map (Y- flipped): %s\n", outputPath.c_str());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Process emission texture ($texture3)
+        if (props.hasEmissionTexture && !props.emissionTexturePath.empty()) {
+            std::string vtfPath = props.emissionTexturePath;
+            std::vector<uint8_t> fileData;
+            
+            if (ReadVTFFile(vtfPath, fileData)) {
+                VTFFileHeader header;
+                if (ParseVTFHeader(fileData, header)) {
+                    ConvertedTexture emitTex;
+                    emitTex.isNormalMap = false;
+                    
+                    if (ExtractVTFPixelData(fileData, header, emitTex, false)) {
+                        uint64_t emitHash = GenerateTextureHash(props.emissionTexturePath + "_emit", emitTex.width, emitTex.height);
+                        std::string outputPath = GenerateOutputPath(emitHash, "_emit");
+                        
+                        if (FileExists(outputPath)) {
+                            matInfo.emissivePath = outputPath;
+                            skippedCount++;
+                        } else if (WriteTextureToDDS(emitTex, outputPath)) {
+                            matInfo.emissivePath = outputPath;
+                            if (m_debugOutput) {
+                                Msg("[LegacyTextureProcessor] [ExoPBR] Wrote emission texture: %s\n", outputPath.c_str());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Store and write USDA
+        m_processedMaterialInfo[textureHash] = matInfo;
+        WriteUSDAFile();
+        m_stats.materialsProcessed++;
+        
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] [ExoPBR] Material processed: %s (skipped %d existing)\n", 
+                props.materialName.c_str(), skippedCount);
+        }
+        
+        return true;
+    }
+    
+    // =========================================================================
+    // Standard Source Engine material processing (non-ExoPBR path)
+    // =========================================================================
     
     // Write normal map to disk if available
     if (props.hasBumpMap && !props.bumpMapPath.empty()) {
@@ -4062,6 +4446,17 @@ bool TextureProcessor::WriteModUSDA() {
                 // Convert to a reasonable displacement value (multiply by a factor for game scale)
                 float displaceIn = info.heightScale * 0.5f;  // Scale factor for visual effect
                 materialsUsda << "                float inputs:displace_in = " << displaceIn << "\n";
+            }
+            
+            // Emissive/Self-illumination texture
+            if (!info.emissivePath.empty()) {
+                std::string relPath = GetRelativeTexturePath(info.emissivePath, m_outputDirectory);
+                materialsUsda << "                asset inputs:emissive_mask_texture = @" << relPath << "@ (\n";
+                materialsUsda << "                    colorSpace = \"srgb\"\n";
+                materialsUsda << "                )\n";
+                // Set emissive intensity
+                float emitIntensity = (info.emissionIntensity > 0.0f) ? info.emissionIntensity : 1.0f;
+                materialsUsda << "                float inputs:emissive_intensity = " << emitIntensity << "\n";
             }
         }
         
