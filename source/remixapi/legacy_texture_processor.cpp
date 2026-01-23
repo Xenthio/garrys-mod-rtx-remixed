@@ -1377,6 +1377,11 @@ struct VMTProperties {
     bool isBFTPseudoPBR;            // Detected BlueFlyTrap PseudoPBR format
     bool isBFTMetallicLayer;        // This is the metallic layer
     bool isBFTDiffuseLayer;         // This is the diffuse layer using $blendTintByBaseAlpha
+    
+    // =========================================================================
+    // MWB PBR Gen format support
+    // =========================================================================
+    bool isMWBPBR;                  // Detected MWB PBR Gen format
 };
 
 // Parse a VMT file and extract properties that FindVar doesn't reliably expose
@@ -2024,7 +2029,7 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
         
         if (MWBPBR::Detect(vmtParse)) {
             outProps.isMWBPBR = true;
-            MWBPBR::ExtractProperties(vmtParse, outProps);
+            // ExtractProperties is called later in CreatePBRMaterial with MaterialPBRProperties
         }
     }
     
