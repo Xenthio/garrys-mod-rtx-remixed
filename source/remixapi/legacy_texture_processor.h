@@ -21,15 +21,20 @@
 class IMaterial;
 class IFileSystem;
 
+// LegacyTextureProcessor namespace - handles conversion of Source Engine textures to RTX Remix PBR format
+// This system can be extended with custom processors for different texture/material types
+namespace LegacyTextureProcessor {
+
+// Forward declarations for modular components
+namespace VMTParser {
+    struct VMTProperties;
+}
+
 namespace GarrysMod {
 namespace Lua {
 class ILuaBase;
 }
 }
-
-// LegacyTextureProcessor namespace - handles conversion of Source Engine textures to RTX Remix PBR format
-// This system can be extended with custom processors for different texture/material types
-namespace LegacyTextureProcessor {
 
 // Forward declaration for modular format handlers
 struct ProcessingContext;
