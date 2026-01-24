@@ -9,3 +9,8 @@
 x86/
 x86_64/
 /patcherlauncher/PatcherLauncher/x64
+build_remote_clean.sh
+build_remote_release.sh
+build_remote_release_win32.sh
+build_remote_debug.sh
+build_remote.sh
