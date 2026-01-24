@@ -256,7 +256,13 @@ static int GetBoneCountForRenderable(IClientRenderable* pClientRenderable, IVMod
         return bones;
     }
     __except (EXCEPTION_EXECUTE_HANDLER) {
-        // Silently return error - exceptions are common for invalid/destroyed objects
+        // Exception caught - this is normal for invalid/destroyed objects
+        #if PROP_FIXES_DEBUG_LOGGING
+        static int exceptCount = 0;
+        if (++exceptCount <= 5) {  // Only log first 5 to avoid spam
+            DBG_PRINT("[PropFixes] GetBoneCount exception #%d caught (expected for invalid objects)\n", exceptCount);
+        }
+        #endif
         return -1;
     }
 }
