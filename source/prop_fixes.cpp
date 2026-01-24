@@ -130,71 +130,136 @@ static thread_local bool g_inSkinLightingHook = false;
 // -1 = not set, 0 = LIGHTING_HARDWARE, 1+ = software lighting
 static thread_local int g_desiredLightingForMesh = -1;
 
+static bool IsLikelyCanonicalPtr(const void* p) {
+    auto v = reinterpret_cast<uintptr_t>(p);
+    if (v < 0x10000) return false;
+#ifdef _WIN64
+    // canonical user space (very conservative)
+    if (v > 0x00007FFFFFFFFFFFULL) return false;
+#endif
+    return true;
+}
+
+static bool IsLikelyExecutablePtr(const void* p) {
+    if (!IsLikelyCanonicalPtr(p)) return false;
+
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (VirtualQuery(p, &mbi, sizeof(mbi)) != sizeof(mbi)) return false;
+
+    const DWORD exec =
+        PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+
+    if ((mbi.State != MEM_COMMIT) || (mbi.Protect & PAGE_GUARD) || (mbi.Protect & PAGE_NOACCESS))
+        return false;
+
+    return (mbi.Protect & exec) != 0;
+}
+
+static bool IsValidVTableObject(const void* obj, int minMethodsToValidate = 1) {
+    __try {
+        if (!IsLikelyCanonicalPtr(obj)) return false;
+
+        void* const* vtbl = *reinterpret_cast<void* const* const*>(obj);
+        if (!IsLikelyCanonicalPtr(vtbl)) return false;
+
+        // Validate a few initial slots look like code pointers.
+        // Keep the dereference inside SEH, because vtbl itself can be garbage/unmapped.
+        for (int i = 0; i < minMethodsToValidate; i++) {
+            void* fn = const_cast<void*>(vtbl[i]);
+            if (!IsLikelyExecutablePtr(fn)) return false;
+        }
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+// --- Failure telemetry (de-dupe) ---------------------------------------------
+
+static thread_local void* g_lastBoneFailKey = nullptr;
+
+static void ReportBoneQueryFailureOnce(void* key, IClientRenderable* rend, IVModelInfo* mi, const char* stage) {
+    if (!key) key = (void*)rend;
+    if (!key) return;
+
+    if (g_lastBoneFailKey == key) {
+        return; // de-dupe (thread-local)
+    }
+    g_lastBoneFailKey = key;
+
+    // Big "red" text in Source console/logs (Warning is red). In VS Output it will still show.
+    Warning("\n");
+    Warning("====================================================================\n");
+    Warning("[PropFixes] BONE QUERY FAILED (%s)\n", stage ? stage : "<unknown>");
+    Warning("[PropFixes] pClientRenderable=%p  pModelInfo=%p  key=%p\n", rend, mi, key);
+    Warning("====================================================================\n");
+    Warning("\n");
+}
+
 // Helper function to get bone count from a renderable (returns -1 on error)
 // Also returns model name via outModelName if provided (for debugging)
-static int GetBoneCountForRenderable(IClientRenderable* pClientRenderable, IVModelInfo* pModelInfo, const char** outModelName = nullptr) {
+static int GetBoneCountForRenderable(IClientRenderable* pClientRenderable, IVModelInfo* pModelInfo, const char** outModelName /*= nullptr*/) {
     if (outModelName) *outModelName = nullptr;
-    
+
     if (!pClientRenderable || !pModelInfo) {
+        // Don't report - null args are common and expected
         return -1;
     }
-    
-    // Validate the pointer
+
+    // Don't use vtable validation - it only checks vtable[0] but GetModel() may be at a different index
+    // Just rely on __try/__except around the actual call
+
+    const model_t* mdl = nullptr;
+
     __try {
-        if (((uintptr_t)pClientRenderable < 0x10000) || 
-            ((uintptr_t)pClientRenderable > 0x7FFFFFFFFFFF) || 
-            ((uintptr_t)pClientRenderable & 0x7) != 0) {
+        // SAFETY: Check if the vtable pointer itself is valid before dereferencing
+        void** vtbl = *reinterpret_cast<void***>(pClientRenderable);
+        if (!vtbl || !IsLikelyCanonicalPtr(vtbl)) {
+            // Invalid vtable pointer - object is destroyed or corrupted
             return -1;
         }
         
-        void** vtable = *(void***)pClientRenderable;
-        if (!vtable || ((uintptr_t)vtable < 0x10000) || 
-            ((uintptr_t)vtable > 0x7FFFFFFFFFFF)) {
+        #if PROP_FIXES_DEBUG_LOGGING
+        static bool once = false;
+        if (!once) {
+            once = true;
+            DBG_PRINT("[PropFixes] IClientRenderable vtable - calling GetModel() at index 9\n");
+        }
+        #endif
+        
+        // Call GetModel() via direct vtable access at index 9
+        // Index 8 is RenderHandle() (wrong!), Index 9 is GetModel() (correct!)
+        typedef const model_t* (__thiscall* GetModelFn)(void*);
+        GetModelFn GetModel = reinterpret_cast<GetModelFn>(vtbl[9]);
+        mdl = GetModel(pClientRenderable);
+        if (!mdl) {
+            // No model is common; don't treat as failure spam.
+            return 0;
+        }
+
+        if (outModelName) {
+            *outModelName = pModelInfo->GetModelName(mdl);
+        }
+
+        const studiohdr_t* pStudioHdr = pModelInfo->GetStudiomodel(mdl);
+        if (!pStudioHdr) {
+            return 0;
+        }
+
+        const int bones = pStudioHdr->numbones;
+        if (bones < 0 || bones > 4096) {
+            // Don't report - just return error
             return -1;
         }
-            }
-            __except(EXCEPTION_EXECUTE_HANDLER) {
-        return -1;
-            }
-            
-    // Get the model
-                const model_t* mdl = nullptr;
-                __try {
-                    mdl = pClientRenderable->GetModel();
-                }
-                __except(EXCEPTION_EXECUTE_HANDLER) {
-        return -1;
-                }
 
-                if (!mdl) {
-        return 0;  // No model = treat as simple
+        return bones;
     }
-    
-    // Get model name for debugging
-    if (outModelName) {
-                        __try {
-            *outModelName = pModelInfo->GetModelName(mdl);
-                        }
-                        __except(EXCEPTION_EXECUTE_HANDLER) {
-            *outModelName = nullptr;
-                    }
-                }
-
-    // Get studio header
-                    const studiohdr_t* pStudioHdr = nullptr;
-                    __try {
-                        pStudioHdr = pModelInfo->GetStudiomodel(mdl);
-                    }
-                    __except(EXCEPTION_EXECUTE_HANDLER) {
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        // Silently return error - exceptions are common for invalid/destroyed objects
         return -1;
     }
-    
-    if (!pStudioHdr) {
-        return 0;  // No studio header = treat as simple (might be brush model)
-    }
-    
-    return pStudioHdr->numbones;
-                    }
+}
 
 // Debug counters for bone count distribution
 #if PROP_FIXES_DEBUG_LOGGING
