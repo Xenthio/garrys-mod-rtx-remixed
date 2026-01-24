@@ -120,7 +120,13 @@ TextureProcessor::TextureProcessor()
     , m_debugOutput(false)
     , m_metallicGenerationEnabled(false)  // Disabled by default - experimental feature
     , m_autoDiscoverEnabled(true)         // Enabled by default - helps find unreferenced textures
-    , m_needsUSDAUpdate(false) {
+    , m_needsUSDAUpdate(false)
+    , m_lastKnownMaterialCount(0)
+    , m_allMaterialsProcessed(false)
+    , m_workerRunning(false)
+    , m_shutdownRequested(false)
+    , m_backgroundProcessing(false)
+    , m_lastProcessedCount(0) {
     m_stats = {};
 }
 
@@ -180,6 +186,9 @@ bool TextureProcessor::Initialize(remix::Interface* remixInterface) {
 void TextureProcessor::Shutdown() {
     if (!m_initialized) return;
     
+    // Stop background worker thread first
+    StopWorkerThread();
+    
     // Destroy all uploaded textures
     for (auto& pair : m_textureHandles) {
         if (m_remixInterface && pair.second) {
@@ -192,6 +201,20 @@ void TextureProcessor::Shutdown() {
     m_processedMaterials.clear();
     m_processedMaterialInfo.clear();
     m_writtenTexturePaths.clear();
+    m_materialsWrittenToUSDA.clear();
+    
+    // Clear queue
+    {
+        std::lock_guard<std::mutex> lock(m_queueMutex);
+        while (!m_materialQueue.empty()) m_materialQueue.pop();
+        m_queuedMaterials.clear();
+    }
+    
+    // Clear pending USDA
+    {
+        std::lock_guard<std::mutex> lock(m_pendingUSDAMutex);
+        m_pendingUSDAMaterials.clear();
+    }
     
     m_remixInterface = nullptr;
     m_initialized = false;
@@ -3253,9 +3276,12 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
         return false;
     }
     
-    // Check if we've already created a material for this hash
-    if (m_processedMaterialInfo.find(textureHash) != m_processedMaterialInfo.end()) {
-        return true; // Already done
+    // Check if we've already created a material for this hash (thread-safe)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (m_processedMaterialInfo.find(textureHash) != m_processedMaterialInfo.end()) {
+            return true; // Already done
+        }
     }
     
     // Ensure output directory exists for texture files
@@ -3288,8 +3314,8 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
         ProcessedMaterial result = ExoPBR::ProcessTextures(props, textureHash, ctx);
         if (result.success) {
             CopyProcessedMaterial(result, matInfo);
+            std::lock_guard<std::mutex> lock(m_mutex);
             m_processedMaterialInfo[textureHash] = matInfo;
-            WriteModUSDA();
             m_stats.materialsProcessed++;
             return true;
         }
@@ -3300,8 +3326,8 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
         ProcessedMaterial result = GPBR::ProcessTextures(props, textureHash, ctx);
         if (result.success) {
             CopyProcessedMaterial(result, matInfo);
+            std::lock_guard<std::mutex> lock(m_mutex);
             m_processedMaterialInfo[textureHash] = matInfo;
-            WriteModUSDA();
             m_stats.materialsProcessed++;
             return true;
         }
@@ -3312,8 +3338,8 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
         ProcessedMaterial result = MWBPBR::ProcessTextures(props, textureHash, ctx);
         if (result.success) {
             CopyProcessedMaterial(result, matInfo);
+            std::lock_guard<std::mutex> lock(m_mutex);
             m_processedMaterialInfo[textureHash] = matInfo;
-            WriteModUSDA();
             m_stats.materialsProcessed++;
             return true;
         }
@@ -3324,8 +3350,8 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
         ProcessedMaterial result = BFTPseudoPBR::ProcessTextures(props, textureHash, ctx);
         if (result.success) {
             CopyProcessedMaterial(result, matInfo);
+            std::lock_guard<std::mutex> lock(m_mutex);
             m_processedMaterialInfo[textureHash] = matInfo;
-            WriteModUSDA();
             m_stats.materialsProcessed++;
             return true;
         }
@@ -3339,10 +3365,12 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
     if (result.success) {
         CopyProcessedMaterial(result, matInfo);
         
-        // Store for USDA generation
-        m_processedMaterialInfo[textureHash] = matInfo;
-        WriteModUSDA();
-        m_stats.materialsProcessed++;
+        // Store for USDA generation (thread-safe)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_processedMaterialInfo[textureHash] = matInfo;
+            m_stats.materialsProcessed++;
+        }
         
         if (m_debugOutput) {
             Msg("[LegacyTextureProcessor] Processed material '%s' (hash 0x%llX): roughness=%.2f, metallic=%.2f%s%s%s%s\n",
@@ -3360,6 +3388,19 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
 }
 
 int TextureProcessor::ProcessAllTrackedMaterials() {
+    // Process all materials without limit (legacy behavior)
+    return ProcessTrackedMaterialsBatch(0);
+}
+
+int TextureProcessor::ProcessTrackedMaterialsBatch(int maxBatch) {
+    // LOCK-FREE FAST PATH: Check if we know everything is processed without taking any locks
+    // This atomic load has zero contention and returns instantly
+    if (m_allMaterialsProcessed.load(std::memory_order_relaxed)) {
+        return 0;
+    }
+    
+    auto startTime = std::chrono::high_resolution_clock::now();
+    
     std::lock_guard<std::mutex> lock(m_mutex);
     
     if (!m_initialized) {
@@ -3367,25 +3408,78 @@ int TextureProcessor::ProcessAllTrackedMaterials() {
         return 0;
     }
     
-    // Get all cached materials from the texture tracker
+    auto afterLock = std::chrono::high_resolution_clock::now();
+    
+    // Check if material count changed before expensive GetCachedMaterials() call
+    size_t currentCount = D3D9TextureTracker::Instance().GetCacheSize();
+    
+    // Early exit: if count hasn't changed and we processed everything, nothing new to do
+    if (currentCount == m_lastKnownMaterialCount && m_processedMaterials.size() >= currentCount) {
+        // Set the lock-free flag so next time we don't even take the lock
+        m_allMaterialsProcessed.store(true, std::memory_order_relaxed);
+        
+        auto endTime = std::chrono::high_resolution_clock::now();
+        if (m_debugOutput) {
+            auto lockTime = std::chrono::duration_cast<std::chrono::microseconds>(afterLock - startTime).count();
+            auto totalTime = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime).count();
+            Msg("[LegacyTextureProcessor] Batch: early exit, set fast-path flag (lock: %lld us, total: %lld us)\n", lockTime, totalTime);
+        }
+        return 0;
+    }
+    
+    // Material count changed - clear the flag so we check again next time
+    m_allMaterialsProcessed.store(false, std::memory_order_relaxed);
+    
+    auto afterCheck = std::chrono::high_resolution_clock::now();
+    
+    // Count changed or there might be unprocessed materials - do the expensive work
     std::vector<std::string> cachedMaterials = D3D9TextureTracker::Instance().GetCachedMaterials();
+    m_lastKnownMaterialCount = cachedMaterials.size();
+    
+    auto afterGetMaterials = std::chrono::high_resolution_clock::now();
+    
+    if (m_debugOutput) {
+        auto lockTime = std::chrono::duration_cast<std::chrono::microseconds>(afterLock - startTime).count();
+        auto checkTime = std::chrono::duration_cast<std::chrono::microseconds>(afterCheck - afterLock).count();
+        auto getMaterialsTime = std::chrono::duration_cast<std::chrono::microseconds>(afterGetMaterials - afterCheck).count();
+        Msg("[LegacyTextureProcessor] Batch timings: lock=%lld us, check=%lld us, getMaterials=%lld us\n",
+            lockTime, checkTime, getMaterialsTime);
+    }
     
     int processedCount = 0;
+    int skippedCount = 0;
     
     for (const std::string& matName : cachedMaterials) {
+        // Check batch limit (0 = no limit)
+        if (maxBatch > 0 && processedCount >= maxBatch) {
+            break;
+        }
+        
         // Skip already processed
         if (m_processedMaterials.find(matName) != m_processedMaterials.end()) {
+            skippedCount++;
+            // Early exit optimization: if we've skipped many materials in a row, likely nothing new
+            if (skippedCount > 100 && processedCount == 0) {
+                // We've checked 100 materials and found nothing new - probably nothing left
+                break;
+            }
             continue;
         }
         
+        // Reset skip counter when we find something unprocessed
+        skippedCount = 0;
+        
         // Skip internal materials
         if (matName.find("__") == 0 || matName.find("vgui") == 0) {
+            m_processedMaterials.insert(matName);
             continue;
         }
         
         // Extract PBR properties
         MaterialPBRProperties props;
         if (!ExtractMaterialPBR(matName, props)) {
+            // Mark as processed even if it failed - don't check it again
+            m_processedMaterials.insert(matName);
             continue;
         }
         
@@ -3433,18 +3527,14 @@ int TextureProcessor::ProcessAllTrackedMaterials() {
     }
     
     if (processedCount > 0) {
-        Msg("[LegacyTextureProcessor] Processed %d materials with PBR properties\n", processedCount);
-        Msg("[LegacyTextureProcessor] Stats: %d with normals, %d with roughness textures\n", 
-            m_stats.materialsWithNormals, m_stats.materialsWithRoughness);
-        
-        m_needsUSDAUpdate = true;
-        
-        // Write the USDA mod files
-        if (WriteModUSDA()) {
-            m_needsUSDAUpdate = false;
-            Msg("[LegacyTextureProcessor] IMPORTANT: Restart the game for material replacements to take effect.\n");
-            Msg("[LegacyTextureProcessor] The mod is written to: rtx-remix/mods/gmod_topbr/\n");
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] Processed %d materials with PBR properties\n", processedCount);
+            Msg("[LegacyTextureProcessor] Stats: %d with normals, %d with roughness textures\n", 
+                m_stats.materialsWithNormals, m_stats.materialsWithRoughness);
         }
+        
+        // Flag that USDA needs updating - caller must call WriteUSDAIfNeeded() to actually write
+        m_needsUSDAUpdate = true;
     }
     
     return processedCount;
@@ -3563,6 +3653,9 @@ void TextureProcessor::OnNewMaterialDetected(const std::string& materialName, ui
         return;
     }
     
+    // Clear the lock-free flag so batch processing will check for new materials
+    m_allMaterialsProcessed.store(false, std::memory_order_relaxed);
+    
     // Process in background (don't hold up rendering)
     // For now, just mark as needing processing - we'll batch process later
     // The actual processing happens in ProcessAllTrackedMaterials or ProcessSingleMaterial
@@ -3633,6 +3726,363 @@ bool TextureProcessor::WriteModUSDA() {
 }
 
 //=============================================================================
+// Background Processing Implementation
+//=============================================================================
+
+void TextureProcessor::StartWorkerThread() {
+    if (m_workerRunning.load(std::memory_order_relaxed)) {
+        return; // Already running
+    }
+    
+    m_shutdownRequested.store(false, std::memory_order_relaxed);
+    m_workerRunning.store(true, std::memory_order_relaxed);
+    
+    m_workerThread = std::thread(&TextureProcessor::WorkerThreadFunc, this);
+    
+    if (m_debugOutput) {
+        Msg("[LegacyTextureProcessor] Background worker thread started\n");
+    }
+}
+
+void TextureProcessor::StopWorkerThread() {
+    if (!m_workerRunning.load(std::memory_order_relaxed)) {
+        return; // Not running
+    }
+    
+    // Signal shutdown
+    m_shutdownRequested.store(true, std::memory_order_relaxed);
+    
+    // Wake up the worker thread
+    m_queueCondition.notify_all();
+    
+    // Wait for thread to finish
+    if (m_workerThread.joinable()) {
+        m_workerThread.join();
+    }
+    
+    m_workerRunning.store(false, std::memory_order_relaxed);
+    
+    if (m_debugOutput) {
+        Msg("[LegacyTextureProcessor] Background worker thread stopped\n");
+    }
+}
+
+void TextureProcessor::WorkerThreadFunc() {
+    if (m_debugOutput) {
+        Msg("[LegacyTextureProcessor] Worker thread running\n");
+    }
+    
+    while (!m_shutdownRequested.load(std::memory_order_relaxed)) {
+        std::string materialName;
+        
+        // Get next material from queue
+        {
+            std::unique_lock<std::mutex> lock(m_queueMutex);
+            
+            // Wait for work or shutdown
+            m_queueCondition.wait(lock, [this] {
+                return !m_materialQueue.empty() || m_shutdownRequested.load(std::memory_order_relaxed);
+            });
+            
+            if (m_shutdownRequested.load(std::memory_order_relaxed)) {
+                break;
+            }
+            
+            if (m_materialQueue.empty()) {
+                continue;
+            }
+            
+            materialName = m_materialQueue.front();
+            m_materialQueue.pop();
+        }
+        
+        // Process the material (outside of queue lock)
+        m_backgroundProcessing.store(true, std::memory_order_relaxed);
+        
+        bool success = ProcessMaterialOnWorker(materialName);
+        
+        // Remove from queued set after processing
+        {
+            std::lock_guard<std::mutex> lock(m_queueMutex);
+            m_queuedMaterials.erase(materialName);
+        }
+        
+        if (success) {
+            m_lastProcessedCount.fetch_add(1, std::memory_order_relaxed);
+        }
+        
+        // Check if queue is empty - if so, write pending USDA materials
+        bool queueEmpty = false;
+        {
+            std::lock_guard<std::mutex> lock(m_queueMutex);
+            queueEmpty = m_materialQueue.empty();
+        }
+        
+        if (queueEmpty) {
+            AppendMaterialsToUSDA();
+            m_backgroundProcessing.store(false, std::memory_order_relaxed);
+        }
+    }
+    
+    // Final USDA write before exiting
+    AppendMaterialsToUSDA();
+    
+    if (m_debugOutput) {
+        Msg("[LegacyTextureProcessor] Worker thread exiting\n");
+    }
+}
+
+bool TextureProcessor::ProcessMaterialOnWorker(const std::string& materialName) {
+    // Check if already processed (lock-free check first, then verify under lock)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (m_processedMaterials.find(materialName) != m_processedMaterials.end()) {
+            return false; // Already processed
+        }
+    }
+    
+    // Skip internal materials
+    if (materialName.find("__") == 0 || materialName.find("vgui") == 0) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_processedMaterials.insert(materialName);
+        return false;
+    }
+    
+    // Extract PBR properties (this reads from Source Engine - thread safe for reading)
+    MaterialPBRProperties props;
+    if (!ExtractMaterialPBR(materialName, props)) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_processedMaterials.insert(materialName);
+        return false;
+    }
+    
+    // Check if material has PBR-relevant data
+    if (!props.hasBumpMap && !props.hasPhong && !props.hasEnvMapMask && 
+        !props.normalMapAlphaEnvMapMask && !props.hasPhongExponentTexture &&
+        !props.hasBaseMapAlphaPhongMask && !props.hasBaseAlphaEnvMapMask &&
+        !props.hasEnvMap && !props.hasEnvMapTint && !props.isGlass) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_processedMaterials.insert(materialName);
+        return false;
+    }
+    
+    // Get the texture hash from the tracker
+    const std::vector<IDirect3DTexture9*>* variants = 
+        D3D9TextureTracker::Instance().GetTextureVariantsForMaterial(materialName.c_str());
+    
+    if (!variants || variants->empty()) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_processedMaterials.insert(materialName);
+        return false;
+    }
+    
+    // Get hash for first variant
+    uint64_t textureHash = 0;
+    for (IDirect3DTexture9* tex : *variants) {
+        if (!tex) continue;
+        auto result = g_remix->dxvk_GetTextureHash(tex);
+        if (result && result.value() != 0) {
+            textureHash = result.value();
+            break;
+        }
+    }
+    
+    if (textureHash == 0) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_processedMaterials.insert(materialName);
+        return false;
+    }
+    
+    props.baseTextureHash = textureHash;
+    
+    // Create PBR material (generates textures - file I/O is thread safe)
+    bool success = CreatePBRMaterial(props, textureHash);
+    
+    // Mark as processed
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_processedMaterials.insert(materialName);
+        
+        if (success) {
+            m_stats.materialsProcessed++;
+        }
+    }
+    
+    if (success && m_debugOutput) {
+        Msg("[LegacyTextureProcessor] [BG] Processed: %s (hash 0x%llX)\n", 
+            materialName.c_str(), textureHash);
+    }
+    
+    return success;
+}
+
+int TextureProcessor::QueueMaterialsForProcessing() {
+    if (!m_initialized) {
+        Msg("[LegacyTextureProcessor] QueueMaterialsForProcessing: not initialized\n");
+        return 0;
+    }
+    
+    // Start worker thread if not running
+    StartWorkerThread();
+    
+    // Reset processed count for this batch
+    m_lastProcessedCount.store(0, std::memory_order_relaxed);
+    
+    // Get all cached materials from tracker (this is the only main-thread access)
+    std::vector<std::string> cachedMaterials = D3D9TextureTracker::Instance().GetCachedMaterials();
+    
+    if (m_debugOutput) {
+        Msg("[LegacyTextureProcessor] Found %d cached materials in tracker\n", (int)cachedMaterials.size());
+    }
+    
+    int queuedCount = 0;
+    
+    // Quick check which materials need processing
+    std::vector<std::string> materialsToQueue;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (const std::string& matName : cachedMaterials) {
+            // Skip already processed
+            if (m_processedMaterials.find(matName) != m_processedMaterials.end()) {
+                continue;
+            }
+            materialsToQueue.push_back(matName);
+        }
+    }
+    
+    // Add to queue (separate lock)
+    {
+        std::lock_guard<std::mutex> lock(m_queueMutex);
+        for (const std::string& matName : materialsToQueue) {
+            // Skip if already in queue
+            if (m_queuedMaterials.find(matName) != m_queuedMaterials.end()) {
+                continue;
+            }
+            
+            m_materialQueue.push(matName);
+            m_queuedMaterials.insert(matName);
+            queuedCount++;
+        }
+    }
+    
+    // Wake up worker thread
+    if (queuedCount > 0) {
+        m_queueCondition.notify_one();
+        Msg("[LegacyTextureProcessor] Queued %d materials for background processing\n", queuedCount);
+    } else if (m_debugOutput) {
+        Msg("[LegacyTextureProcessor] No new materials to queue (all %d already processed)\n", 
+            (int)cachedMaterials.size());
+    }
+    
+    return queuedCount;
+}
+
+size_t TextureProcessor::GetQueuedMaterialCount() const {
+    std::lock_guard<std::mutex> lock(m_queueMutex);
+    return m_materialQueue.size();
+}
+
+bool TextureProcessor::AppendMaterialsToUSDA() {
+    // Collect pending materials
+    std::vector<std::pair<uint64_t, ProcessedMaterialInfo>> pendingMaterials;
+    size_t totalProcessed = 0;
+    size_t alreadyWritten = 0;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        totalProcessed = m_processedMaterialInfo.size();
+        alreadyWritten = m_materialsWrittenToUSDA.size();
+        
+        // Find materials that have been processed but not written to USDA
+        for (const auto& pair : m_processedMaterialInfo) {
+            if (m_materialsWrittenToUSDA.find(pair.first) == m_materialsWrittenToUSDA.end()) {
+                pendingMaterials.push_back(pair);
+            }
+        }
+    }
+    
+    if (pendingMaterials.empty()) {
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] AppendMaterialsToUSDA: no pending materials (total=%d, written=%d)\n",
+                (int)totalProcessed, (int)alreadyWritten);
+        }
+        return true; // Nothing to write
+    }
+    
+    Msg("[LegacyTextureProcessor] AppendMaterialsToUSDA: %d pending materials to write\n", (int)pendingMaterials.size());
+    
+    // Get mod directory
+    std::string modDir = USDA::GetModDirectory(m_outputDirectory);
+    std::string materialsUsdaPath = modDir + "/materials.usda";
+    
+    // Check if file exists - if not, write full file
+    std::ifstream checkFile(materialsUsdaPath);
+    bool fileExists = checkFile.good();
+    checkFile.close();
+    
+    if (!fileExists) {
+        // Write mod.usda first
+        if (!USDA::WriteModUSDAFile(modDir)) {
+            Warning("[LegacyTextureProcessor] Failed to write mod.usda\n");
+            return false;
+        }
+        
+        // Write full materials.usda with all materials
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (!USDA::WriteMaterialsUSDAFile(modDir, m_outputDirectory, m_processedMaterialInfo, m_debugOutput)) {
+            Warning("[LegacyTextureProcessor] Failed to write materials.usda\n");
+            return false;
+        }
+        
+        // Mark all as written
+        for (const auto& pair : m_processedMaterialInfo) {
+            m_materialsWrittenToUSDA.insert(pair.first);
+        }
+        
+        Msg("[LegacyTextureProcessor] Created materials.usda with %d materials\n", 
+            (int)m_processedMaterialInfo.size());
+        return true;
+    }
+    
+    // File exists - just rewrite the whole file with all materials
+    // This is simpler and more reliable than trying to append
+    // The file is small enough that this is not a performance concern
+    
+    // Write mod.usda (in case it's missing)
+    USDA::WriteModUSDAFile(modDir);
+    
+    // Write full materials.usda with all materials (existing + pending)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (!USDA::WriteMaterialsUSDAFile(modDir, m_outputDirectory, m_processedMaterialInfo, m_debugOutput)) {
+            Warning("[LegacyTextureProcessor] Failed to write materials.usda\n");
+            return false;
+        }
+        
+        // Mark all as written
+        for (const auto& pair : m_processedMaterialInfo) {
+            m_materialsWrittenToUSDA.insert(pair.first);
+        }
+    }
+    
+    Msg("[LegacyTextureProcessor] Updated materials.usda with %d total materials (%d new)\n", 
+        (int)m_processedMaterialInfo.size(), (int)pendingMaterials.size());
+    
+    return true;
+}
+
+void TextureProcessor::AppendToUSDAAsync() {
+    // If worker thread is running, it will handle USDA writes
+    // Otherwise, do it synchronously
+    if (m_workerRunning.load(std::memory_order_relaxed)) {
+        // Worker will write when queue is empty
+        return;
+    }
+    
+    // No worker running - write synchronously
+    AppendMaterialsToUSDA();
+}
+
+//=============================================================================
 // Lua Bindings
 //=============================================================================
 
@@ -3663,6 +4113,17 @@ LUA_FUNCTION(LegacyTextureProcessor_IsInitialized) {
 
 LUA_FUNCTION(LegacyTextureProcessor_ProcessAllMaterials) {
     int count = TextureProcessor::Instance().ProcessAllTrackedMaterials();
+    LUA->PushNumber(count);
+    return 1;
+}
+
+LUA_FUNCTION(LegacyTextureProcessor_ProcessMaterialsBatch) {
+    int maxBatch = 5; // Default batch size
+    if (LUA->IsType(1, Type::Number)) {
+        maxBatch = (int)LUA->GetNumber(1);
+    }
+    
+    int count = TextureProcessor::Instance().ProcessTrackedMaterialsBatch(maxBatch);
     LUA->PushNumber(count);
     return 1;
 }
@@ -4112,6 +4573,36 @@ LUA_FUNCTION(LegacyTextureProcessor_NeedsUSDAUpdate) {
     return 1;
 }
 
+// =========================================================================
+// Background Processing Lua Bindings
+// =========================================================================
+
+LUA_FUNCTION(LegacyTextureProcessor_QueueMaterialsForProcessing) {
+    int count = TextureProcessor::Instance().QueueMaterialsForProcessing();
+    LUA->PushNumber(count);
+    return 1;
+}
+
+LUA_FUNCTION(LegacyTextureProcessor_IsProcessingInBackground) {
+    LUA->PushBool(TextureProcessor::Instance().IsProcessingInBackground());
+    return 1;
+}
+
+LUA_FUNCTION(LegacyTextureProcessor_GetQueuedMaterialCount) {
+    LUA->PushNumber(static_cast<double>(TextureProcessor::Instance().GetQueuedMaterialCount()));
+    return 1;
+}
+
+LUA_FUNCTION(LegacyTextureProcessor_GetLastProcessedCount) {
+    LUA->PushNumber(TextureProcessor::Instance().GetLastProcessedCount());
+    return 1;
+}
+
+LUA_FUNCTION(LegacyTextureProcessor_AppendToUSDAAsync) {
+    TextureProcessor::Instance().AppendToUSDAAsync();
+    return 0;
+}
+
 void InitializeLegacyTextureProcessorLuaBindings(GarrysMod::Lua::ILuaBase* LUA) {
     // Create LegacyTextureProcessor table
     LUA->PushSpecial(SPECIAL_GLOB);
@@ -4125,6 +4616,9 @@ void InitializeLegacyTextureProcessorLuaBindings(GarrysMod::Lua::ILuaBase* LUA) 
     
     LUA->PushCFunction(LegacyTextureProcessor_ProcessAllMaterials);
     LUA->SetField(-2, "ProcessAllMaterials");
+    
+    LUA->PushCFunction(LegacyTextureProcessor_ProcessMaterialsBatch);
+    LUA->SetField(-2, "ProcessMaterialsBatch");
     
     LUA->PushCFunction(LegacyTextureProcessor_ProcessSingleMaterial);
     LUA->SetField(-2, "ProcessSingleMaterial");
@@ -4170,6 +4664,22 @@ void InitializeLegacyTextureProcessorLuaBindings(GarrysMod::Lua::ILuaBase* LUA) 
     
     LUA->PushCFunction(LegacyTextureProcessor_NeedsUSDAUpdate);
     LUA->SetField(-2, "NeedsUSDAUpdate");
+    
+    // Background processing
+    LUA->PushCFunction(LegacyTextureProcessor_QueueMaterialsForProcessing);
+    LUA->SetField(-2, "QueueMaterialsForProcessing");
+    
+    LUA->PushCFunction(LegacyTextureProcessor_IsProcessingInBackground);
+    LUA->SetField(-2, "IsProcessingInBackground");
+    
+    LUA->PushCFunction(LegacyTextureProcessor_GetQueuedMaterialCount);
+    LUA->SetField(-2, "GetQueuedMaterialCount");
+    
+    LUA->PushCFunction(LegacyTextureProcessor_GetLastProcessedCount);
+    LUA->SetField(-2, "GetLastProcessedCount");
+    
+    LUA->PushCFunction(LegacyTextureProcessor_AppendToUSDAAsync);
+    LUA->SetField(-2, "AppendToUSDAAsync");
     
     LUA->SetField(-2, "LegacyTextureProcessor");
     
@@ -4185,6 +4695,9 @@ void InitializeLegacyTextureProcessorLuaBindings(GarrysMod::Lua::ILuaBase* LUA) 
     LUA->PushCFunction(LegacyTextureProcessor_ProcessAllMaterials);
     LUA->SetField(-2, "ProcessAllMaterials");
     
+    LUA->PushCFunction(LegacyTextureProcessor_ProcessMaterialsBatch);
+    LUA->SetField(-2, "ProcessMaterialsBatch");
+    
     LUA->PushCFunction(LegacyTextureProcessor_ProcessSingleMaterial);
     LUA->SetField(-2, "ProcessSingleMaterial");
     
@@ -4229,6 +4742,22 @@ void InitializeLegacyTextureProcessorLuaBindings(GarrysMod::Lua::ILuaBase* LUA) 
     
     LUA->PushCFunction(LegacyTextureProcessor_NeedsUSDAUpdate);
     LUA->SetField(-2, "NeedsUSDAUpdate");
+    
+    // Background processing
+    LUA->PushCFunction(LegacyTextureProcessor_QueueMaterialsForProcessing);
+    LUA->SetField(-2, "QueueMaterialsForProcessing");
+    
+    LUA->PushCFunction(LegacyTextureProcessor_IsProcessingInBackground);
+    LUA->SetField(-2, "IsProcessingInBackground");
+    
+    LUA->PushCFunction(LegacyTextureProcessor_GetQueuedMaterialCount);
+    LUA->SetField(-2, "GetQueuedMaterialCount");
+    
+    LUA->PushCFunction(LegacyTextureProcessor_GetLastProcessedCount);
+    LUA->SetField(-2, "GetLastProcessedCount");
+    
+    LUA->PushCFunction(LegacyTextureProcessor_AppendToUSDAAsync);
+    LUA->SetField(-2, "AppendToUSDAAsync");
     
     LUA->SetField(-2, "VTFConverter");
     LUA->Pop();

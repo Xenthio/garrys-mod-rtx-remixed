@@ -9,6 +9,10 @@
 #include <mutex>
 #include <cstdint>
 #include <functional>
+#include <thread>
+#include <atomic>
+#include <condition_variable>
+#include <queue>
 
 #include <remix/remix.h>
 #include <remix/remix_c.h>
@@ -273,6 +277,11 @@ public:
     // Process all materials in the texture tracker cache
     int ProcessAllTrackedMaterials();
     
+    // Process materials in batches to avoid stuttering (returns number processed)
+    // maxBatch: maximum materials to process per call (0 = process all)
+    // Returns: number of materials processed in this batch
+    int ProcessTrackedMaterialsBatch(int maxBatch = 5);
+    
     // Process a single material (for auto-processing when new textures appear)
     // Returns true if the material was processed successfully
     bool ProcessSingleMaterial(const std::string& materialName);
@@ -346,6 +355,26 @@ public:
     // Flag to indicate USDA needs to be rewritten (new materials added since last write)
     bool NeedsUSDAUpdate() const { return m_needsUSDAUpdate; }
     void WriteUSDAIfNeeded();
+    
+    // =========================================================================
+    // Background Processing API
+    // =========================================================================
+    
+    // Queue materials for background processing (non-blocking, returns immediately)
+    // Returns number of NEW materials queued (excludes already processed/queued)
+    int QueueMaterialsForProcessing();
+    
+    // Check if background processing is currently active
+    bool IsProcessingInBackground() const { return m_backgroundProcessing.load(std::memory_order_relaxed); }
+    
+    // Get count of materials waiting in queue
+    size_t GetQueuedMaterialCount() const;
+    
+    // Get count of materials processed in current/last background run
+    int GetLastProcessedCount() const { return m_lastProcessedCount.load(std::memory_order_relaxed); }
+    
+    // Append new materials to USDA (non-blocking, runs on background thread)
+    void AppendToUSDAAsync();
     
 private:
     TextureProcessor();
@@ -434,8 +463,10 @@ private:
     bool m_metallicGenerationEnabled;  // Experimental metallic generation from base texture brightness (default: false)
     bool m_autoDiscoverEnabled;        // Auto-discover companion textures (default: true)
     std::string m_outputDirectory;       // Absolute output directory for writing DDS files
+    size_t m_lastKnownMaterialCount;     // Cache to avoid expensive GetCachedMaterials() calls
+    std::atomic<bool> m_allMaterialsProcessed; // Lock-free flag for instant early exit
     
-    // Cache of processed materials
+    // Cache of processed materials (includes failed/skipped - never reprocess)
     std::unordered_set<std::string> m_processedMaterials;
     
     // Cache of uploaded textures (path -> hash)
@@ -450,12 +481,51 @@ private:
     // Track material data for USDA generation
     std::unordered_map<uint64_t, ProcessedMaterialInfo> m_processedMaterialInfo;
     
+    // Track which materials have been written to USDA (to support append-only)
+    std::unordered_set<uint64_t> m_materialsWrittenToUSDA;
+    
     // Flag to indicate USDA needs to be rewritten
     bool m_needsUSDAUpdate;
     
     // Statistics
     mutable std::mutex m_mutex;
     Stats m_stats;
+    
+    // =========================================================================
+    // Background Processing Infrastructure
+    // =========================================================================
+    
+    // Background worker thread
+    std::thread m_workerThread;
+    std::atomic<bool> m_workerRunning{false};
+    std::atomic<bool> m_shutdownRequested{false};
+    
+    // Work queue for materials to process
+    std::queue<std::string> m_materialQueue;
+    std::unordered_set<std::string> m_queuedMaterials;  // Fast lookup to avoid duplicates
+    mutable std::mutex m_queueMutex;
+    std::condition_variable m_queueCondition;
+    
+    // Background processing state
+    std::atomic<bool> m_backgroundProcessing{false};
+    std::atomic<int> m_lastProcessedCount{0};
+    
+    // Pending USDA materials (processed but not yet written)
+    std::vector<std::pair<uint64_t, ProcessedMaterialInfo>> m_pendingUSDAMaterials;
+    mutable std::mutex m_pendingUSDAMutex;
+    
+    // Worker thread function
+    void WorkerThreadFunc();
+    
+    // Process a single material on the worker thread (no main thread locks)
+    bool ProcessMaterialOnWorker(const std::string& materialName);
+    
+    // Append materials to USDA file (called from worker thread)
+    bool AppendMaterialsToUSDA();
+    
+    // Start/stop worker thread
+    void StartWorkerThread();
+    void StopWorkerThread();
 };
 
 // Lua bindings initialization

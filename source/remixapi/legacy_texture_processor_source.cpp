@@ -291,27 +291,35 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
         if (ctx.readVTFFile(props.bumpMapPath, fileData)) {
             VTFFileHeader header;
             if (ctx.parseVTFHeader(fileData, header)) {
-                ConvertedTexture normalTex;
-                normalTex.isNormalMap = true;
+                // Check if output file already exists BEFORE expensive decompression
+                uint64_t hash = ctx.generateHash(props.bumpMapPath + "_normal", header.width, header.height);
+                std::string path = ctx.generateOutputPath(hash, "_normal");
                 
-                if (ctx.extractPixelData(fileData, header, normalTex, false)) {
-                    // Handle SSBump conversion
-                    if (props.isSSBump) {
-                        ctx.convertSSBumpToNormal(normalTex);
+                if (ctx.fileExists(path)) {
+                    // File already exists - skip all processing
+                    result.normalPath = path;
+                    result.skippedCount++;
+                    if (ctx.debugOutput) {
+                        Msg("[Source] Normal map already exists (skipped): %s\n", path.c_str());
                     }
+                } else {
+                    // File doesn't exist - do the expensive work
+                    ConvertedTexture normalTex;
+                    normalTex.isNormalMap = true;
                     
-                    ctx.convertToOctahedral(normalTex);
-                    
-                    uint64_t hash = ctx.generateHash(props.bumpMapPath + "_normal", normalTex.width, normalTex.height);
-                    std::string path = ctx.generateOutputPath(hash, "_normal");
-                    
-                    if (ctx.fileExists(path)) {
-                        result.normalPath = path;
-                        result.skippedCount++;
-                    } else if (ctx.writeDDS(normalTex, path)) {
-                        result.normalPath = path;
-                        if (ctx.materialsWithNormals) (*ctx.materialsWithNormals)++;
-                        if (ctx.debugOutput) Msg("[Source] Wrote normal: %s\n", path.c_str());
+                    if (ctx.extractPixelData(fileData, header, normalTex, false)) {
+                        // Handle SSBump conversion
+                        if (props.isSSBump) {
+                            ctx.convertSSBumpToNormal(normalTex);
+                        }
+                        
+                        ctx.convertToOctahedral(normalTex);
+                        
+                        if (ctx.writeDDS(normalTex, path)) {
+                            result.normalPath = path;
+                            if (ctx.materialsWithNormals) (*ctx.materialsWithNormals)++;
+                            if (ctx.debugOutput) Msg("[Source] Wrote normal: %s\n", path.c_str());
+                        }
                     }
                 }
             }
@@ -414,14 +422,29 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
         if (ctx.readVTFFile(vtfPath, fileData)) {
             VTFFileHeader header;
             if (ctx.parseVTFHeader(fileData, header)) {
-                ConvertedTexture sourceTex;
-                if (ctx.extractPixelData(fileData, header, sourceTex, false)) {
-                    hasRoughnessTexture = GenerateRoughnessFromSource(
-                        sourceTex, useAlphaChannel, isPhongExponentTexture, isInvertedMask,
-                        vtfPath, ctx, result);
-                    
-                    if (hasRoughnessTexture && ctx.debugOutput) {
-                        Msg("[Source] Generated roughness texture from: %s\n", vtfPath.c_str());
+                // Check if output file already exists BEFORE expensive decompression
+                uint64_t hash = ctx.generateHash(vtfPath + "_rough", header.width, header.height);
+                std::string path = ctx.generateOutputPath(hash, "_roughness");
+                
+                if (ctx.fileExists(path)) {
+                    // File already exists - skip all processing
+                    result.roughnessPath = path;
+                    result.skippedCount++;
+                    hasRoughnessTexture = true;
+                    if (ctx.debugOutput) {
+                        Msg("[Source] Roughness texture already exists (skipped): %s\n", path.c_str());
+                    }
+                } else {
+                    // File doesn't exist - do the expensive work
+                    ConvertedTexture sourceTex;
+                    if (ctx.extractPixelData(fileData, header, sourceTex, false)) {
+                        hasRoughnessTexture = GenerateRoughnessFromSource(
+                            sourceTex, useAlphaChannel, isPhongExponentTexture, isInvertedMask,
+                            vtfPath, ctx, result);
+                        
+                        if (hasRoughnessTexture && ctx.debugOutput) {
+                            Msg("[Source] Generated roughness texture from: %s\n", vtfPath.c_str());
+                        }
                     }
                 }
             }
@@ -452,19 +475,27 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
         if (ctx.readVTFFile(heightMapPath, fileData)) {
             VTFFileHeader header;
             if (ctx.parseVTFHeader(fileData, header)) {
-                ConvertedTexture heightTex;
-                if (ctx.extractPixelData(fileData, header, heightTex, false)) {
-                    uint64_t hash = ctx.generateHash(heightMapPath + "_height", heightTex.width, heightTex.height);
-                    std::string path = ctx.generateOutputPath(hash, "_height");
-                    
-                    if (ctx.fileExists(path)) {
-                        result.heightPath = path;
-                        result.heightScale = props.hasParallaxMapScale ? props.parallaxMapScale : 0.025f;
-                        result.skippedCount++;
-                    } else if (ctx.writeDDS(heightTex, path)) {
-                        result.heightPath = path;
-                        result.heightScale = props.hasParallaxMapScale ? props.parallaxMapScale : 0.025f;
-                        if (ctx.debugOutput) Msg("[Source] Wrote height: %s\n", path.c_str());
+                // Check if output file already exists BEFORE expensive decompression
+                uint64_t hash = ctx.generateHash(heightMapPath + "_height", header.width, header.height);
+                std::string path = ctx.generateOutputPath(hash, "_height");
+                
+                if (ctx.fileExists(path)) {
+                    // File already exists - skip all processing
+                    result.heightPath = path;
+                    result.heightScale = props.hasParallaxMapScale ? props.parallaxMapScale : 0.025f;
+                    result.skippedCount++;
+                    if (ctx.debugOutput) {
+                        Msg("[Source] Height map already exists (skipped): %s\n", path.c_str());
+                    }
+                } else {
+                    // File doesn't exist - do the expensive work
+                    ConvertedTexture heightTex;
+                    if (ctx.extractPixelData(fileData, header, heightTex, false)) {
+                        if (ctx.writeDDS(heightTex, path)) {
+                            result.heightPath = path;
+                            result.heightScale = props.hasParallaxMapScale ? props.parallaxMapScale : 0.025f;
+                            if (ctx.debugOutput) Msg("[Source] Wrote height: %s\n", path.c_str());
+                        }
                     }
                 }
             }
