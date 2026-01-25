@@ -360,6 +360,7 @@ static MetallicExtractionResult GenerateMetallicFromEnvmapMaskAndBrightness(
     const ConvertedTexture& baseTex,
     const ConvertedTexture& envmapMaskTex,
     EnvmapMaskSource maskSource,
+    bool invertMask,  // true for $basealphaenvmapmask (transparent=reflective, opaque=matte)
     const MaterialPBRProperties& props,
     const ProcessingContext& ctx,
     ProcessedMaterial& result) {
@@ -398,15 +399,15 @@ static MetallicExtractionResult GenerateMetallicFromEnvmapMaskAndBrightness(
     
     // Constants for metallic extraction
     // In Source, brightness below this threshold with strong envmap = metallic
-    constexpr float BRIGHTNESS_THRESHOLD = 0.25f;  // Pixel must be quite dark
+    constexpr float BRIGHTNESS_THRESHOLD = 0.1f;  // Pixel must be very dark (near black)
     // Minimum envmap mask strength to consider a pixel reflective enough for metallic
-    constexpr float ENVMAP_MIN_STRENGTH = 0.6f;  // Require strong envmap (60%+)
+    constexpr float ENVMAP_MIN_STRENGTH = 0.3f;  // Lower threshold - 30%+ envmap
     // Minimum metallic value to count as "metallic" for statistics and processing
-    constexpr float METALLIC_PIXEL_THRESHOLD = 0.1f;  // Only count strong metallic
+    constexpr float METALLIC_PIXEL_THRESHOLD = 0.05f;  // Count more pixels as metallic
     // Minimum max metallic value to justify generating textures
-    constexpr float METALLIC_MAX_THRESHOLD = 0.3f;  // Need definitive metallic areas
+    constexpr float METALLIC_MAX_THRESHOLD = 0.15f;  // Lower threshold to generate textures
     // Minimum ratio of metallic pixels to justify generating textures  
-    constexpr float METALLIC_RATIO_THRESHOLD = 0.005f;  // At least 0.5% of pixels
+    constexpr float METALLIC_RATIO_THRESHOLD = 0.001f;  // At least 0.1% of pixels
     // Small epsilon to prevent division by zero
     constexpr float EPSILON = 0.001f;
     
@@ -433,10 +434,13 @@ static MetallicExtractionResult GenerateMetallicFromEnvmapMaskAndBrightness(
         // Read envmap mask from appropriate channel based on source
         // - Separate $envmapmask texture: grayscale, use red channel
         // - $normalmapalphaenvmapmask: use alpha channel of normal map  
-        // - $basealphaenvmapmask: use alpha channel of base texture
-        uint8_t envmapMask = (maskSource == EnvmapMaskSource::AlphaChannel) 
+        // - $basealphaenvmapmask: use alpha channel of base texture (INVERTED!)
+        uint8_t envmapMaskRaw = (maskSource == EnvmapMaskSource::AlphaChannel) 
             ? envmapMaskTex.pixelData[srcIdx + 3]   // Alpha channel
             : envmapMaskTex.pixelData[srcIdx + 0];  // Red channel
+        
+        // Handle inverted masks ($basealphaenvmapmask: transparent=reflective, opaque=matte)
+        uint8_t envmapMask = invertMask ? (255 - envmapMaskRaw) : envmapMaskRaw;
         
         // Calculate pixel brightness (luminance)
         float brightness = (0.299f * baseR + 0.587f * baseG + 0.114f * baseB) / 255.0f;
@@ -459,10 +463,8 @@ static MetallicExtractionResult GenerateMetallicFromEnvmapMaskAndBrightness(
             
             // Metallic = darkness * envmap factor
             // Both must be high for strong metallic
+            // No falloff - we want strong metallic for dark areas with good envmap
             metallic = darkness * envmapFactor;
-            
-            // Apply square falloff to reduce weak values
-            metallic = metallic * metallic;
         }
         
         // Track statistics - use first/subsequent logic for correct min/max
@@ -836,6 +838,7 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
     //   1. $envmapmask - separate texture file (red channel)
     //   2. $normalmapalphaenvmapmask - normal map alpha channel
     //   3. $basealphaenvmapmask - base texture alpha channel
+    //   4. No mask but $envmap is set - treat as full-strength envmap everywhere
     // =========================================================================
     bool hasMetallicTexture = false;
     
@@ -843,13 +846,14 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
     // 1. Metallic generation is enabled (experimental feature flag)
     // 2. We have a base texture to analyze
     // 3. Material has envmap enabled
-    // 4. We have some form of envmap mask (separate texture OR alpha channel flags)
+    // Note: We now also support materials with just $envmap (no mask) - full-strength envmap everywhere
     bool hasAnyEnvmapMask = (props.hasEnvMapMask && !props.envMapMaskPath.empty()) ||
                             props.normalMapAlphaEnvMapMask ||
                             props.hasBaseAlphaEnvMapMask;
+    bool hasEnvmapNoMask = props.hasEnvMap && !hasAnyEnvmapMask;  // $envmap but no mask
     
     if (ctx.metallicGenerationEnabled &&
-        !props.baseTexturePath.empty() && props.hasEnvMap && hasAnyEnvmapMask) {
+        !props.baseTexturePath.empty() && props.hasEnvMap) {
         
         if (ctx.debugOutput) {
             Msg("[Source] [Metallic] Attempting metallic extraction:\n");
@@ -859,7 +863,9 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
             } else if (props.normalMapAlphaEnvMapMask && props.hasBumpMap) {
                 Msg("[Source] [Metallic]   Envmap mask source: $normalmapalphaenvmapmask (normal map alpha)\n");
             } else if (props.hasBaseAlphaEnvMapMask) {
-                Msg("[Source] [Metallic]   Envmap mask source: $basealphaenvmapmask (base texture alpha)\n");
+                Msg("[Source] [Metallic]   Envmap mask source: $basealphaenvmapmask (base texture alpha - INVERTED)\n");
+            } else if (hasEnvmapNoMask) {
+                Msg("[Source] [Metallic]   Envmap mask source: NONE ($envmap only - full-strength everywhere)\n");
             }
         }
         
@@ -874,27 +880,45 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
                     // Determine envmap mask source and load appropriate texture
                     std::string maskTexturePath;
                     EnvmapMaskSource maskSource = EnvmapMaskSource::RedChannel;
+                    bool useFullStrengthEnvmap = false;
+                    bool invertMask = false;  // $basealphaenvmapmask needs inversion
                     
                     if (props.hasEnvMapMask && !props.envMapMaskPath.empty()) {
                         // Priority 1: Separate $envmapmask texture (use red channel)
                         maskTexturePath = props.envMapMaskPath;
                         maskSource = EnvmapMaskSource::RedChannel;
+                        invertMask = false;
                     } else if (props.normalMapAlphaEnvMapMask && props.hasBumpMap && !props.bumpMapPath.empty()) {
                         // Priority 2: Normal map alpha ($normalmapalphaenvmapmask)
                         maskTexturePath = props.bumpMapPath;
                         maskSource = EnvmapMaskSource::AlphaChannel;
+                        invertMask = false;
                     } else if (props.hasBaseAlphaEnvMapMask) {
-                        // Priority 3: Base texture alpha ($basealphaenvmapmask)
+                        // Priority 3: Base texture alpha ($basealphaenvmapmask) - INVERTED!
+                        // In Source: transparent (0) = reflective, opaque (255) = matte
                         maskTexturePath = props.baseTexturePath;
                         maskSource = EnvmapMaskSource::AlphaChannel;
+                        invertMask = true;
+                    } else if (hasEnvmapNoMask) {
+                        // Priority 4: No mask but $envmap is set - full-strength envmap everywhere
+                        useFullStrengthEnvmap = true;
+                        invertMask = false;
                     }
                     
-                    if (!maskTexturePath.empty()) {
+                    if (!maskTexturePath.empty() || useFullStrengthEnvmap) {
                         // Read mask texture (may be same as base texture for basealphaenvmapmask)
                         ConvertedTexture separateMaskTex;  // Only used when loading separate texture
+                        ConvertedTexture fullStrengthMask; // Used when no mask - all white (255)
                         const ConvertedTexture* maskTexPtr = nullptr;
                         
-                        if (maskTexturePath == props.baseTexturePath) {
+                        if (useFullStrengthEnvmap) {
+                            // Create a full-strength mask (all white = 255)
+                            fullStrengthMask.width = baseTex.width;
+                            fullStrengthMask.height = baseTex.height;
+                            fullStrengthMask.pixelData.resize(baseTex.width * baseTex.height * 4, 255);
+                            maskTexPtr = &fullStrengthMask;
+                            maskSource = EnvmapMaskSource::RedChannel;
+                        } else if (maskTexturePath == props.baseTexturePath) {
                             // Reuse already loaded base texture (no copy needed)
                             maskTexPtr = &baseTex;
                         } else {
@@ -914,7 +938,7 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
                             // Generate metallic and modified albedo
                             MetallicExtractionResult metallicResult = 
                                 GenerateMetallicFromEnvmapMaskAndBrightness(
-                                    baseTex, *maskTexPtr, maskSource, props, ctx, result);
+                                    baseTex, *maskTexPtr, maskSource, invertMask, props, ctx, result);
                             
                             hasMetallicTexture = metallicResult.hasMetallic;
                             
