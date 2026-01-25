@@ -350,9 +350,16 @@ struct MetallicExtractionResult {
     bool hasModifiedAlbedo;
 };
 
+// Envmap mask source types
+enum class EnvmapMaskSource {
+    RedChannel,     // Separate $envmapmask texture - use red channel
+    AlphaChannel    // $normalmapalphaenvmapmask or $basealphaenvmapmask - use alpha channel
+};
+
 static MetallicExtractionResult GenerateMetallicFromEnvmapMaskAndBrightness(
     const ConvertedTexture& baseTex,
     const ConvertedTexture& envmapMaskTex,
+    EnvmapMaskSource maskSource,
     const MaterialPBRProperties& props,
     const ProcessingContext& ctx,
     ProcessedMaterial& result) {
@@ -416,8 +423,13 @@ static MetallicExtractionResult GenerateMetallicFromEnvmapMaskAndBrightness(
         uint8_t baseB = baseTex.pixelData[srcIdx + 2];
         uint8_t baseA = baseTex.pixelData[srcIdx + 3];
         
-        // Read envmap mask (typically grayscale, use red channel)
-        uint8_t envmapMask = envmapMaskTex.pixelData[srcIdx + 0];
+        // Read envmap mask from appropriate channel based on source
+        // - Separate $envmapmask texture: grayscale, use red channel
+        // - $normalmapalphaenvmapmask: use alpha channel of normal map  
+        // - $basealphaenvmapmask: use alpha channel of base texture
+        uint8_t envmapMask = (maskSource == EnvmapMaskSource::AlphaChannel) 
+            ? envmapMaskTex.pixelData[srcIdx + 3]   // Alpha channel
+            : envmapMaskTex.pixelData[srcIdx + 0];  // Red channel
         
         // Calculate pixel brightness (luminance)
         float brightness = (0.299f * baseR + 0.587f * baseG + 0.114f * baseB) / 255.0f;
@@ -791,25 +803,39 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
     // 
     // This feature is gated behind the metallicGenerationEnabled flag as it's
     // experimental and may not produce correct results for all materials.
+    //
+    // Envmap mask sources (in priority order):
+    //   1. $envmapmask - separate texture file (red channel)
+    //   2. $normalmapalphaenvmapmask - normal map alpha channel
+    //   3. $basealphaenvmapmask - base texture alpha channel
     // =========================================================================
     bool hasMetallicTexture = false;
     
     // Only attempt metallic extraction if:
     // 1. Metallic generation is enabled (experimental feature flag)
-    // 2. We have an envmap mask texture (indicates reflective areas)
-    // 3. We have a base texture to analyze
-    // 4. Material has envmap enabled
+    // 2. We have a base texture to analyze
+    // 3. Material has envmap enabled
+    // 4. We have some form of envmap mask (separate texture OR alpha channel flags)
+    bool hasAnyEnvmapMask = (props.hasEnvMapMask && !props.envMapMaskPath.empty()) ||
+                            props.normalMapAlphaEnvMapMask ||
+                            props.hasBaseAlphaEnvMapMask;
+    
     if (ctx.metallicGenerationEnabled &&
-        props.hasEnvMapMask && !props.envMapMaskPath.empty() && 
-        !props.baseTexturePath.empty() && props.hasEnvMap) {
+        !props.baseTexturePath.empty() && props.hasEnvMap && hasAnyEnvmapMask) {
         
         if (ctx.debugOutput) {
             Msg("[Source] [Metallic] Attempting metallic extraction:\n");
             Msg("[Source] [Metallic]   Base texture: %s\n", props.baseTexturePath.c_str());
-            Msg("[Source] [Metallic]   Envmap mask: %s\n", props.envMapMaskPath.c_str());
+            if (props.hasEnvMapMask && !props.envMapMaskPath.empty()) {
+                Msg("[Source] [Metallic]   Envmap mask source: $envmapmask (%s)\n", props.envMapMaskPath.c_str());
+            } else if (props.normalMapAlphaEnvMapMask && props.hasBumpMap) {
+                Msg("[Source] [Metallic]   Envmap mask source: $normalmapalphaenvmapmask (normal map alpha)\n");
+            } else if (props.hasBaseAlphaEnvMapMask) {
+                Msg("[Source] [Metallic]   Envmap mask source: $basealphaenvmapmask (base texture alpha)\n");
+            }
         }
         
-        // Read base texture
+        // Read base texture (always needed)
         std::vector<uint8_t> baseFileData;
         if (ctx.readVTFFile(props.baseTexturePath, baseFileData)) {
             VTFFileHeader baseHeader;
@@ -817,28 +843,61 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
                 ConvertedTexture baseTex;
                 if (ctx.extractPixelData(baseFileData, baseHeader, baseTex, false)) {
                     
-                    // Read envmap mask texture
-                    std::vector<uint8_t> maskFileData;
-                    if (ctx.readVTFFile(props.envMapMaskPath, maskFileData)) {
-                        VTFFileHeader maskHeader;
-                        if (ctx.parseVTFHeader(maskFileData, maskHeader)) {
-                            ConvertedTexture maskTex;
-                            if (ctx.extractPixelData(maskFileData, maskHeader, maskTex, false)) {
-                                
-                                // Generate metallic and modified albedo
-                                MetallicExtractionResult metallicResult = 
-                                    GenerateMetallicFromEnvmapMaskAndBrightness(
-                                        baseTex, maskTex, props, ctx, result);
-                                
-                                hasMetallicTexture = metallicResult.hasMetallic;
-                                
-                                if (metallicResult.hasMetallic && ctx.debugOutput) {
-                                    Msg("[Source] [Metallic] Successfully extracted metallic from envmap mask + brightness\n");
-                                }
-                                if (metallicResult.hasModifiedAlbedo && ctx.debugOutput) {
-                                    Msg("[Source] [Metallic] Generated modified albedo for proper PBR rendering\n");
+                    // Determine envmap mask source and load appropriate texture
+                    std::string maskTexturePath;
+                    EnvmapMaskSource maskSource = EnvmapMaskSource::RedChannel;
+                    
+                    if (props.hasEnvMapMask && !props.envMapMaskPath.empty()) {
+                        // Priority 1: Separate $envmapmask texture (use red channel)
+                        maskTexturePath = props.envMapMaskPath;
+                        maskSource = EnvmapMaskSource::RedChannel;
+                    } else if (props.normalMapAlphaEnvMapMask && props.hasBumpMap && !props.bumpMapPath.empty()) {
+                        // Priority 2: Normal map alpha ($normalmapalphaenvmapmask)
+                        maskTexturePath = props.bumpMapPath;
+                        maskSource = EnvmapMaskSource::AlphaChannel;
+                    } else if (props.hasBaseAlphaEnvMapMask) {
+                        // Priority 3: Base texture alpha ($basealphaenvmapmask)
+                        maskTexturePath = props.baseTexturePath;
+                        maskSource = EnvmapMaskSource::AlphaChannel;
+                    }
+                    
+                    if (!maskTexturePath.empty()) {
+                        // Read mask texture (may be same as base texture for basealphaenvmapmask)
+                        ConvertedTexture separateMaskTex;  // Only used when loading separate texture
+                        const ConvertedTexture* maskTexPtr = nullptr;
+                        
+                        if (maskTexturePath == props.baseTexturePath) {
+                            // Reuse already loaded base texture (no copy needed)
+                            maskTexPtr = &baseTex;
+                        } else {
+                            // Load separate mask texture
+                            std::vector<uint8_t> maskFileData;
+                            if (ctx.readVTFFile(maskTexturePath, maskFileData)) {
+                                VTFFileHeader maskHeader;
+                                if (ctx.parseVTFHeader(maskFileData, maskHeader)) {
+                                    if (ctx.extractPixelData(maskFileData, maskHeader, separateMaskTex, false)) {
+                                        maskTexPtr = &separateMaskTex;
+                                    }
                                 }
                             }
+                        }
+                        
+                        if (maskTexPtr) {
+                            // Generate metallic and modified albedo
+                            MetallicExtractionResult metallicResult = 
+                                GenerateMetallicFromEnvmapMaskAndBrightness(
+                                    baseTex, *maskTexPtr, maskSource, props, ctx, result);
+                            
+                            hasMetallicTexture = metallicResult.hasMetallic;
+                            
+                            if (metallicResult.hasMetallic && ctx.debugOutput) {
+                                Msg("[Source] [Metallic] Successfully extracted metallic from envmap mask + brightness\n");
+                            }
+                            if (metallicResult.hasModifiedAlbedo && ctx.debugOutput) {
+                                Msg("[Source] [Metallic] Generated modified albedo for proper PBR rendering\n");
+                            }
+                        } else if (ctx.debugOutput) {
+                            Msg("[Source] [Metallic] Failed to load envmap mask texture: %s\n", maskTexturePath.c_str());
                         }
                     }
                 }
