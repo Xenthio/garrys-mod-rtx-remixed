@@ -398,15 +398,17 @@ static MetallicExtractionResult GenerateMetallicFromEnvmapMaskAndBrightness(
     
     // Constants for metallic extraction
     // In Source, brightness below this threshold with strong envmap = metallic
-    constexpr float BRIGHTNESS_THRESHOLD = 0.3f;
-    // Minimum envmap mask strength to consider a pixel reflective
-    constexpr float ENVMAP_MIN_STRENGTH = 0.1f;
+    constexpr float BRIGHTNESS_THRESHOLD = 0.25f;  // Pixel must be quite dark
+    // Minimum envmap mask strength to consider a pixel reflective enough for metallic
+    constexpr float ENVMAP_MIN_STRENGTH = 0.6f;  // Require strong envmap (60%+)
     // Minimum metallic value to count as "metallic" for statistics and processing
-    constexpr float METALLIC_PIXEL_THRESHOLD = 0.01f;
+    constexpr float METALLIC_PIXEL_THRESHOLD = 0.1f;  // Only count strong metallic
     // Minimum max metallic value to justify generating textures
-    constexpr float METALLIC_MAX_THRESHOLD = 0.1f;
-    // Minimum ratio of metallic pixels to justify generating textures
-    constexpr float METALLIC_RATIO_THRESHOLD = 0.01f;
+    constexpr float METALLIC_MAX_THRESHOLD = 0.3f;  // Need definitive metallic areas
+    // Minimum ratio of metallic pixels to justify generating textures  
+    constexpr float METALLIC_RATIO_THRESHOLD = 0.005f;  // At least 0.5% of pixels
+    // Small epsilon to prevent division by zero
+    constexpr float EPSILON = 0.001f;
     
     // Track statistics (initialized to consistent values)
     uint32_t metallicPixels = 0;
@@ -414,6 +416,11 @@ static MetallicExtractionResult GenerateMetallicFromEnvmapMaskAndBrightness(
     float minMetallic = 0.0f, maxMetallic = 0.0f;
     bool firstMetallicPixel = true;
     
+    // =========================================================================
+    // Generate metallic based on simple rule: dark pixel + strong envmap = metallic
+    // In Source Engine, a black texture with envmap looks like polished metal
+    // because envmap provides pure reflection with no diffuse to dim it
+    // =========================================================================
     for (uint32_t i = 0; i < pixelCount; i++) {
         size_t srcIdx = i * 4;
         
@@ -436,24 +443,25 @@ static MetallicExtractionResult GenerateMetallicFromEnvmapMaskAndBrightness(
         float envmapStrength = envmapMask / 255.0f;
         
         // Calculate metallic value
-        // Dark areas (low brightness) with high envmap mask = metallic
-        // The darker the texture AND the stronger the reflection, the more metallic
+        // Simple rule: dark pixel + strong envmap = metallic
+        // In Source, a black/dark texture with strong envmap = polished metal look
         float metallic = 0.0f;
         
         if (envmapStrength > ENVMAP_MIN_STRENGTH) {
-            // Calculate how "dark" this pixel is relative to the brightness threshold.
-            // A pixel at brightness 0 has darkness 1.0 (fully dark/metallic potential)
-            // A pixel at brightness >= BRIGHTNESS_THRESHOLD has darkness 0.0 (not dark enough)
-            float darkness = 1.0f - min(brightness / BRIGHTNESS_THRESHOLD, 1.0f);
+            // Calculate how "dark" this pixel is relative to the brightness threshold
+            // brightness 0 -> darkness 1.0 (fully dark, max metallic potential)
+            // brightness >= threshold -> darkness 0.0 (too bright, not metallic)
+            float darkness = 1.0f - std::min(brightness / BRIGHTNESS_THRESHOLD, 1.0f);
             
-            // Metallic = darkness * envmap strength
-            // Dark + reflective = metallic
-            // Bright + reflective = shiny non-metal (metallic stays low)
-            metallic = darkness * envmapStrength;
+            // Normalize envmap strength above the threshold to 0-1 range
+            float envmapFactor = (envmapStrength - ENVMAP_MIN_STRENGTH) / (1.0f - ENVMAP_MIN_STRENGTH + EPSILON);
+            envmapFactor = std::clamp(envmapFactor, 0.0f, 1.0f);
             
-            // Apply quadratic falloff: this reduces weak metallic values while
-            // preserving strong ones, creating a smoother visual gradient and
-            // reducing false positives from slightly dark surfaces
+            // Metallic = darkness * envmap factor
+            // Both must be high for strong metallic
+            metallic = darkness * envmapFactor;
+            
+            // Apply square falloff to reduce weak values
             metallic = metallic * metallic;
         }
         
@@ -465,8 +473,8 @@ static MetallicExtractionResult GenerateMetallicFromEnvmapMaskAndBrightness(
                 maxMetallic = metallic;
                 firstMetallicPixel = false;
             } else {
-                minMetallic = min(minMetallic, metallic);
-                maxMetallic = max(maxMetallic, metallic);
+                minMetallic = std::min(minMetallic, metallic);
+                maxMetallic = std::max(maxMetallic, metallic);
             }
         }
         totalMetallic += metallic;
@@ -486,8 +494,8 @@ static MetallicExtractionResult GenerateMetallicFromEnvmapMaskAndBrightness(
         //
         // The formula:
         // - For non-metallic pixels: keep original albedo
-        // - For metallic pixels: lerp toward envmaptint (or white if not specified)
-        //   This compensates for the difference between Source and PBR rendering
+        // - For metallic pixels: blend toward envmaptint using a sharp curve
+        //   to avoid muddy grey colors from partial blending
         
         float albedoR = baseR / 255.0f;
         float albedoG = baseG / 255.0f;
@@ -504,14 +512,34 @@ static MetallicExtractionResult GenerateMetallicFromEnvmapMaskAndBrightness(
                 targetB = props.envMapTint[2];
             }
             
-            // Blend toward the target color for metallic areas
-            // The more metallic, the more we push toward the envmap tint
-            // This makes dark metallic areas render with correctly tinted reflections
-            // matching the Source Engine look
-            float blendFactor = metallic;
-            albedoR = albedoR + (targetR - albedoR) * blendFactor;
-            albedoG = albedoG + (targetG - albedoG) * blendFactor;
-            albedoB = albedoB + (targetB - albedoB) * blendFactor;
+            // Use a sharp S-curve (smoothstep) for the blend factor
+            // This avoids muddy grey colors by pushing values toward 0 or 1
+            // Small metallic = keep original, strong metallic = full tint
+            float t = metallic;
+            float blendFactor = t * t * (3.0f - 2.0f * t);  // smoothstep
+            blendFactor = std::clamp(blendFactor * 1.5f, 0.0f, 1.0f);  // boost and clamp
+            
+            // For metallic areas, we want the albedo to be bright (to properly tint reflections)
+            // Blend toward the tint color, but ensure minimum brightness
+            float newR = albedoR + (targetR - albedoR) * blendFactor;
+            float newG = albedoG + (targetG - albedoG) * blendFactor;
+            float newB = albedoB + (targetB - albedoB) * blendFactor;
+            
+            // Ensure metallic areas have sufficient brightness (at least match tint brightness)
+            float currentBrightness = 0.299f * newR + 0.587f * newG + 0.114f * newB;
+            float targetBrightness = 0.299f * targetR + 0.587f * targetG + 0.114f * targetB;
+            float minBrightness = targetBrightness * blendFactor;
+            
+            if (currentBrightness < minBrightness && minBrightness > 0.01f) {
+                float boost = minBrightness / (currentBrightness + EPSILON);
+                newR = std::min(newR * boost, 1.0f);
+                newG = std::min(newG * boost, 1.0f);
+                newB = std::min(newB * boost, 1.0f);
+            }
+            
+            albedoR = newR;
+            albedoG = newG;
+            albedoB = newB;
         }
         
         // Write modified albedo
