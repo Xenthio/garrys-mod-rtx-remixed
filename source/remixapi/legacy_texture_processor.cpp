@@ -826,11 +826,6 @@ bool TextureProcessor::IsSolidColorTexture(const std::vector<uint8_t>& pixelData
         return false;  // Data is truncated or invalid
     }
     
-    // Need at least 4 bytes (1 RGBA pixel)
-    if (pixelData.size() < 4) {
-        return false;
-    }
-    
     // Get the first pixel color (RGBA)
     uint8_t r = pixelData[0];
     uint8_t g = pixelData[1];
@@ -860,7 +855,7 @@ bool TextureProcessor::IsSolidColorTexture(const std::vector<uint8_t>& pixelData
     // Also check last pixel to ensure we didn't miss edge cases
     if (pixelCount > 1) {
         size_t lastOffset = (pixelCount - 1) * 4;
-        if (lastOffset + 3 < pixelData.size()) {
+        if (lastOffset + 3 <= pixelData.size() - 1) {
             if (pixelData[lastOffset] != r || 
                 pixelData[lastOffset + 1] != g || 
                 pixelData[lastOffset + 2] != b || 
