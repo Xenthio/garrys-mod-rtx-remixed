@@ -821,7 +821,15 @@ uint64_t TextureProcessor::GenerateTextureHash(const std::string& path, uint32_t
 
 bool TextureProcessor::IsSolidColorTexture(const std::vector<uint8_t>& pixelData, uint32_t width, uint32_t height) {
     // Validate pixel data size matches expected dimensions
-    size_t expectedSize = static_cast<size_t>(width) * height * 4;
+    // Use size_t for all calculations to avoid overflow
+    size_t pixelCount = static_cast<size_t>(width) * height;
+    size_t expectedSize = pixelCount * 4;
+    
+    // Check for overflow in size calculation
+    if (pixelCount / height != width || expectedSize / 4 != pixelCount) {
+        return false;  // Overflow detected
+    }
+    
     if (pixelData.size() < expectedSize) {
         return false;  // Data is truncated or invalid
     }
@@ -834,12 +842,12 @@ bool TextureProcessor::IsSolidColorTexture(const std::vector<uint8_t>& pixelData
     
     // For large textures, sample pixels instead of checking every single one
     // This provides a good balance between accuracy and performance
-    size_t pixelCount = width * height;
     const size_t maxSamples = 256;  // Sample up to 256 pixels
     size_t sampleStep = (pixelCount > maxSamples) ? (pixelCount / maxSamples) : 1;
     
     for (size_t i = 0; i < pixelCount; i += sampleStep) {
         size_t offset = i * 4;
+        // offset calculation uses size_t, so no overflow if expectedSize calculation succeeded
         if (offset + 3 >= pixelData.size()) {
             break;
         }
@@ -855,7 +863,8 @@ bool TextureProcessor::IsSolidColorTexture(const std::vector<uint8_t>& pixelData
     // Also check last pixel to ensure we didn't miss edge cases
     if (pixelCount > 1) {
         size_t lastOffset = (pixelCount - 1) * 4;
-        if (lastOffset + 3 <= pixelData.size() - 1) {
+        // Fixed bounds check to avoid underflow when pixelData.size() is 0
+        if (pixelData.size() > 0 && lastOffset + 3 < pixelData.size()) {
             if (pixelData[lastOffset] != r || 
                 pixelData[lastOffset + 1] != g || 
                 pixelData[lastOffset + 2] != b || 
