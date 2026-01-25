@@ -451,7 +451,7 @@ static MetallicExtractionResult GenerateMetallicFromEnvmapMaskAndBrightness(
             // Calculate how "dark" this pixel is relative to the brightness threshold
             // brightness 0 -> darkness 1.0 (fully dark, max metallic potential)
             // brightness >= threshold -> darkness 0.0 (too bright, not metallic)
-            float darkness = 1.0f - std::min(brightness / BRIGHTNESS_THRESHOLD, 1.0f);
+            float darkness = 1.0f - min(brightness / BRIGHTNESS_THRESHOLD, 1.0f);
             
             // Normalize envmap strength above the threshold to 0-1 range
             float envmapFactor = (envmapStrength - ENVMAP_MIN_STRENGTH) / (1.0f - ENVMAP_MIN_STRENGTH + EPSILON);
@@ -473,8 +473,8 @@ static MetallicExtractionResult GenerateMetallicFromEnvmapMaskAndBrightness(
                 maxMetallic = metallic;
                 firstMetallicPixel = false;
             } else {
-                minMetallic = std::min(minMetallic, metallic);
-                maxMetallic = std::max(maxMetallic, metallic);
+                minMetallic = min(minMetallic, metallic);
+                maxMetallic = max(maxMetallic, metallic);
             }
         }
         totalMetallic += metallic;
@@ -532,9 +532,9 @@ static MetallicExtractionResult GenerateMetallicFromEnvmapMaskAndBrightness(
             
             if (currentBrightness < minBrightness && minBrightness > 0.01f) {
                 float boost = minBrightness / (currentBrightness + EPSILON);
-                newR = std::min(newR * boost, 1.0f);
-                newG = std::min(newG * boost, 1.0f);
-                newB = std::min(newB * boost, 1.0f);
+                newR = min(newR * boost, 1.0f);
+                newG = min(newG * boost, 1.0f);
+                newB = min(newB * boost, 1.0f);
             }
             
             albedoR = newR;
