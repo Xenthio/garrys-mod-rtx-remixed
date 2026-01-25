@@ -834,6 +834,83 @@ uint64_t TextureProcessor::GenerateTextureHash(const std::string& path, uint32_t
     return hash;
 }
 
+bool TextureProcessor::IsSolidColorTexture(const std::vector<uint8_t>& pixelData, uint32_t width, uint32_t height) {
+    // Need at least 4 bytes (1 RGBA pixel)
+    if (pixelData.size() < 4) {
+        return false;
+    }
+    
+    // Get the first pixel color (RGBA)
+    uint8_t r = pixelData[0];
+    uint8_t g = pixelData[1];
+    uint8_t b = pixelData[2];
+    uint8_t a = pixelData[3];
+    
+    // Check if all pixels match the first pixel
+    size_t pixelCount = width * height;
+    for (size_t i = 0; i < pixelCount; i++) {
+        size_t offset = i * 4;
+        if (offset + 3 >= pixelData.size()) {
+            break;
+        }
+        
+        if (pixelData[offset] != r || 
+            pixelData[offset + 1] != g || 
+            pixelData[offset + 2] != b || 
+            pixelData[offset + 3] != a) {
+            return false;  // Found a different pixel
+        }
+    }
+    
+    return true;  // All pixels are the same color
+}
+
+uint64_t TextureProcessor::GenerateTextureHashWithPixelData(const std::string& path, uint32_t width, uint32_t height, 
+                                                              const std::vector<uint8_t>& pixelData) {
+    // Check if this is a solid color texture
+    bool isSolidColor = IsSolidColorTexture(pixelData, width, height);
+    
+    // Start with the basic hash
+    uint64_t hash = 14695981039346656037ULL;
+    
+    for (char c : path) {
+        hash ^= static_cast<uint64_t>(c);
+        hash *= 1099511628211ULL;
+    }
+    
+    // Mix in dimensions
+    hash ^= width;
+    hash *= 1099511628211ULL;
+    hash ^= height;
+    hash *= 1099511628211ULL;
+    
+    // For solid color textures, add the actual color values to the hash
+    // This ensures that textures with the same dimensions but different colors
+    // get different hashes, preventing hash collisions in RTX Remix
+    if (isSolidColor && pixelData.size() >= 4) {
+        // Mix in RGBA values
+        hash ^= static_cast<uint64_t>(pixelData[0]);  // R
+        hash *= 1099511628211ULL;
+        hash ^= static_cast<uint64_t>(pixelData[1]);  // G
+        hash *= 1099511628211ULL;
+        hash ^= static_cast<uint64_t>(pixelData[2]);  // B
+        hash *= 1099511628211ULL;
+        hash ^= static_cast<uint64_t>(pixelData[3]);  // A
+        hash *= 1099511628211ULL;
+        
+        if (m_debugOutput) {
+            Msg("[LegacyTextureProcessor] Solid color texture detected: %s (RGBA: %d,%d,%d,%d) - hash with color data\n",
+                path.c_str(), pixelData[0], pixelData[1], pixelData[2], pixelData[3]);
+        }
+    }
+    
+    // Ensure it's not 0
+    if (hash == 0) hash = 1;
+    
+    return hash;
+}
+
+
 bool TextureProcessor::UploadTextureToRemix(const ConvertedTexture& texture, 
                                                 remixapi_TextureHandle* outHandle) {
     if (!m_remixInterface) {
@@ -899,8 +976,8 @@ uint64_t TextureProcessor::ConvertAndUploadTexture(const std::string& vtfPath, b
         return 0;
     }
     
-    // Generate hash
-    texture.hash = GenerateTextureHash(vtfPath, texture.width, texture.height);
+    // Generate hash with pixel data (handles solid color detection)
+    texture.hash = GenerateTextureHashWithPixelData(vtfPath, texture.width, texture.height, texture.pixelData);
     
     // Upload to Remix
     remixapi_TextureHandle handle = nullptr;

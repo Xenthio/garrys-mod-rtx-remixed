@@ -146,7 +146,7 @@ void WriteGlassMaterial(std::ostream& stream,
     
     // Glass-specific properties
     stream << "                float inputs:ior_constant = " << info.ior << "\n";
-    stream << "                bool inputs:thin_walled = 1\n";
+    stream << "                bool inputs:thin_walled = 0\n";  // Use solid glass (false) for proper refraction, not thin_walled (true)
     
     // Roughness
     if (!info.roughnessPath.empty()) {
