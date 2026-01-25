@@ -394,11 +394,18 @@ static MetallicExtractionResult GenerateMetallicFromEnvmapMaskAndBrightness(
     constexpr float BRIGHTNESS_THRESHOLD = 0.3f;
     // Minimum envmap mask strength to consider a pixel reflective
     constexpr float ENVMAP_MIN_STRENGTH = 0.1f;
+    // Minimum metallic value to count as "metallic" for statistics and processing
+    constexpr float METALLIC_PIXEL_THRESHOLD = 0.01f;
+    // Minimum max metallic value to justify generating textures
+    constexpr float METALLIC_MAX_THRESHOLD = 0.1f;
+    // Minimum ratio of metallic pixels to justify generating textures
+    constexpr float METALLIC_RATIO_THRESHOLD = 0.01f;
     
-    // Track statistics
+    // Track statistics (initialized to consistent values)
     uint32_t metallicPixels = 0;
     float totalMetallic = 0.0f;
-    float minMetallic = 1.0f, maxMetallic = 0.0f;
+    float minMetallic = 0.0f, maxMetallic = 0.0f;
+    bool firstMetallicPixel = true;
     
     for (uint32_t i = 0; i < pixelCount; i++) {
         size_t srcIdx = i * 4;
@@ -422,7 +429,9 @@ static MetallicExtractionResult GenerateMetallicFromEnvmapMaskAndBrightness(
         float metallic = 0.0f;
         
         if (envmapStrength > ENVMAP_MIN_STRENGTH) {
-            // Calculate how "dark" this pixel is (inverted brightness, clamped)
+            // Calculate how "dark" this pixel is relative to the brightness threshold.
+            // A pixel at brightness 0 has darkness 1.0 (fully dark/metallic potential)
+            // A pixel at brightness >= BRIGHTNESS_THRESHOLD has darkness 0.0 (not dark enough)
             float darkness = 1.0f - std::min(brightness / BRIGHTNESS_THRESHOLD, 1.0f);
             
             // Metallic = darkness * envmap strength
@@ -430,15 +439,25 @@ static MetallicExtractionResult GenerateMetallicFromEnvmapMaskAndBrightness(
             // Bright + reflective = shiny non-metal (metallic stays low)
             metallic = darkness * envmapStrength;
             
-            // Apply smooth falloff to avoid harsh transitions
-            metallic = metallic * metallic; // Square for smoother gradient
+            // Apply quadratic falloff: this reduces weak metallic values while
+            // preserving strong ones, creating a smoother visual gradient and
+            // reducing false positives from slightly dark surfaces
+            metallic = metallic * metallic;
         }
         
-        // Track statistics
-        if (metallic > 0.01f) metallicPixels++;
+        // Track statistics - use first/subsequent logic for correct min/max
+        if (metallic > METALLIC_PIXEL_THRESHOLD) {
+            metallicPixels++;
+            if (firstMetallicPixel) {
+                minMetallic = metallic;
+                maxMetallic = metallic;
+                firstMetallicPixel = false;
+            } else {
+                minMetallic = std::min(minMetallic, metallic);
+                maxMetallic = std::max(maxMetallic, metallic);
+            }
+        }
         totalMetallic += metallic;
-        minMetallic = std::min(minMetallic, metallic);
-        maxMetallic = std::max(maxMetallic, metallic);
         
         uint8_t metallicByte = static_cast<uint8_t>(std::clamp(metallic * 255.0f, 0.0f, 255.0f));
         
@@ -462,7 +481,7 @@ static MetallicExtractionResult GenerateMetallicFromEnvmapMaskAndBrightness(
         float albedoG = baseG / 255.0f;
         float albedoB = baseB / 255.0f;
         
-        if (metallic > 0.01f) {
+        if (metallic > METALLIC_PIXEL_THRESHOLD) {
             // Brighten toward white for metallic areas
             // The more metallic, the more we push toward white
             // This makes dark metallic areas render with bright/untinted reflections
@@ -489,8 +508,8 @@ static MetallicExtractionResult GenerateMetallicFromEnvmapMaskAndBrightness(
             metallicRatio * 100.0f, avgMetallic, minMetallic, maxMetallic);
     }
     
-    // Skip if no significant metallic content (less than 1% of pixels are metallic)
-    if (metallicRatio < 0.01f || maxMetallic < 0.1f) {
+    // Skip if no significant metallic content
+    if (metallicRatio < METALLIC_RATIO_THRESHOLD || maxMetallic < METALLIC_MAX_THRESHOLD) {
         if (ctx.debugOutput) {
             Msg("[Source] [Metallic] No significant metallic content, skipping texture generation\n");
         }
