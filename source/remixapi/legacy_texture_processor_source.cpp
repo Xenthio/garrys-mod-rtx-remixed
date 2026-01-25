@@ -432,7 +432,7 @@ static MetallicExtractionResult GenerateMetallicFromEnvmapMaskAndBrightness(
             // Calculate how "dark" this pixel is relative to the brightness threshold.
             // A pixel at brightness 0 has darkness 1.0 (fully dark/metallic potential)
             // A pixel at brightness >= BRIGHTNESS_THRESHOLD has darkness 0.0 (not dark enough)
-            float darkness = 1.0f - std::min(brightness / BRIGHTNESS_THRESHOLD, 1.0f);
+            float darkness = 1.0f - min(brightness / BRIGHTNESS_THRESHOLD, 1.0f);
             
             // Metallic = darkness * envmap strength
             // Dark + reflective = metallic
@@ -453,8 +453,8 @@ static MetallicExtractionResult GenerateMetallicFromEnvmapMaskAndBrightness(
                 maxMetallic = metallic;
                 firstMetallicPixel = false;
             } else {
-                minMetallic = std::min(minMetallic, metallic);
-                maxMetallic = std::max(maxMetallic, metallic);
+                minMetallic = min(minMetallic, metallic);
+                maxMetallic = max(maxMetallic, metallic);
             }
         }
         totalMetallic += metallic;
