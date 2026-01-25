@@ -814,27 +814,18 @@ void TextureProcessor::ConvertSSBumpToNormal(ConvertedTexture& texture) {
 }
 
 uint64_t TextureProcessor::GenerateTextureHash(const std::string& path, uint32_t width, uint32_t height) {
-    // Simple FNV-1a hash
-    uint64_t hash = 14695981039346656037ULL;
-    
-    for (char c : path) {
-        hash ^= static_cast<uint64_t>(c);
-        hash *= 1099511628211ULL;
-    }
-    
-    // Mix in dimensions
-    hash ^= width;
-    hash *= 1099511628211ULL;
-    hash ^= height;
-    hash *= 1099511628211ULL;
-    
-    // Ensure it's not 0
-    if (hash == 0) hash = 1;
-    
-    return hash;
+    // Delegate to the pixel-data version with empty pixel data
+    return GenerateTextureHashWithPixelData(path, width, height, std::vector<uint8_t>());
 }
 
+
 bool TextureProcessor::IsSolidColorTexture(const std::vector<uint8_t>& pixelData, uint32_t width, uint32_t height) {
+    // Validate pixel data size matches expected dimensions
+    size_t expectedSize = static_cast<size_t>(width) * height * 4;
+    if (pixelData.size() < expectedSize) {
+        return false;  // Data is truncated or invalid
+    }
+    
     // Need at least 4 bytes (1 RGBA pixel)
     if (pixelData.size() < 4) {
         return false;
@@ -846,9 +837,13 @@ bool TextureProcessor::IsSolidColorTexture(const std::vector<uint8_t>& pixelData
     uint8_t b = pixelData[2];
     uint8_t a = pixelData[3];
     
-    // Check if all pixels match the first pixel
+    // For large textures, sample pixels instead of checking every single one
+    // This provides a good balance between accuracy and performance
     size_t pixelCount = width * height;
-    for (size_t i = 0; i < pixelCount; i++) {
+    const size_t maxSamples = 256;  // Sample up to 256 pixels
+    size_t sampleStep = (pixelCount > maxSamples) ? (pixelCount / maxSamples) : 1;
+    
+    for (size_t i = 0; i < pixelCount; i += sampleStep) {
         size_t offset = i * 4;
         if (offset + 3 >= pixelData.size()) {
             break;
@@ -862,7 +857,20 @@ bool TextureProcessor::IsSolidColorTexture(const std::vector<uint8_t>& pixelData
         }
     }
     
-    return true;  // All pixels are the same color
+    // Also check last pixel to ensure we didn't miss edge cases
+    if (pixelCount > 1) {
+        size_t lastOffset = (pixelCount - 1) * 4;
+        if (lastOffset + 3 < pixelData.size()) {
+            if (pixelData[lastOffset] != r || 
+                pixelData[lastOffset + 1] != g || 
+                pixelData[lastOffset + 2] != b || 
+                pixelData[lastOffset + 3] != a) {
+                return false;
+            }
+        }
+    }
+    
+    return true;  // All sampled pixels are the same color
 }
 
 uint64_t TextureProcessor::GenerateTextureHashWithPixelData(const std::string& path, uint32_t width, uint32_t height, 
