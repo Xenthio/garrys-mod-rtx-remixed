@@ -858,6 +858,8 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
         if (ctx.debugOutput) {
             Msg("[Source] [Metallic] Attempting metallic extraction:\n");
             Msg("[Source] [Metallic]   Base texture: %s\n", props.baseTexturePath.c_str());
+            Msg("[Source] [Metallic]   hasEnvMapTint=%d, envMapTint=[%.2f, %.2f, %.2f]\n",
+                props.hasEnvMapTint, props.envMapTint[0], props.envMapTint[1], props.envMapTint[2]);
             if (props.hasEnvMapMask && !props.envMapMaskPath.empty()) {
                 Msg("[Source] [Metallic]   Envmap mask source: $envmapmask (%s)\n", props.envMapMaskPath.c_str());
             } else if (props.normalMapAlphaEnvMapMask && props.hasBumpMap) {
