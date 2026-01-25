@@ -399,7 +399,7 @@ static MetallicExtractionResult GenerateMetallicFromEnvmapMaskAndBrightness(
     
     // Constants for metallic extraction
     // In Source, brightness below this threshold with strong envmap = metallic
-    constexpr float BRIGHTNESS_THRESHOLD = 0.1f;  // Pixel must be very dark (near black)
+    constexpr float BRIGHTNESS_THRESHOLD = 0.2f;  // Pixel must be very dark (near black)
     // Minimum envmap mask strength to consider a pixel reflective enough for metallic
     constexpr float ENVMAP_MIN_STRENGTH = 0.3f;  // Lower threshold - 30%+ envmap
     // Minimum metallic value to count as "metallic" for statistics and processing
