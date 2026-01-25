@@ -3308,6 +3308,7 @@ ProcessingContext TextureProcessor::CreateProcessingContext() {
     };
     
     ctx.debugOutput = m_debugOutput;
+    ctx.metallicGenerationEnabled = m_metallicGenerationEnabled;  // Pass metallic generation flag
     ctx.materialsWithNormals = &m_stats.materialsWithNormals;
     ctx.materialsWithRoughness = &m_stats.materialsWithRoughness;
     

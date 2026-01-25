@@ -22,11 +22,17 @@
 //     3. Auto-discovered _mask/_spec textures
 //     4. Default constant (0.5)
 //
-// Metallic estimation:
-//   Source has no native metallic, estimate from:
-//   - Dark basetexture + envmap = likely metallic
-//   - Surface property hints (metal, etc.)
-//   - Default: non-metallic (0.0)
+// Metallic extraction:
+//   In Source Engine, envmap on a perfectly black texture creates a metallic
+//   appearance (pure environment reflection). This is equivalent to white albedo
+//   + metallic=1 in PBR. We extract metallic information by combining:
+//   - $envmapmask: identifies reflective areas
+//   - Base texture brightness: dark areas with reflections = metallic
+//   
+//   For proper PBR rendering, we also modify the albedo:
+//   - Dark metallic areas need brightened albedo (toward white)
+//   - This ensures reflections look correct (metals tint reflections by albedo)
+//   - Without this, dark metallic areas would show dark/muddy reflections
 // =========================================================================
 
 #ifdef _WIN64
@@ -323,6 +329,216 @@ static bool GenerateRoughnessFromSource(
 }
 
 // =========================================================================
+// Metallic Extraction from Envmap Mask + Base Texture Brightness
+// =========================================================================
+// In Source Engine, envmap on a dark/black texture produces a metallic look:
+// - Black diffuse + bright envmap = pure reflection = looks like polished metal
+// - In PBR terms: this is white albedo + metallic=1.0
+//
+// This function generates a per-pixel metallic map by combining:
+// 1. Envmap mask (where reflections are strong)
+// 2. Base texture brightness (dark areas are more metallic when reflective)
+//
+// The key insight: in Source, a reflective dark surface IS metallic.
+// A reflective bright surface is just a shiny non-metal (like plastic).
+//
+// Returns: metallicTex filled with per-pixel metallic values
+//          albedoTex filled with modified albedo (brightened for metallic areas)
+// =========================================================================
+struct MetallicExtractionResult {
+    bool hasMetallic;
+    bool hasModifiedAlbedo;
+};
+
+static MetallicExtractionResult GenerateMetallicFromEnvmapMaskAndBrightness(
+    const ConvertedTexture& baseTex,
+    const ConvertedTexture& envmapMaskTex,
+    const MaterialPBRProperties& props,
+    const ProcessingContext& ctx,
+    ProcessedMaterial& result) {
+    
+    MetallicExtractionResult extractResult = { false, false };
+    
+    // Textures must match in size for per-pixel analysis
+    if (baseTex.width != envmapMaskTex.width || baseTex.height != envmapMaskTex.height) {
+        if (ctx.debugOutput) {
+            Msg("[Source] [Metallic] Texture size mismatch: base %dx%d vs envmapmask %dx%d\n",
+                baseTex.width, baseTex.height, envmapMaskTex.width, envmapMaskTex.height);
+        }
+        return extractResult;
+    }
+    
+    uint32_t width = baseTex.width;
+    uint32_t height = baseTex.height;
+    uint32_t pixelCount = width * height;
+    
+    // Create output textures
+    ConvertedTexture metallicTex;
+    metallicTex.width = width;
+    metallicTex.height = height;
+    metallicTex.mipLevels = 1;
+    metallicTex.format = REMIXAPI_FORMAT_R8G8B8A8_UNORM;
+    metallicTex.isNormalMap = false;
+    metallicTex.pixelData.resize(pixelCount * 4);
+    
+    ConvertedTexture albedoTex;
+    albedoTex.width = width;
+    albedoTex.height = height;
+    albedoTex.mipLevels = 1;
+    albedoTex.format = REMIXAPI_FORMAT_R8G8B8A8_UNORM;
+    albedoTex.isNormalMap = false;
+    albedoTex.pixelData.resize(pixelCount * 4);
+    
+    // Constants for metallic extraction
+    // In Source, brightness below this threshold with strong envmap = metallic
+    constexpr float BRIGHTNESS_THRESHOLD = 0.3f;
+    // Minimum envmap mask strength to consider a pixel reflective
+    constexpr float ENVMAP_MIN_STRENGTH = 0.1f;
+    
+    // Track statistics
+    uint32_t metallicPixels = 0;
+    float totalMetallic = 0.0f;
+    float minMetallic = 1.0f, maxMetallic = 0.0f;
+    
+    for (uint32_t i = 0; i < pixelCount; i++) {
+        size_t srcIdx = i * 4;
+        
+        // Read base texture RGB
+        uint8_t baseR = baseTex.pixelData[srcIdx + 0];
+        uint8_t baseG = baseTex.pixelData[srcIdx + 1];
+        uint8_t baseB = baseTex.pixelData[srcIdx + 2];
+        uint8_t baseA = baseTex.pixelData[srcIdx + 3];
+        
+        // Read envmap mask (typically grayscale, use red channel)
+        uint8_t envmapMask = envmapMaskTex.pixelData[srcIdx + 0];
+        
+        // Calculate pixel brightness (luminance)
+        float brightness = (0.299f * baseR + 0.587f * baseG + 0.114f * baseB) / 255.0f;
+        float envmapStrength = envmapMask / 255.0f;
+        
+        // Calculate metallic value
+        // Dark areas (low brightness) with high envmap mask = metallic
+        // The darker the texture AND the stronger the reflection, the more metallic
+        float metallic = 0.0f;
+        
+        if (envmapStrength > ENVMAP_MIN_STRENGTH) {
+            // Calculate how "dark" this pixel is (inverted brightness, clamped)
+            float darkness = 1.0f - std::min(brightness / BRIGHTNESS_THRESHOLD, 1.0f);
+            
+            // Metallic = darkness * envmap strength
+            // Dark + reflective = metallic
+            // Bright + reflective = shiny non-metal (metallic stays low)
+            metallic = darkness * envmapStrength;
+            
+            // Apply smooth falloff to avoid harsh transitions
+            metallic = metallic * metallic; // Square for smoother gradient
+        }
+        
+        // Track statistics
+        if (metallic > 0.01f) metallicPixels++;
+        totalMetallic += metallic;
+        minMetallic = std::min(minMetallic, metallic);
+        maxMetallic = std::max(maxMetallic, metallic);
+        
+        uint8_t metallicByte = static_cast<uint8_t>(std::clamp(metallic * 255.0f, 0.0f, 255.0f));
+        
+        // Write metallic texture (grayscale)
+        metallicTex.pixelData[srcIdx + 0] = metallicByte;
+        metallicTex.pixelData[srcIdx + 1] = metallicByte;
+        metallicTex.pixelData[srcIdx + 2] = metallicByte;
+        metallicTex.pixelData[srcIdx + 3] = 255;
+        
+        // Calculate modified albedo for metallic areas
+        // In PBR, metallic surfaces use albedo to tint reflections
+        // In Source, black + envmap = untinted reflection (like white metal)
+        // So we need to brighten dark metallic areas toward white
+        //
+        // The formula:
+        // - For non-metallic pixels: keep original albedo
+        // - For metallic pixels: lerp toward white based on metallic amount
+        //   This compensates for the difference between Source and PBR rendering
+        
+        float albedoR = baseR / 255.0f;
+        float albedoG = baseG / 255.0f;
+        float albedoB = baseB / 255.0f;
+        
+        if (metallic > 0.01f) {
+            // Brighten toward white for metallic areas
+            // The more metallic, the more we push toward white
+            // This makes dark metallic areas render with bright/untinted reflections
+            // which matches the Source Engine look
+            float whiteness = metallic; // How much to push toward white
+            albedoR = albedoR + (1.0f - albedoR) * whiteness;
+            albedoG = albedoG + (1.0f - albedoG) * whiteness;
+            albedoB = albedoB + (1.0f - albedoB) * whiteness;
+        }
+        
+        // Write modified albedo
+        albedoTex.pixelData[srcIdx + 0] = static_cast<uint8_t>(std::clamp(albedoR * 255.0f, 0.0f, 255.0f));
+        albedoTex.pixelData[srcIdx + 1] = static_cast<uint8_t>(std::clamp(albedoG * 255.0f, 0.0f, 255.0f));
+        albedoTex.pixelData[srcIdx + 2] = static_cast<uint8_t>(std::clamp(albedoB * 255.0f, 0.0f, 255.0f));
+        albedoTex.pixelData[srcIdx + 3] = baseA; // Preserve alpha
+    }
+    
+    // Only write textures if we found meaningful metallic content
+    float metallicRatio = static_cast<float>(metallicPixels) / pixelCount;
+    float avgMetallic = totalMetallic / pixelCount;
+    
+    if (ctx.debugOutput) {
+        Msg("[Source] [Metallic] Analysis: %.1f%% pixels metallic, avg=%.3f, min=%.3f, max=%.3f\n",
+            metallicRatio * 100.0f, avgMetallic, minMetallic, maxMetallic);
+    }
+    
+    // Skip if no significant metallic content (less than 1% of pixels are metallic)
+    if (metallicRatio < 0.01f || maxMetallic < 0.1f) {
+        if (ctx.debugOutput) {
+            Msg("[Source] [Metallic] No significant metallic content, skipping texture generation\n");
+        }
+        return extractResult;
+    }
+    
+    // Write metallic texture
+    uint64_t metallicHash = ctx.generateHash(props.baseTexturePath + "_envmetal", width, height);
+    std::string metallicPath = ctx.generateOutputPath(metallicHash, "_metallic");
+    
+    if (ctx.fileExists(metallicPath)) {
+        result.metallicPath = metallicPath;
+        result.skippedCount++;
+        extractResult.hasMetallic = true;
+        if (ctx.debugOutput) {
+            Msg("[Source] [Metallic] Metallic texture already exists: %s\n", metallicPath.c_str());
+        }
+    } else if (ctx.writeDDS(metallicTex, metallicPath)) {
+        result.metallicPath = metallicPath;
+        extractResult.hasMetallic = true;
+        if (ctx.debugOutput) {
+            Msg("[Source] [Metallic] Wrote metallic texture: %s\n", metallicPath.c_str());
+        }
+    }
+    
+    // Write modified albedo texture
+    uint64_t albedoHash = ctx.generateHash(props.baseTexturePath + "_metalalbedo", width, height);
+    std::string albedoPath = ctx.generateOutputPath(albedoHash, "_albedo");
+    
+    if (ctx.fileExists(albedoPath)) {
+        result.albedoPath = albedoPath;
+        result.skippedCount++;
+        extractResult.hasModifiedAlbedo = true;
+        if (ctx.debugOutput) {
+            Msg("[Source] [Metallic] Modified albedo already exists: %s\n", albedoPath.c_str());
+        }
+    } else if (ctx.writeDDS(albedoTex, albedoPath)) {
+        result.albedoPath = albedoPath;
+        extractResult.hasModifiedAlbedo = true;
+        if (ctx.debugOutput) {
+            Msg("[Source] [Metallic] Wrote modified albedo: %s\n", albedoPath.c_str());
+        }
+    }
+    
+    return extractResult;
+}
+
+// =========================================================================
 // Texture Processing - Full implementation matching original behavior
 // =========================================================================
 
@@ -533,6 +749,74 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
         }
     }
     result.metallicConstant = props.metallic;
+    
+    // =========================================================================
+    // Metallic extraction from envmap mask + base texture brightness
+    // This is the key innovation: in Source, dark textures with envmap look
+    // metallic. We extract per-pixel metallic by combining envmap mask with
+    // base texture darkness, and modify the albedo to compensate for PBR.
+    // 
+    // This feature is gated behind the metallicGenerationEnabled flag as it's
+    // experimental and may not produce correct results for all materials.
+    // =========================================================================
+    bool hasMetallicTexture = false;
+    
+    // Only attempt metallic extraction if:
+    // 1. Metallic generation is enabled (experimental feature flag)
+    // 2. We have an envmap mask texture (indicates reflective areas)
+    // 3. We have a base texture to analyze
+    // 4. Material has envmap enabled
+    if (ctx.metallicGenerationEnabled &&
+        props.hasEnvMapMask && !props.envMapMaskPath.empty() && 
+        !props.baseTexturePath.empty() && props.hasEnvMap) {
+        
+        if (ctx.debugOutput) {
+            Msg("[Source] [Metallic] Attempting metallic extraction:\n");
+            Msg("[Source] [Metallic]   Base texture: %s\n", props.baseTexturePath.c_str());
+            Msg("[Source] [Metallic]   Envmap mask: %s\n", props.envMapMaskPath.c_str());
+        }
+        
+        // Read base texture
+        std::vector<uint8_t> baseFileData;
+        if (ctx.readVTFFile(props.baseTexturePath, baseFileData)) {
+            VTFFileHeader baseHeader;
+            if (ctx.parseVTFHeader(baseFileData, baseHeader)) {
+                ConvertedTexture baseTex;
+                if (ctx.extractPixelData(baseFileData, baseHeader, baseTex, false)) {
+                    
+                    // Read envmap mask texture
+                    std::vector<uint8_t> maskFileData;
+                    if (ctx.readVTFFile(props.envMapMaskPath, maskFileData)) {
+                        VTFFileHeader maskHeader;
+                        if (ctx.parseVTFHeader(maskFileData, maskHeader)) {
+                            ConvertedTexture maskTex;
+                            if (ctx.extractPixelData(maskFileData, maskHeader, maskTex, false)) {
+                                
+                                // Generate metallic and modified albedo
+                                MetallicExtractionResult metallicResult = 
+                                    GenerateMetallicFromEnvmapMaskAndBrightness(
+                                        baseTex, maskTex, props, ctx, result);
+                                
+                                hasMetallicTexture = metallicResult.hasMetallic;
+                                
+                                if (metallicResult.hasMetallic && ctx.debugOutput) {
+                                    Msg("[Source] [Metallic] Successfully extracted metallic from envmap mask + brightness\n");
+                                }
+                                if (metallicResult.hasModifiedAlbedo && ctx.debugOutput) {
+                                    Msg("[Source] [Metallic] Generated modified albedo for proper PBR rendering\n");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // If we generated a metallic texture, clear the constant (texture takes precedence)
+    if (hasMetallicTexture) {
+        result.metallicConstant = 0.0f;
+    }
     
     // =========================================================================
     // Height map processing

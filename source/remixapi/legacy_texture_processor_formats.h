@@ -81,6 +81,9 @@ struct ProcessingContext {
     
     bool debugOutput = false;
     
+    // Feature flags (passed from TextureProcessor settings)
+    bool metallicGenerationEnabled = false;  // Enable experimental metallic extraction from envmap mask + brightness
+    
     // Stats tracking (incremented by handlers)
     int* materialsWithNormals = nullptr;
     int* materialsWithRoughness = nullptr;
