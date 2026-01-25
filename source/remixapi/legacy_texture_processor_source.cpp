@@ -922,7 +922,25 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
                             maskSource = EnvmapMaskSource::RedChannel;
                         } else if (maskTexturePath == props.baseTexturePath) {
                             // Reuse already loaded base texture (no copy needed)
-                            maskTexPtr = &baseTex;
+                            // But check if the alpha channel has variation when using $basealphaenvmapmask
+                            if (invertMask && maskSource == EnvmapMaskSource::AlphaChannel && 
+                                !HasAlphaVariation(baseTex.pixelData)) {
+                                // Alpha has no variation - the material author set $basealphaenvmapmask
+                                // but the texture has solid alpha (probably 255).
+                                // After inversion this would be all 0 (no envmap), which is wrong.
+                                // Fall back to full-strength envmap - they clearly wanted reflections.
+                                if (ctx.debugOutput) {
+                                    Msg("[Source] [Metallic] $basealphaenvmapmask: Alpha has no variation, using full-strength envmap\n");
+                                }
+                                fullStrengthMask.width = baseTex.width;
+                                fullStrengthMask.height = baseTex.height;
+                                fullStrengthMask.pixelData.resize(baseTex.width * baseTex.height * 4, 255);
+                                maskTexPtr = &fullStrengthMask;
+                                maskSource = EnvmapMaskSource::RedChannel;
+                                invertMask = false;
+                            } else {
+                                maskTexPtr = &baseTex;
+                            }
                         } else {
                             // Load separate mask texture
                             std::vector<uint8_t> maskFileData;
