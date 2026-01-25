@@ -469,12 +469,12 @@ static MetallicExtractionResult GenerateMetallicFromEnvmapMaskAndBrightness(
         
         // Calculate modified albedo for metallic areas
         // In PBR, metallic surfaces use albedo to tint reflections
-        // In Source, black + envmap = untinted reflection (like white metal)
-        // So we need to brighten dark metallic areas toward white
+        // In Source, black + envmap = reflection tinted by $envmaptint (default white)
+        // So we need to blend dark metallic areas toward the envmap tint color
         //
         // The formula:
         // - For non-metallic pixels: keep original albedo
-        // - For metallic pixels: lerp toward white based on metallic amount
+        // - For metallic pixels: lerp toward envmaptint (or white if not specified)
         //   This compensates for the difference between Source and PBR rendering
         
         float albedoR = baseR / 255.0f;
@@ -482,14 +482,24 @@ static MetallicExtractionResult GenerateMetallicFromEnvmapMaskAndBrightness(
         float albedoB = baseB / 255.0f;
         
         if (metallic > METALLIC_PIXEL_THRESHOLD) {
-            // Brighten toward white for metallic areas
-            // The more metallic, the more we push toward white
-            // This makes dark metallic areas render with bright/untinted reflections
-            // which matches the Source Engine look
-            float whiteness = metallic; // How much to push toward white
-            albedoR = albedoR + (1.0f - albedoR) * whiteness;
-            albedoG = albedoG + (1.0f - albedoG) * whiteness;
-            albedoB = albedoB + (1.0f - albedoB) * whiteness;
+            // Determine target color for metallic areas
+            // If $envmaptint is specified, use it to tint the reflections
+            // Otherwise default to white (untinted reflections)
+            float targetR = 1.0f, targetG = 1.0f, targetB = 1.0f;
+            if (props.hasEnvMapTint) {
+                targetR = props.envMapTint[0];
+                targetG = props.envMapTint[1];
+                targetB = props.envMapTint[2];
+            }
+            
+            // Blend toward the target color for metallic areas
+            // The more metallic, the more we push toward the envmap tint
+            // This makes dark metallic areas render with correctly tinted reflections
+            // matching the Source Engine look
+            float blendFactor = metallic;
+            albedoR = albedoR + (targetR - albedoR) * blendFactor;
+            albedoG = albedoG + (targetG - albedoG) * blendFactor;
+            albedoB = albedoB + (targetB - albedoB) * blendFactor;
         }
         
         // Write modified albedo
@@ -506,6 +516,10 @@ static MetallicExtractionResult GenerateMetallicFromEnvmapMaskAndBrightness(
     if (ctx.debugOutput) {
         Msg("[Source] [Metallic] Analysis: %.1f%% pixels metallic, avg=%.3f, min=%.3f, max=%.3f\n",
             metallicRatio * 100.0f, avgMetallic, minMetallic, maxMetallic);
+        if (props.hasEnvMapTint) {
+            Msg("[Source] [Metallic] Using $envmaptint for reflection color: (%.2f, %.2f, %.2f)\n",
+                props.envMapTint[0], props.envMapTint[1], props.envMapTint[2]);
+        }
     }
     
     // Skip if no significant metallic content
