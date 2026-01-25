@@ -514,29 +514,27 @@ static MetallicExtractionResult GenerateMetallicFromEnvmapMaskAndBrightness(
                 targetB = props.envMapTint[2];
             }
             
-            // Use metallic^4 as blend factor - very conservative, only affects near-full metallic:
-            // - Low metallic (0.3) → 0.008 blend → negligible change
-            // - Medium metallic (0.5) → 0.0625 blend → tiny change
-            // - High metallic (0.8) → 0.41 blend → moderate change
+            // Use metallic^2 as blend factor - this ensures:
+            // - Low metallic (0.3) → 0.09 blend → minimal change
+            // - Medium metallic (0.5) → 0.25 blend → moderate change  
+            // - High metallic (0.8) → 0.64 blend → strong change
             // - Full metallic (1.0) → 1.0 blend → full tint
-            // This ensures only strongly metallic areas get whitened
-            float m2 = metallic * metallic;
-            float blendFactor = m2 * m2;  // metallic^4
+            // This prevents "too white" textures for low metallic values
+            float blendFactor = metallic * metallic;
             
             // For metallic areas, blend toward the tint color
-            // Only significantly modify pixels with very strong metallic values
+            // Only significantly modify pixels with strong metallic values
             float newR = albedoR + (targetR - albedoR) * blendFactor;
             float newG = albedoG + (targetG - albedoG) * blendFactor;
             float newB = albedoB + (targetB - albedoB) * blendFactor;
             
-            // Only boost brightness for very strongly metallic pixels (metallic > 0.7)
-            // This prevents all but the most metallic areas from becoming too bright
-            if (metallic > 0.7f) {
+            // Only boost brightness for strongly metallic pixels (metallic > 0.5)
+            // This prevents slight metallic areas from becoming too bright
+            if (metallic > 0.5f) {
                 float currentBrightness = 0.299f * newR + 0.587f * newG + 0.114f * newB;
                 float targetBrightness = 0.299f * targetR + 0.587f * targetG + 0.114f * targetB;
                 // Scale the minimum brightness requirement by how metallic the pixel is
-                // 0 at 0.7, full at 1.0
-                float minBrightness = targetBrightness * (metallic - 0.7f) / 0.3f;
+                float minBrightness = targetBrightness * (metallic - 0.5f) * 2.0f;  // 0 at 0.5, full at 1.0
                 
                 if (currentBrightness < minBrightness && minBrightness > 0.01f) {
                     float boost = minBrightness / (currentBrightness + EPSILON);
