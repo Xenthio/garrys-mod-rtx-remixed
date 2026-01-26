@@ -1530,45 +1530,88 @@ uint64_t D3D9TextureTracker::CheckAndFixHashCollision(IDirect3DTexture9* pTextur
         return originalHash;
     }
     
-    // Check if collision fix is enabled
-    ConVar* fixCvar = GlobalConvars::rtx_fix_solid_color_collisions;
-    if (!fixCvar || !fixCvar->GetBool()) {
-        return originalHash;
+    // Always track the material->hash mapping (needed for collision queries)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        
+        auto& materials = m_hashToMaterialNames[originalHash];
+        
+        // Check if this material is already in the list
+        bool found = false;
+        for (const auto& name : materials) {
+            if (name == materialName) {
+                found = true;
+                break;
+            }
+        }
+        
+        if (!found) {
+            // New material for this hash
+            if (!materials.empty()) {
+                // This is a collision!
+                ConVar* detectCvar = GlobalConvars::rtx_hash_collision_detection;
+                if (detectCvar && detectCvar->GetBool()) {
+                    Msg("[D3D9TextureTracker] HASH COLLISION DETECTED:\n");
+                    Msg("  Existing materials: ");
+                    for (size_t i = 0; i < materials.size(); ++i) {
+                        Msg("%s%s", materials[i].c_str(), (i < materials.size()-1) ? ", " : "");
+                    }
+                    Msg("\n");
+                    Msg("  New material: %s\n", materialName.c_str());
+                    Msg("  Hash: 0x%llX\n", originalHash);
+                    Msg("  Tip: Use RemixMaterial.GetHashCollisions() in Lua to query collisions.\n");
+                    Msg("  Tip: Use rtx_hash_collision_detection 0 to disable this warning.\n");
+                }
+            }
+            materials.push_back(materialName);
+        }
     }
-    
-    // Check if this hash has already been seen
-    std::lock_guard<std::mutex> lock(m_mutex);
-    
-    auto it = m_hashToMaterialName.find(originalHash);
-    if (it == m_hashToMaterialName.end()) {
-        // First time seeing this hash - record it
-        m_hashToMaterialName[originalHash] = materialName;
-        return originalHash;
-    }
-    
-    // Hash already exists - check if it's a different material
-    if (it->second == materialName) {
-        // Same material, no collision
-        return originalHash;
-    }
-    
-    // Collision detected! Log it if detection is enabled
-    ConVar* detectCvar = GlobalConvars::rtx_hash_collision_detection;
-    if (detectCvar && detectCvar->GetBool()) {
-        Msg("[D3D9TextureTracker] HASH COLLISION DETECTED:\n");
-        Msg("  First material:   %s\n", it->second.c_str());
-        Msg("  Current material: %s\n", materialName.c_str());
-        Msg("  Hash: 0x%llX\n", originalHash);
-        Msg("  Note: Automatic fix is disabled (D3D9 texture creation causes DXVK crashes).\n");
-        Msg("  Workaround: Use Lua to swap $basetexture to a unique texture for these materials.\n");
-        Msg("  Tip: Use rtx_hash_collision_detection 0 to disable this warning.\n");
-    }
-    
-    // NOTE: CreateModifiedTexture is disabled because creating new D3D9 textures
-    // and using UpdateTexture still causes crashes with DXVK/RTX Remix.
-    // The proper fix needs to be done via Lua (mat:SetTexture) or at the Source Engine level.
     
     return originalHash;
+}
+
+// Get hash collision groups: returns a map of hash -> list of material names that share that hash
+// Only returns hashes that have multiple materials (actual collisions)
+std::unordered_map<uint64_t, std::vector<std::string>> D3D9TextureTracker::GetHashCollisions() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    std::unordered_map<uint64_t, std::vector<std::string>> collisions;
+    
+    for (const auto& pair : m_hashToMaterialNames) {
+        if (pair.second.size() > 1) {
+            // This hash has multiple materials - it's a collision
+            collisions[pair.first] = pair.second;
+        }
+    }
+    
+    return collisions;
+}
+
+// Check if a specific material has a hash collision with another material
+// Returns the other material name(s) if collision exists, empty vector otherwise
+std::vector<std::string> D3D9TextureTracker::GetMaterialCollisions(const std::string& materialName) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    std::vector<std::string> collisions;
+    
+    // Find the hash for this material
+    for (const auto& pair : m_hashToMaterialNames) {
+        for (const auto& name : pair.second) {
+            if (name == materialName) {
+                // Found the material's hash, check if there are other materials with same hash
+                if (pair.second.size() > 1) {
+                    for (const auto& otherName : pair.second) {
+                        if (otherName != materialName) {
+                            collisions.push_back(otherName);
+                        }
+                    }
+                }
+                return collisions;
+            }
+        }
+    }
+    
+    return collisions;
 }
 
 #endif // _WIN64

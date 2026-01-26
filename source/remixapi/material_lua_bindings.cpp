@@ -1165,6 +1165,77 @@ LUA_FUNCTION(RemixMaterial_SetDebugOutput) {
     return 1;
 }
 
+// Lua function: RemixMaterial.GetHashCollisions()
+// Returns a table of hash collisions: { ["0xHASH"] = {"material1", "material2", ...}, ... }
+// Only returns hashes that have multiple materials (actual collisions)
+LUA_FUNCTION(RemixMaterial_GetHashCollisions) {
+    auto collisions = D3D9TextureTracker::Instance().GetHashCollisions();
+    
+    // Create result table
+    LUA->CreateTable();
+    
+    for (const auto& pair : collisions) {
+        // Create hash string key
+        char hashStr[32];
+        sprintf_s(hashStr, "0x%llX", pair.first);
+        
+        // Create array of material names
+        LUA->CreateTable();
+        int idx = 1;
+        for (const auto& materialName : pair.second) {
+            LUA->PushNumber(idx);
+            LUA->PushString(materialName.c_str());
+            LUA->SetTable(-3);
+            idx++;
+        }
+        
+        // Set the array as the value for this hash key
+        LUA->SetField(-2, hashStr);
+    }
+    
+    return 1;
+}
+
+// Lua function: RemixMaterial.GetMaterialCollisions(materialName)
+// Returns a table of material names that have the same texture hash as the given material
+// Returns empty table if no collisions
+LUA_FUNCTION(RemixMaterial_GetMaterialCollisions) {
+    if (!LUA->IsType(1, Type::String)) {
+        LUA->ThrowError("RemixMaterial.GetMaterialCollisions: Expected string for material name");
+        return 0;
+    }
+    
+    const char* materialName = LUA->GetString(1);
+    auto collisions = D3D9TextureTracker::Instance().GetMaterialCollisions(materialName);
+    
+    // Create result table (array of material names)
+    LUA->CreateTable();
+    int idx = 1;
+    for (const auto& name : collisions) {
+        LUA->PushNumber(idx);
+        LUA->PushString(name.c_str());
+        LUA->SetTable(-3);
+        idx++;
+    }
+    
+    return 1;
+}
+
+// Lua function: RemixMaterial.HasHashCollision(materialName)
+// Returns true if the material's texture hash collides with another material
+LUA_FUNCTION(RemixMaterial_HasHashCollision) {
+    if (!LUA->IsType(1, Type::String)) {
+        LUA->ThrowError("RemixMaterial.HasHashCollision: Expected string for material name");
+        return 0;
+    }
+    
+    const char* materialName = LUA->GetString(1);
+    auto collisions = D3D9TextureTracker::Instance().GetMaterialCollisions(materialName);
+    
+    LUA->PushBool(!collisions.empty());
+    return 1;
+}
+
 // Initialize Material Manager Lua bindings
 void MaterialManager::InitializeLuaBindings() {
     if (!m_lua) return;
@@ -1256,6 +1327,16 @@ void MaterialManager::InitializeLuaBindings() {
     
     m_lua->PushCFunction(RemixMaterial_SetDebugOutput);
     m_lua->SetField(-2, "SetDebugOutput");
+    
+    // Hash collision detection functions
+    m_lua->PushCFunction(RemixMaterial_GetHashCollisions);
+    m_lua->SetField(-2, "GetHashCollisions");
+    
+    m_lua->PushCFunction(RemixMaterial_GetMaterialCollisions);
+    m_lua->SetField(-2, "GetMaterialCollisions");
+    
+    m_lua->PushCFunction(RemixMaterial_HasHashCollision);
+    m_lua->SetField(-2, "HasHashCollision");
     
     // Set the table as the global "RemixMaterial"
     m_lua->SetField(-2, "RemixMaterial");

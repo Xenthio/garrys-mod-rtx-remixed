@@ -122,6 +122,14 @@ public:
     // This is called automatically when new textures are detected, independent of LegacyTextureProcessor
     uint64_t CheckAndFixHashCollision(IDirect3DTexture9* pTexture, const std::string& materialName, uint64_t originalHash);
     
+    // Get hash collision groups: returns a map of hash -> list of material names that share that hash
+    // Only returns hashes that have multiple materials (actual collisions)
+    std::unordered_map<uint64_t, std::vector<std::string>> GetHashCollisions() const;
+    
+    // Check if a specific material has a hash collision with another material
+    // Returns the other material name(s) if collision exists, empty vector otherwise
+    std::vector<std::string> GetMaterialCollisions(const std::string& materialName) const;
+    
     // Get the D3D9 device (for texture creation)
     IDirect3DDevice9Ex* GetDevice() const { return m_pDevice; }
 
@@ -177,8 +185,9 @@ private:
     // Hash to category flags mapping
     std::unordered_map<uint64_t, uint32_t> m_hashToCategoryFlags;
     
-    // Hash to material name mapping (for collision detection)
-    std::unordered_map<uint64_t, std::string> m_hashToMaterialName;
+    // Hash to material names mapping (for collision detection)
+    // Maps a hash to ALL materials that use textures with that hash
+    std::unordered_map<uint64_t, std::vector<std::string>> m_hashToMaterialNames;
     
     // Modified textures created for collision fixes (keep references to prevent cleanup)
     std::vector<IDirect3DTexture9*> m_modifiedTextures;
