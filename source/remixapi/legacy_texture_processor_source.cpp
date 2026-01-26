@@ -378,7 +378,14 @@ static MetallicExtractionResult GenerateMetallicFromEnvmapMaskAndBrightness(
     
     uint32_t width = baseTex.width;
     uint32_t height = baseTex.height;
-    uint32_t pixelCount = width * height;
+    // Use uint64_t to prevent overflow for very large textures
+    uint64_t pixelCount64 = static_cast<uint64_t>(width) * height;
+    // Check for overflow before casting to uint32_t
+    if (pixelCount64 > UINT32_MAX / 4) {
+        Msg("[Source] [Metallic] Texture too large (%u x %u), skipping metallic extraction\n", width, height);
+        return extractResult;
+    }
+    uint32_t pixelCount = static_cast<uint32_t>(pixelCount64);
     
     // Create output textures
     ConvertedTexture metallicTex;
@@ -399,7 +406,7 @@ static MetallicExtractionResult GenerateMetallicFromEnvmapMaskAndBrightness(
     
     // Constants for metallic extraction
     // In Source, brightness below this threshold with strong envmap = metallic
-    constexpr float BRIGHTNESS_THRESHOLD = 0.2f;  // Pixel must be very dark (near black)
+    constexpr float BRIGHTNESS_THRESHOLD = 0.2f;  // Pixel must be very dark (near black); intentionally low to catch genuinely dark metallic surfaces while avoiding false positives on moderately dark diffuse areas
     // Minimum envmap mask strength to consider a pixel reflective enough for metallic
     constexpr float ENVMAP_MIN_STRENGTH = 0.3f;  // Lower threshold - 30%+ envmap
     // Minimum metallic value to count as "metallic" for statistics and processing
@@ -514,13 +521,14 @@ static MetallicExtractionResult GenerateMetallicFromEnvmapMaskAndBrightness(
                 targetB = props.envMapTint[2];
             }
             
-            // Use metallic^2 as blend factor - this ensures:
-            // - Low metallic (0.3) → 0.09 blend → minimal change
-            // - Medium metallic (0.5) → 0.25 blend → moderate change  
-            // - High metallic (0.8) → 0.64 blend → strong change
-            // - Full metallic (1.0) → 1.0 blend → full tint
+            // Use metallic^4 as blend factor - very conservative, only affects near-full metallic:
+            // - Low metallic (0.3) → 0.8% blend → negligible change
+            // - Medium metallic (0.5) → 6.25% blend → tiny change
+            // - High metallic (0.8) → 41% blend → moderate change
+            // - Full metallic (1.0) → 100% blend → full tint
             // This prevents "too white" textures for low metallic values
-            float blendFactor = metallic * metallic;
+            float m2 = metallic * metallic;
+            float blendFactor = m2 * m2;  // metallic^4
             
             // For metallic areas, blend toward the tint color
             // Only significantly modify pixels with strong metallic values
@@ -528,13 +536,14 @@ static MetallicExtractionResult GenerateMetallicFromEnvmapMaskAndBrightness(
             float newG = albedoG + (targetG - albedoG) * blendFactor;
             float newB = albedoB + (targetB - albedoB) * blendFactor;
             
-            // Only boost brightness for strongly metallic pixels (metallic > 0.5)
-            // This prevents slight metallic areas from becoming too bright
-            if (metallic > 0.5f) {
+            // Only boost brightness for very strongly metallic pixels (metallic > 0.7)
+            // This prevents all but the most metallic areas from becoming too bright
+            if (metallic > 0.7f) {
                 float currentBrightness = 0.299f * newR + 0.587f * newG + 0.114f * newB;
                 float targetBrightness = 0.299f * targetR + 0.587f * targetG + 0.114f * targetB;
                 // Scale the minimum brightness requirement by how metallic the pixel is
-                float minBrightness = targetBrightness * (metallic - 0.5f) * 2.0f;  // 0 at 0.5, full at 1.0
+                // 0 at 0.7, full at 1.0
+                float minBrightness = targetBrightness * (metallic - 0.7f) / 0.3f;
                 
                 if (currentBrightness < minBrightness && minBrightness > 0.01f) {
                     float boost = minBrightness / (currentBrightness + EPSILON);
