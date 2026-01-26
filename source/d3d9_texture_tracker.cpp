@@ -1467,29 +1467,140 @@ void D3D9TextureTracker::SetDebugOutput(bool enabled) {
 constexpr uint64_t FNV_OFFSET_BASIS_64 = 14695981039346656037ULL;
 constexpr uint64_t FNV_PRIME_64 = 1099511628211ULL;
 
-// Maximum texture size for solid-color collision fix (increased to handle larger textures)
-constexpr UINT MAX_COLLISION_FIX_SIZE = 512;
-
-// Create a modified copy of a texture with slightly different pixels
-// NOTE: This function is currently DISABLED because DXVK/RTX Remix textures
-// cannot be safely locked with LockRect after creation - they're backed by
-// Vulkan resources that don't support CPU access. Attempting to lock them
-// causes crashes ("An invalid parameter was passed to a function").
-// 
-// For now, we only provide collision DETECTION, not automatic fixing.
-// Future work could explore alternative approaches like:
-// - Creating textures earlier before DXVK processes them
-// - Using a different texture creation path
-// - Working with Remix API directly
+// Create a NEW texture with a solid color plus a tiny modification based on material name.
+// This creates a fresh D3D9 texture (not modifying an existing one) so DXVK can process it cleanly.
+// The modification ensures each material gets a unique texture hash.
 IDirect3DTexture9* D3D9TextureTracker::CreateModifiedTexture(IDirect3DTexture9* pOriginal, 
                                                                const std::string& materialName, 
                                                                uint64_t* outHash) {
-    // DISABLED: LockRect on DXVK-managed textures causes crashes
-    // Return nullptr to indicate we couldn't create a modified texture
-    (void)pOriginal;
-    (void)materialName;
-    if (outHash) *outHash = 0;
-    return nullptr;
+    if (!pOriginal || !m_pDevice || materialName.empty()) {
+        return nullptr;
+    }
+    
+    // Get original texture description to know the format and size
+    D3DSURFACE_DESC desc;
+    if (FAILED(pOriginal->GetLevelDesc(0, &desc))) {
+        if (m_enableDebugOutput) {
+            Msg("[D3D9TextureTracker] Failed to get texture description for '%s'\n", materialName.c_str());
+        }
+        return nullptr;
+    }
+    
+    // Only handle common 32-bit ARGB formats
+    if (desc.Format != D3DFMT_A8R8G8B8 && desc.Format != D3DFMT_X8R8G8B8) {
+        if (m_enableDebugOutput) {
+            Msg("[D3D9TextureTracker] Skipping unsupported format %d for '%s'\n", desc.Format, materialName.c_str());
+        }
+        return nullptr;
+    }
+    
+    // Generate a unique color modification based on material name using FNV-1a hash
+    uint64_t nameHash = FNV_OFFSET_BASIS_64;
+    for (char c : materialName) {
+        nameHash ^= static_cast<uint64_t>(static_cast<unsigned char>(c));
+        nameHash *= FNV_PRIME_64;
+    }
+    
+    // Create a small 4x4 texture (smallest practical size that will have a unique hash)
+    // We don't need to match the original size - we just need a unique hash
+    const UINT texWidth = 4;
+    const UINT texHeight = 4;
+    
+    // Create a new texture in SYSTEMMEM pool (allows CPU write access)
+    IDirect3DTexture9* pSysMemTexture = nullptr;
+    HRESULT hr = m_pDevice->CreateTexture(
+        texWidth, texHeight, 1,
+        0,  // No usage flags
+        D3DFMT_A8R8G8B8,
+        D3DPOOL_SYSTEMMEM,  // System memory - allows LockRect
+        &pSysMemTexture,
+        nullptr);
+    
+    if (FAILED(hr) || !pSysMemTexture) {
+        if (m_enableDebugOutput) {
+            Warning("[D3D9TextureTracker] Failed to create SYSTEMMEM texture: 0x%X\n", hr);
+        }
+        return nullptr;
+    }
+    
+    // Lock and fill the texture with a unique pattern based on material name hash
+    D3DLOCKED_RECT lockedRect;
+    hr = pSysMemTexture->LockRect(0, &lockedRect, nullptr, 0);
+    if (FAILED(hr)) {
+        if (m_enableDebugOutput) {
+            Warning("[D3D9TextureTracker] Failed to lock SYSTEMMEM texture: 0x%X\n", hr);
+        }
+        pSysMemTexture->Release();
+        return nullptr;
+    }
+    
+    // Fill with a pattern derived from the material name hash
+    // Each pixel gets a slightly different value to create a unique texture
+    for (UINT y = 0; y < texHeight; y++) {
+        DWORD* row = reinterpret_cast<DWORD*>(static_cast<BYTE*>(lockedRect.pBits) + y * lockedRect.Pitch);
+        for (UINT x = 0; x < texWidth; x++) {
+            // Create unique ARGB values from hash
+            uint64_t pixelHash = nameHash ^ (x * 17 + y * 31);
+            BYTE r = static_cast<BYTE>((pixelHash >> 0) & 0xFF);
+            BYTE g = static_cast<BYTE>((pixelHash >> 8) & 0xFF);
+            BYTE b = static_cast<BYTE>((pixelHash >> 16) & 0xFF);
+            BYTE a = 255;  // Fully opaque
+            row[x] = (a << 24) | (r << 16) | (g << 8) | b;
+        }
+    }
+    
+    pSysMemTexture->UnlockRect(0);
+    
+    // Now create a DEFAULT pool texture and copy the data to it
+    // This is what DXVK will actually use for rendering
+    IDirect3DTexture9* pDefaultTexture = nullptr;
+    hr = m_pDevice->CreateTexture(
+        texWidth, texHeight, 1,
+        0,
+        D3DFMT_A8R8G8B8,
+        D3DPOOL_DEFAULT,
+        &pDefaultTexture,
+        nullptr);
+    
+    if (FAILED(hr) || !pDefaultTexture) {
+        if (m_enableDebugOutput) {
+            Warning("[D3D9TextureTracker] Failed to create DEFAULT texture: 0x%X\n", hr);
+        }
+        pSysMemTexture->Release();
+        return nullptr;
+    }
+    
+    // Copy from SYSTEMMEM to DEFAULT using UpdateTexture
+    hr = m_pDevice->UpdateTexture(pSysMemTexture, pDefaultTexture);
+    
+    // Release the system memory texture - we don't need it anymore
+    pSysMemTexture->Release();
+    
+    if (FAILED(hr)) {
+        if (m_enableDebugOutput) {
+            Warning("[D3D9TextureTracker] Failed to UpdateTexture: 0x%X\n", hr);
+        }
+        pDefaultTexture->Release();
+        return nullptr;
+    }
+    
+    // Get the hash for the new texture from DXVK
+    if (outHash && g_remix) {
+        auto result = g_remix->dxvk_GetTextureHash(pDefaultTexture);
+        if (result) {
+            *outHash = result.value();
+        } else {
+            *outHash = 0;
+        }
+    }
+    
+    if (m_enableDebugOutput) {
+        uint64_t hash = outHash ? *outHash : 0;
+        Msg("[D3D9TextureTracker] Created unique texture for '%s' (%dx%d, hash: 0x%llX)\n", 
+            materialName.c_str(), texWidth, texHeight, hash);
+    }
+    
+    return pDefaultTexture;
 }
 
 // Check if material is a world texture
@@ -1566,13 +1677,27 @@ uint64_t D3D9TextureTracker::CheckAndFixHashCollision(IDirect3DTexture9* pTextur
         Msg("  First material:   %s\n", it->second.c_str());
         Msg("  Current material: %s\n", materialName.c_str());
         Msg("  Hash: 0x%llX\n", originalHash);
-        Msg("  Note: Automatic fix is currently disabled (DXVK textures cannot be safely modified).\n");
-        Msg("  Tip: Use rtx_hash_collision_detection 0 to disable this warning.\n");
     }
     
-    // NOTE: Automatic fixing via CreateModifiedTexture is disabled because
-    // DXVK/RTX Remix textures cannot be safely locked with LockRect after creation.
-    // For now, we only provide collision detection.
+    // Try to create a unique texture for this material
+    uint64_t newHash = 0;
+    IDirect3DTexture9* modifiedTex = CreateModifiedTexture(pTexture, materialName, &newHash);
+    
+    if (modifiedTex && newHash != 0 && newHash != originalHash) {
+        // Success! Track the modified texture to prevent garbage collection
+        m_modifiedTextures.push_back(modifiedTex);
+        m_hashToMaterialName[newHash] = materialName;
+        
+        Msg("[D3D9TextureTracker] Fixed hash collision for '%s': 0x%llX -> 0x%llX\n",
+            materialName.c_str(), originalHash, newHash);
+        
+        return newHash;
+    } else {
+        if (detectCvar && detectCvar->GetBool()) {
+            Msg("  Could not fix collision (CreateModifiedTexture failed)\n");
+            Msg("  Tip: Use rtx_hash_collision_detection 0 to disable this warning.\n");
+        }
+    }
     
     return originalHash;
 }
