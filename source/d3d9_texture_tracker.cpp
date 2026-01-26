@@ -1575,60 +1575,15 @@ uint64_t D3D9TextureTracker::CheckAndFixHashCollision(IDirect3DTexture9* pTextur
         }
     }
     
-    // Check if this is a solid-color texture (do this outside the lock to avoid deadlock)
-    if (fixEnabled) {
-        // Check texture properties to see if it might be solid color
-        D3DSURFACE_DESC desc;
-        if (SUCCEEDED(pTexture->GetLevelDesc(0, &desc))) {
-            // Only check small textures (likely candidates for solid colors)
-            if (desc.Width <= 512 && desc.Height <= 512) {
-                // Only support common formats that we can read
-                if (desc.Format == D3DFMT_A8R8G8B8 || desc.Format == D3DFMT_X8R8G8B8) {
-                    // Try to lock and check if solid color
-                    D3DLOCKED_RECT lockedRect;
-                    if (SUCCEEDED(pTexture->LockRect(0, &lockedRect, nullptr, D3DLOCK_READONLY))) {
-                        bool isSolidColor = true;
-                        uint32_t firstColor = 0;
-                        bool hasFirstColor = false;
-                        
-                        const uint8_t* pData = static_cast<const uint8_t*>(lockedRect.pBits);
-                        
-                        // Sample pixels - use step for large textures
-                        int sampleStep = (desc.Width * desc.Height > 64 * 64) ? 4 : 1;
-                        
-                        for (UINT y = 0; y < desc.Height && isSolidColor; y += sampleStep) {
-                            const uint32_t* row = reinterpret_cast<const uint32_t*>(pData + y * lockedRect.Pitch);
-                            for (UINT x = 0; x < desc.Width && isSolidColor; x += sampleStep) {
-                                uint32_t color = row[x] & 0x00FFFFFF; // Ignore alpha
-                                
-                                if (!hasFirstColor) {
-                                    firstColor = color;
-                                    hasFirstColor = true;
-                                } else if (color != firstColor) {
-                                    isSolidColor = false;
-                                }
-                            }
-                        }
-                        
-                        pTexture->UnlockRect(0);
-                        
-                        if (isSolidColor) {
-                            std::lock_guard<std::mutex> lock(m_mutex);
-                            // Add to solid color set if not already fixed
-                            if (m_fixedMaterials.find(materialName) == m_fixedMaterials.end()) {
-                                m_solidColorMaterials.insert(materialName);
-                                
-                                if (m_enableDebugOutput) {
-                                    Msg("[D3D9TextureTracker] Solid color detected: %s (color: 0x%06X)\n", 
-                                        materialName.c_str(), firstColor);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+    // NOTE: Solid-color detection via LockRect has been DISABLED because it causes
+    // crashes with DXVK/RTX Remix. Even D3DLOCK_READONLY fails because DXVK backs
+    // textures with Vulkan resources that don't support CPU access after creation.
+    // 
+    // Instead, we rely on hash collision detection (above) to identify materials that
+    // might need fixing. Lua can then fix materials based on collision detection.
+    // 
+    // The previous solid-color detection code has been removed.
+    (void)fixEnabled; // Suppress unused variable warning
     
     return originalHash;
 }
@@ -1678,78 +1633,15 @@ std::vector<std::string> D3D9TextureTracker::GetMaterialCollisions(const std::st
 }
 
 // Check if a material's texture is a solid color (all pixels identical)
+// NOTE: This function has been DISABLED because LockRect causes crashes with DXVK/RTX Remix.
+// Even D3DLOCK_READONLY fails because DXVK backs textures with Vulkan resources.
+// Returns false always - solid color detection should be done differently (e.g., via VTF file analysis).
 bool D3D9TextureTracker::IsMaterialSolidColor(const std::string& materialName, uint32_t* outColor) const {
-    // Get the texture for this material
-    auto it = m_textureCache.find(materialName);
-    if (it == m_textureCache.end() || it->second.empty()) {
-        return false;
-    }
-    
-    IDirect3DTexture9* pTexture = it->second[0];
-    if (!pTexture) {
-        return false;
-    }
-    
-    // Get texture description
-    D3DSURFACE_DESC desc;
-    if (FAILED(pTexture->GetLevelDesc(0, &desc))) {
-        return false;
-    }
-    
-    // Only check small textures for performance (likely candidates for solid colors)
-    if (desc.Width > 512 || desc.Height > 512) {
-        return false;
-    }
-    
-    // Only support common formats
-    if (desc.Format != D3DFMT_A8R8G8B8 && desc.Format != D3DFMT_X8R8G8B8) {
-        return false;
-    }
-    
-    // Lock the texture to read pixel data
-    D3DLOCKED_RECT lockedRect;
-    // Use D3DLOCK_READONLY to avoid DXVK issues
-    if (FAILED(pTexture->LockRect(0, &lockedRect, nullptr, D3DLOCK_READONLY))) {
-        return false;
-    }
-    
-    bool isSolidColor = true;
-    uint32_t firstColor = 0;
-    bool hasFirstColor = false;
-    
-    const uint8_t* pData = static_cast<const uint8_t*>(lockedRect.pBits);
-    
-    // Sample pixels to check if they're all the same
-    // For large textures, sample every Nth pixel for performance
-    int sampleStep = 1;
-    if (desc.Width * desc.Height > 64 * 64) {
-        sampleStep = 4; // Sample every 4th pixel in each direction
-    }
-    
-    for (UINT y = 0; y < desc.Height && isSolidColor; y += sampleStep) {
-        const uint32_t* row = reinterpret_cast<const uint32_t*>(pData + y * lockedRect.Pitch);
-        for (UINT x = 0; x < desc.Width && isSolidColor; x += sampleStep) {
-            uint32_t color = row[x];
-            
-            // Ignore alpha for comparison (some textures have varying alpha)
-            uint32_t colorNoAlpha = color & 0x00FFFFFF;
-            
-            if (!hasFirstColor) {
-                firstColor = colorNoAlpha;
-                hasFirstColor = true;
-            } else if (colorNoAlpha != firstColor) {
-                isSolidColor = false;
-            }
-        }
-    }
-    
-    pTexture->UnlockRect(0);
-    
-    if (isSolidColor && outColor) {
-        *outColor = firstColor;
-    }
-    
-    return isSolidColor;
+    (void)materialName;
+    (void)outColor;
+    // LockRect-based detection has been disabled due to DXVK crashes.
+    // Use hash collision detection instead to identify materials that might need fixing.
+    return false;
 }
 
 // Get all solid-color materials that have been detected (for Lua to fix)
