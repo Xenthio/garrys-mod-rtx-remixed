@@ -814,7 +814,78 @@ void TextureProcessor::ConvertSSBumpToNormal(ConvertedTexture& texture) {
 }
 
 uint64_t TextureProcessor::GenerateTextureHash(const std::string& path, uint32_t width, uint32_t height) {
-    // Simple FNV-1a hash
+    // Delegate to the pixel-data version with empty pixel data
+    return GenerateTextureHashWithPixelData(path, width, height, std::vector<uint8_t>());
+}
+
+
+bool TextureProcessor::IsSolidColorTexture(const std::vector<uint8_t>& pixelData, uint32_t width, uint32_t height) {
+    // Handle edge cases
+    if (width == 0 || height == 0) {
+        return false;  // Invalid dimensions
+    }
+    
+    // Validate pixel data size matches expected dimensions
+    // Use size_t for all calculations to avoid overflow
+    size_t pixelCount = static_cast<size_t>(width) * height;
+    size_t expectedSize = pixelCount * 4;
+    
+    // Check for overflow in size calculation
+    if (pixelCount / static_cast<size_t>(height) != static_cast<size_t>(width) || 
+        expectedSize / 4 != pixelCount) {
+        return false;  // Overflow detected
+    }
+    
+    if (pixelData.size() < expectedSize) {
+        return false;  // Data is truncated or invalid
+    }
+    
+    // Get the first pixel color (RGBA)
+    uint8_t r = pixelData[0];
+    uint8_t g = pixelData[1];
+    uint8_t b = pixelData[2];
+    uint8_t a = pixelData[3];
+    
+    // For large textures, sample pixels instead of checking every single one
+    // This provides a good balance between accuracy and performance
+    const size_t maxSamples = 256;  // Sample up to 256 pixels
+    size_t sampleStep = (pixelCount > maxSamples) ? (pixelCount / maxSamples) : 1;
+    
+    for (size_t i = 0; i < pixelCount; i += sampleStep) {
+        size_t offset = i * 4;
+        // offset calculation uses size_t, so no overflow if expectedSize calculation succeeded
+        if (offset + 3 >= pixelData.size()) {
+            break;
+        }
+        
+        if (pixelData[offset] != r || 
+            pixelData[offset + 1] != g || 
+            pixelData[offset + 2] != b || 
+            pixelData[offset + 3] != a) {
+            return false;  // Found a different pixel
+        }
+    }
+    
+    // Also check last pixel to ensure we didn't miss edge cases
+    if (pixelCount > 1) {
+        size_t lastOffset = (pixelCount - 1) * 4;
+        // Fixed bounds check to avoid underflow when pixelData.size() is 0
+        if (pixelData.size() > 0 && lastOffset + 3 < pixelData.size()) {
+            if (pixelData[lastOffset] != r || 
+                pixelData[lastOffset + 1] != g || 
+                pixelData[lastOffset + 2] != b || 
+                pixelData[lastOffset + 3] != a) {
+                return false;
+            }
+        }
+    }
+    
+    return true;  // All sampled pixels are the same color
+}
+
+uint64_t TextureProcessor::GenerateTextureHashWithPixelData(const std::string& path, uint32_t width, uint32_t height, 
+                                                              const std::vector<uint8_t>& pixelData) {
+    // Start with the basic hash
     uint64_t hash = 14695981039346656037ULL;
     
     for (char c : path) {
@@ -828,11 +899,38 @@ uint64_t TextureProcessor::GenerateTextureHash(const std::string& path, uint32_t
     hash ^= height;
     hash *= 1099511628211ULL;
     
+    // Only check for solid color if pixel data is available
+    // This avoids unnecessary computation for textures without pixel data
+    if (!pixelData.empty()) {
+        bool isSolidColor = IsSolidColorTexture(pixelData, width, height);
+        
+        // For solid color textures, add the actual color values to the hash
+        // This ensures that textures with the same dimensions but different colors
+        // get different hashes, preventing hash collisions in RTX Remix
+        if (isSolidColor && pixelData.size() >= 4) {
+            // Mix in RGBA values
+            hash ^= static_cast<uint64_t>(pixelData[0]);  // R
+            hash *= 1099511628211ULL;
+            hash ^= static_cast<uint64_t>(pixelData[1]);  // G
+            hash *= 1099511628211ULL;
+            hash ^= static_cast<uint64_t>(pixelData[2]);  // B
+            hash *= 1099511628211ULL;
+            hash ^= static_cast<uint64_t>(pixelData[3]);  // A
+            hash *= 1099511628211ULL;
+            
+            if (m_debugOutput) {
+                Msg("[LegacyTextureProcessor] Solid color texture detected: %s (RGBA: %d,%d,%d,%d) - hash with color data\n",
+                    path.c_str(), pixelData[0], pixelData[1], pixelData[2], pixelData[3]);
+            }
+        }
+    }
+    
     // Ensure it's not 0
     if (hash == 0) hash = 1;
     
     return hash;
 }
+
 
 bool TextureProcessor::UploadTextureToRemix(const ConvertedTexture& texture, 
                                                 remixapi_TextureHandle* outHandle) {
@@ -899,8 +997,8 @@ uint64_t TextureProcessor::ConvertAndUploadTexture(const std::string& vtfPath, b
         return 0;
     }
     
-    // Generate hash
-    texture.hash = GenerateTextureHash(vtfPath, texture.width, texture.height);
+    // Generate hash with pixel data (handles solid color detection)
+    texture.hash = GenerateTextureHashWithPixelData(vtfPath, texture.width, texture.height, texture.pixelData);
     
     // Upload to Remix
     remixapi_TextureHandle handle = nullptr;
@@ -3365,7 +3463,7 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
     matInfo.heightScale = 0.025f;  // Default height scale
     matInfo.isGlass = props.isGlass;
     matInfo.isRefractShader = props.isRefractShader;
-    matInfo.ior = props.isGlass ? 1.5f : 1.0f;  // Default glass IOR is 1.5
+    matInfo.ior = props.isGlass ? 1.52f : 1.0f;  // Glass IOR: 1.52 is typical for window/crown glass
     matInfo.emissionIntensity = props.hasEmissionScale ? props.emissionScale : 1.0f;
     
     // Create processing context for modular handlers

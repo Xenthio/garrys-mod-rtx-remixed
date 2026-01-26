@@ -319,7 +319,7 @@ public:
         float heightScale;            // Displacement scale (from $parallaxmapscale, default 0.025)
         bool isGlass;               // Whether this material should use the translucent glass shader
         bool isRefractShader;       // Whether this is a Refract shader (don't use baseTexture for transmittance)
-        float ior;                  // Index of Refraction (for glass, default 1.5)
+        float ior;                  // Index of Refraction (for glass, default 1.52 for window/crown glass)
         float emissionIntensity;    // Emission intensity (from $emissionscale)
     };
     
@@ -409,6 +409,13 @@ private:
     
     // Generate a unique hash for a texture
     uint64_t GenerateTextureHash(const std::string& path, uint32_t width, uint32_t height);
+    
+    // Generate hash for a texture with pixel data (handles solid color detection)
+    uint64_t GenerateTextureHashWithPixelData(const std::string& path, uint32_t width, uint32_t height, 
+                                              const std::vector<uint8_t>& pixelData);
+    
+    // Check if texture is a solid color
+    bool IsSolidColorTexture(const std::vector<uint8_t>& pixelData, uint32_t width, uint32_t height);
     
     // Upload texture to Remix
     bool UploadTextureToRemix(const ConvertedTexture& texture, remixapi_TextureHandle* outHandle);
