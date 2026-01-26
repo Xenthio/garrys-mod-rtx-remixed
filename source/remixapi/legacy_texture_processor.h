@@ -417,9 +417,6 @@ private:
     // Check if texture is a solid color
     bool IsSolidColorTexture(const std::vector<uint8_t>& pixelData, uint32_t width, uint32_t height);
     
-    // Mix material name into texture hash to differentiate materials using the same base texture
-    uint64_t MixMaterialNameIntoHash(uint64_t baseHash, const std::string& materialName);
-    
     // Upload texture to Remix
     bool UploadTextureToRemix(const ConvertedTexture& texture, remixapi_TextureHandle* outHandle);
     

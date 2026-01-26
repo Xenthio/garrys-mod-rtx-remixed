@@ -931,29 +931,6 @@ uint64_t TextureProcessor::GenerateTextureHashWithPixelData(const std::string& p
     return hash;
 }
 
-uint64_t TextureProcessor::MixMaterialNameIntoHash(uint64_t baseHash, const std::string& materialName) {
-    // Mix the material name into the base hash using FNV-1a
-    // This ensures that different materials using the same base texture get unique hashes
-    // We start with the base hash instead of FNV offset basis to preserve texture identity
-    uint64_t hash = baseHash;
-    
-    // Use unsigned char to ensure consistent hash values across platforms
-    for (char c : materialName) {
-        hash ^= static_cast<uint64_t>(static_cast<unsigned char>(c));
-        hash *= 1099511628211ULL;  // FNV-1a prime
-    }
-    
-    // Ensure it's not 0
-    if (hash == 0) hash = 1;
-    
-    if (m_debugOutput) {
-        Msg("[LegacyTextureProcessor] Mixed material name into hash: %s (base 0x%llX -> final 0x%llX)\n",
-            materialName.c_str(), (unsigned long long)baseHash, (unsigned long long)hash);
-    }
-    
-    return hash;
-}
-
 
 bool TextureProcessor::UploadTextureToRemix(const ConvertedTexture& texture, 
                                                 remixapi_TextureHandle* outHandle) {
@@ -3703,9 +3680,6 @@ int TextureProcessor::ProcessTrackedMaterialsBatch(int maxBatch) {
             continue;
         }
         
-        // Mix material name into the hash to differentiate materials using the same base texture
-        textureHash = MixMaterialNameIntoHash(textureHash, matName);
-        
         props.baseTextureHash = textureHash;
         
         // Create PBR material (generates textures and tracks info for USDA)
@@ -3810,11 +3784,6 @@ bool TextureProcessor::ProcessSingleMaterial(const std::string& materialName) {
     if (textureHash == 0) {
         return false;
     }
-    
-    // Mix material name into the hash to differentiate materials using the same base texture
-    // This solves the issue where multiple VMTs (e.g., envball_2, envball_5) reference the 
-    // same VTF and would otherwise get identical hashes
-    textureHash = MixMaterialNameIntoHash(textureHash, materialName);
     
     props.baseTextureHash = textureHash;
     
@@ -4087,9 +4056,6 @@ bool TextureProcessor::ProcessMaterialOnWorker(const std::string& materialName) 
         m_processedMaterials.insert(materialName);
         return false;
     }
-    
-    // Mix material name into the hash to differentiate materials using the same base texture
-    textureHash = MixMaterialNameIntoHash(textureHash, materialName);
     
     props.baseTextureHash = textureHash;
     
