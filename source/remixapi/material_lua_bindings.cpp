@@ -1236,6 +1236,85 @@ LUA_FUNCTION(RemixMaterial_HasHashCollision) {
     return 1;
 }
 
+// Lua function: RemixMaterial.IsSolidColor(materialName)
+// Returns true if the material's texture is a solid color (all pixels identical)
+// Also returns the color as a second value (RGB number)
+LUA_FUNCTION(RemixMaterial_IsSolidColor) {
+    if (!LUA->IsType(1, Type::String)) {
+        LUA->ThrowError("RemixMaterial.IsSolidColor: Expected string for material name");
+        return 0;
+    }
+    
+    const char* materialName = LUA->GetString(1);
+    uint32_t color = 0;
+    bool isSolid = D3D9TextureTracker::Instance().IsMaterialSolidColor(materialName, &color);
+    
+    LUA->PushBool(isSolid);
+    
+    if (isSolid) {
+        // Return color as RGB values (0-255)
+        LUA->CreateTable();
+        LUA->PushNumber((color >> 16) & 0xFF);
+        LUA->SetField(-2, "r");
+        LUA->PushNumber((color >> 8) & 0xFF);
+        LUA->SetField(-2, "g");
+        LUA->PushNumber(color & 0xFF);
+        LUA->SetField(-2, "b");
+        return 2;
+    }
+    
+    return 1;
+}
+
+// Lua function: RemixMaterial.GetSolidColorMaterials()
+// Returns a table of material names that have solid-color textures and need fixing
+// Only returns materials that haven't been marked as fixed yet
+LUA_FUNCTION(RemixMaterial_GetSolidColorMaterials) {
+    auto materials = D3D9TextureTracker::Instance().GetSolidColorMaterials();
+    
+    // Create result table (array of material names)
+    LUA->CreateTable();
+    int idx = 1;
+    for (const auto& name : materials) {
+        LUA->PushNumber(idx);
+        LUA->PushString(name.c_str());
+        LUA->SetTable(-3);
+        idx++;
+    }
+    
+    return 1;
+}
+
+// Lua function: RemixMaterial.MarkMaterialFixed(materialName)
+// Marks a material as "fixed" so it won't be returned by GetSolidColorMaterials again
+LUA_FUNCTION(RemixMaterial_MarkMaterialFixed) {
+    if (!LUA->IsType(1, Type::String)) {
+        LUA->ThrowError("RemixMaterial.MarkMaterialFixed: Expected string for material name");
+        return 0;
+    }
+    
+    const char* materialName = LUA->GetString(1);
+    D3D9TextureTracker::Instance().MarkMaterialFixed(materialName);
+    
+    LUA->PushBool(true);
+    return 1;
+}
+
+// Lua function: RemixMaterial.IsMaterialFixed(materialName)
+// Returns true if a material has been marked as fixed
+LUA_FUNCTION(RemixMaterial_IsMaterialFixed) {
+    if (!LUA->IsType(1, Type::String)) {
+        LUA->ThrowError("RemixMaterial.IsMaterialFixed: Expected string for material name");
+        return 0;
+    }
+    
+    const char* materialName = LUA->GetString(1);
+    bool isFixed = D3D9TextureTracker::Instance().IsMaterialFixed(materialName);
+    
+    LUA->PushBool(isFixed);
+    return 1;
+}
+
 // Initialize Material Manager Lua bindings
 void MaterialManager::InitializeLuaBindings() {
     if (!m_lua) return;
@@ -1337,6 +1416,19 @@ void MaterialManager::InitializeLuaBindings() {
     
     m_lua->PushCFunction(RemixMaterial_HasHashCollision);
     m_lua->SetField(-2, "HasHashCollision");
+    
+    // Solid color detection and fix functions
+    m_lua->PushCFunction(RemixMaterial_IsSolidColor);
+    m_lua->SetField(-2, "IsSolidColor");
+    
+    m_lua->PushCFunction(RemixMaterial_GetSolidColorMaterials);
+    m_lua->SetField(-2, "GetSolidColorMaterials");
+    
+    m_lua->PushCFunction(RemixMaterial_MarkMaterialFixed);
+    m_lua->SetField(-2, "MarkMaterialFixed");
+    
+    m_lua->PushCFunction(RemixMaterial_IsMaterialFixed);
+    m_lua->SetField(-2, "IsMaterialFixed");
     
     // Set the table as the global "RemixMaterial"
     m_lua->SetField(-2, "RemixMaterial");

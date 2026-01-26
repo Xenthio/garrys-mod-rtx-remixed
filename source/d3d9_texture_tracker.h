@@ -130,6 +130,20 @@ public:
     // Returns the other material name(s) if collision exists, empty vector otherwise
     std::vector<std::string> GetMaterialCollisions(const std::string& materialName) const;
     
+    // Check if a material's texture is a solid color (all pixels identical)
+    // Returns true if solid color, also outputs the color if outColor is not null
+    bool IsMaterialSolidColor(const std::string& materialName, uint32_t* outColor = nullptr) const;
+    
+    // Get all solid-color materials that have been detected (for Lua to fix)
+    // Returns materials that haven't been marked as "fixed" yet
+    std::vector<std::string> GetSolidColorMaterials() const;
+    
+    // Mark a material as "fixed" so it won't be returned by GetSolidColorMaterials again
+    void MarkMaterialFixed(const std::string& materialName);
+    
+    // Check if a material has been marked as fixed
+    bool IsMaterialFixed(const std::string& materialName) const;
+    
     // Get the D3D9 device (for texture creation)
     IDirect3DDevice9Ex* GetDevice() const { return m_pDevice; }
 
@@ -197,6 +211,12 @@ private:
     
     // World texture names from BSP (for DECAL_STATIC marking)
     std::unordered_set<std::string> m_worldTextureNames;
+    
+    // Solid-color materials detected (for Lua to fix)
+    std::unordered_set<std::string> m_solidColorMaterials;
+    
+    // Materials that have been fixed by Lua (won't be returned again)
+    std::unordered_set<std::string> m_fixedMaterials;
     
     // Category enable flags
     bool m_enableAutoCategorization = true;     // Master switch

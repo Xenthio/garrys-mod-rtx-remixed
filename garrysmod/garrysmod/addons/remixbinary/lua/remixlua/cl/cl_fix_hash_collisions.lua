@@ -1,38 +1,39 @@
 --[[
-    Hash Collision Fixer for RTX Remix
+    Solid Color Texture Fixer for RTX Remix
     
-    When multiple materials use textures with identical pixel content and dimensions,
+    When multiple materials use textures with identical pixel content (like solid colors),
     RTX Remix computes the same hash for them, causing them to be treated as the same
-    texture. This is common with solid-color textures like envball_1, envball_2, etc.
+    texture. This script fixes that by giving each solid-color material a unique texture.
     
-    This script fixes hash collisions by:
-    1. Querying the C++ side for detected hash collisions (RemixMaterial.GetHashCollisions)
-    2. Creating small unique procedural textures at runtime
-    3. Swapping the $basetexture of colliding materials to these unique textures
-    4. RTX Remix will now compute unique hashes for each material
+    How it works:
+    1. C++ detects solid-color textures as they load and tracks them
+    2. Lua periodically queries C++ for newly detected solid-color materials
+    3. For each solid-color material, Lua creates a unique procedural texture
+    4. The $basetexture is swapped to the unique texture via mat:SetTexture()
+    5. RTX Remix now computes unique hashes for each material
+    
+    This happens automatically as textures load - no hardcoded lists needed!
 ]]
 
 if not CLIENT then return end
 if not (BRANCH == "x86-64" or BRANCH == "chromium") then return end
 
 -- ConVars for configuration
-local enable_addon = CreateConVar("rtx_fix_hash_collisions", "1", FCVAR_ARCHIVE, "Enable/disable the hash collision fixer")
+local enable_addon = CreateConVar("rtx_fix_hash_collisions", "1", FCVAR_ARCHIVE, "Enable/disable the solid color texture fixer")
 local debug_mode = CreateConVar("rtx_fix_hash_collisions_debug", "0", FCVAR_ARCHIVE, "Enable debugging output")
 
--- Track materials we've already fixed
-local fixedMaterials = {}
 -- Count of fixes applied
 local fixCount = 0
 -- Generated unique textures
 local uniqueTextures = {}
 
--- Timer identifier
-local TIMER_NAME = "HashCollisionFixerContinuous"
+-- Timer identifiers
+local TIMER_NAME = "SolidColorFixerContinuous"
 
 -- Debug print function
 local function DebugPrint(...)
     if debug_mode:GetBool() then
-        MsgC(Color(200, 200, 255), "[RTX HashFix] ", Color(255, 255, 255), ...)
+        MsgC(Color(200, 200, 255), "[RTX SolidFix] ", Color(255, 255, 255), ...)
         MsgC(Color(255, 255, 255), "\n")
     end
 end
@@ -49,7 +50,8 @@ end
 -- Create a unique color based on material name
 local function GetUniqueColor(materialName)
     local hash = StringHash(materialName)
-    -- Generate RGB values from hash, keeping them close to black to minimize visual impact
+    -- Generate RGB values from hash
+    -- Keep values low to minimize visual impact on dark textures
     -- but different enough to produce different Remix hashes
     local r = (hash % 16) / 255  -- 0-15 range
     local g = ((hash / 16) % 16) / 255
@@ -68,7 +70,7 @@ local function CreateUniqueTexture(materialName)
     
     local r, g, b = GetUniqueColor(materialName)
     
-    -- Create a tiny 4x4 material with unique color
+    -- Create a tiny material with unique color
     local uniqueMat = CreateMaterial(texName, "UnlitGeneric", {
         ["$basetexture"] = "color/white",
         ["$color"] = string.format("[%f %f %f]", r, g, b),
@@ -79,20 +81,16 @@ local function CreateUniqueTexture(materialName)
     
     if uniqueMat and not uniqueMat:IsError() then
         uniqueTextures[texName] = uniqueMat
-        DebugPrint("Created unique texture: ", texName, " with color (", r, ", ", g, ", ", b, ")")
+        DebugPrint("Created unique texture: ", texName, " with color (", 
+            math.Round(r*255), ", ", math.Round(g*255), ", ", math.Round(b*255), ")")
         return uniqueMat
     end
     
     return nil
 end
 
--- Fix a single material's hash collision
-local function FixMaterialCollision(matName)
-    -- Skip already fixed
-    if fixedMaterials[matName] then
-        return false
-    end
-    
+-- Fix a single solid-color material
+local function FixSolidColorMaterial(matName)
     local mat = Material(matName)
     if not mat or mat:IsError() then
         DebugPrint("Skipping (error material): ", matName)
@@ -106,84 +104,68 @@ local function FixMaterialCollision(matName)
         if uniqueTex then
             mat:SetTexture("$basetexture", uniqueTex)
             fixCount = fixCount + 1
-            fixedMaterials[matName] = true
             
-            MsgC(Color(100, 255, 100), "[RTX HashFix] Fixed: '", matName, "' now has unique texture\n")
+            -- Tell C++ we've fixed this material
+            if RemixMaterial and RemixMaterial.MarkMaterialFixed then
+                RemixMaterial.MarkMaterialFixed(matName)
+            end
+            
+            if debug_mode:GetBool() then
+                MsgC(Color(100, 255, 100), "[RTX SolidFix] Fixed: '", matName, "'\n")
+            end
             return true
         end
     end
     
-    MsgC(Color(255, 100, 100), "[RTX HashFix] Failed to fix: '", matName, "'\n")
+    MsgC(Color(255, 100, 100), "[RTX SolidFix] Failed to fix: '", matName, "'\n")
     return false
 end
 
--- Query C++ for detected hash collisions and fix them
-local function FixDetectedCollisions(showOutput)
+-- Query C++ for newly detected solid-color materials and fix them
+local function FixNewSolidColorMaterials(showOutput)
     if not enable_addon:GetBool() then return 0 end
     
     -- Check if RemixMaterial API is available
-    if not RemixMaterial or not RemixMaterial.GetHashCollisions then
+    if not RemixMaterial or not RemixMaterial.GetSolidColorMaterials then
         if showOutput then
-            MsgC(Color(255, 200, 100), "[RTX HashFix] RemixMaterial.GetHashCollisions not available yet. Try again later.\n")
+            MsgC(Color(255, 200, 100), "[RTX SolidFix] RemixMaterial.GetSolidColorMaterials not available yet.\n")
         end
         return 0
     end
     
     local previousFixed = fixCount
-    local startTime = SysTime()
     
-    -- Query C++ for all detected hash collisions
-    local collisions = RemixMaterial.GetHashCollisions()
+    -- Query C++ for solid-color materials that need fixing
+    local materials = RemixMaterial.GetSolidColorMaterials()
     
-    if not collisions or table.Count(collisions) == 0 then
-        if showOutput then
-            MsgC(Color(200, 200, 200), "[RTX HashFix] No hash collisions detected by C++ tracker.\n")
-        end
+    if not materials or #materials == 0 then
         return 0
     end
     
-    -- Process each collision group
-    for hashStr, materials in pairs(collisions) do
-        if #materials > 1 then
-            if debug_mode:GetBool() or showOutput then
-                MsgC(Color(255, 200, 100), "[RTX HashFix] Collision detected at hash ", hashStr, ":\n")
-                for _, matName in ipairs(materials) do
-                    MsgC(Color(255, 200, 100), "    - ", matName, "\n")
-                end
-            end
-            
-            -- Fix all but the first material in the collision group
-            -- (The first one keeps its original hash, others get unique hashes)
-            for i = 2, #materials do
-                FixMaterialCollision(materials[i])
-            end
+    -- Fix each solid-color material
+    local newFixed = 0
+    for _, matName in ipairs(materials) do
+        if FixSolidColorMaterial(matName) then
+            newFixed = newFixed + 1
         end
     end
     
-    local endTime = SysTime()
-    local processingTime = math.Round((endTime - startTime) * 1000)
-    local newFixed = fixCount - previousFixed
-    
-    if showOutput or (newFixed > 0 and debug_mode:GetBool()) then
-        if newFixed > 0 then
-            MsgC(Color(100, 255, 100), "[RTX HashFix] Fixed ", newFixed, " hash collisions in ", processingTime, "ms\n")
-        else
-            MsgC(Color(200, 200, 200), "[RTX HashFix] No new hash collisions to fix (", processingTime, "ms)\n")
-        end
+    if showOutput and newFixed > 0 then
+        MsgC(Color(100, 255, 100), "[RTX SolidFix] Fixed ", newFixed, " solid-color textures\n")
     end
     
     return newFixed
 end
 
--- Start continuous checking
+-- Start continuous checking (runs frequently to catch newly loaded textures)
 local function StartContinuousChecking()
     if timer.Exists(TIMER_NAME) then 
         timer.Remove(TIMER_NAME)
     end
     
-    -- Run every 3 seconds
-    timer.Create(TIMER_NAME, 3, 0, function()
-        FixDetectedCollisions(false)
+    -- Run every 0.5 seconds to quickly fix newly loaded textures
+    timer.Create(TIMER_NAME, 0.5, 0, function()
+        FixNewSolidColorMaterials(false)
     end)
 end
 
@@ -197,7 +179,7 @@ end
 -- Handle cvar changes
 cvars.AddChangeCallback("rtx_fix_hash_collisions", function(_, _, new)
     if new == "1" then
-        FixDetectedCollisions(true)
+        FixNewSolidColorMaterials(true)
         StartContinuousChecking()
     else
         StopContinuousChecking()
@@ -205,121 +187,114 @@ cvars.AddChangeCallback("rtx_fix_hash_collisions", function(_, _, new)
 end)
 
 -- Initial run with delay
-hook.Add("InitPostEntity", "FixHashCollisionsOnMapLoad", function()
+hook.Add("InitPostEntity", "FixSolidColorsOnMapLoad", function()
     if enable_addon:GetBool() then
-        -- Wait a bit for textures to be loaded and hashes to be computed
-        timer.Simple(3, function()
-            FixDetectedCollisions(true)
+        -- Wait a bit for initial textures to load
+        timer.Simple(1, function()
+            FixNewSolidColorMaterials(true)
             StartContinuousChecking()
         end)
     end
 end)
 
 -- Reset on map change
-hook.Add("ShutDown", "CleanupHashCollisionFixer", function()
+hook.Add("ShutDown", "CleanupSolidColorFixer", function()
     StopContinuousChecking()
-    fixedMaterials = {}
     fixCount = 0
     uniqueTextures = {}
 end)
 
 -- Console commands
 concommand.Add("rtx_fix_hash_collisions_process", function()
-    local fixed = FixDetectedCollisions(true)
-    notification.AddLegacy("Fixed " .. fixed .. " hash collisions", NOTIFY_GENERIC, 3)
-end, nil, "Query C++ for hash collisions and fix them")
+    local fixed = FixNewSolidColorMaterials(true)
+    if fixed > 0 then
+        notification.AddLegacy("Fixed " .. fixed .. " solid-color textures", NOTIFY_GENERIC, 3)
+    else
+        notification.AddLegacy("No new solid-color textures to fix", NOTIFY_GENERIC, 3)
+    end
+end, nil, "Manually trigger solid-color texture fixing")
 
 concommand.Add("rtx_fix_hash_collisions_stats", function()
-    MsgC(Color(100, 200, 255), "[RTX HashFix] Statistics:\n")
-    MsgC(Color(200, 200, 200), "  Collisions fixed: ", fixCount, "\n")
-    MsgC(Color(200, 200, 200), "  Fixed materials: ", table.Count(fixedMaterials), "\n")
+    MsgC(Color(100, 200, 255), "[RTX SolidFix] Statistics:\n")
+    MsgC(Color(200, 200, 200), "  Total fixed: ", fixCount, "\n")
     MsgC(Color(200, 200, 200), "  Unique textures created: ", table.Count(uniqueTextures), "\n")
     
-    -- Show current collisions from C++
-    if RemixMaterial and RemixMaterial.GetHashCollisions then
-        local collisions = RemixMaterial.GetHashCollisions()
-        local collisionCount = table.Count(collisions)
-        MsgC(Color(200, 200, 200), "  Active collision groups: ", collisionCount, "\n")
+    -- Show pending solid-color materials from C++
+    if RemixMaterial and RemixMaterial.GetSolidColorMaterials then
+        local pending = RemixMaterial.GetSolidColorMaterials()
+        MsgC(Color(200, 200, 200), "  Pending (unfixed): ", #pending, "\n")
         
-        if collisionCount > 0 then
-            MsgC(Color(255, 200, 100), "\n  Current collision groups:\n")
-            for hashStr, materials in pairs(collisions) do
-                MsgC(Color(200, 200, 200), "    Hash ", hashStr, ": ")
-                for i, matName in ipairs(materials) do
-                    local status = fixedMaterials[matName] and " (fixed)" or ""
-                    if i > 1 then MsgC(Color(200, 200, 200), ", ") end
-                    MsgC(Color(255, 255, 255), matName, status)
-                end
-                MsgC(Color(200, 200, 200), "\n")
+        if #pending > 0 and #pending <= 20 then
+            MsgC(Color(255, 200, 100), "  Pending materials:\n")
+            for _, matName in ipairs(pending) do
+                MsgC(Color(200, 200, 200), "    - ", matName, "\n")
             end
         end
-    else
-        MsgC(Color(255, 200, 100), "  RemixMaterial.GetHashCollisions not available\n")
     end
-end, nil, "Show hash collision fix statistics")
+end, nil, "Show solid-color fix statistics")
 
 concommand.Add("rtx_fix_hash_collisions_list", function()
-    if not RemixMaterial or not RemixMaterial.GetHashCollisions then
-        MsgC(Color(255, 200, 100), "[RTX HashFix] RemixMaterial.GetHashCollisions not available.\n")
+    if not RemixMaterial or not RemixMaterial.GetSolidColorMaterials then
+        MsgC(Color(255, 200, 100), "[RTX SolidFix] RemixMaterial.GetSolidColorMaterials not available.\n")
         return
     end
     
-    local collisions = RemixMaterial.GetHashCollisions()
+    local pending = RemixMaterial.GetSolidColorMaterials()
     
-    if table.Count(collisions) == 0 then
-        MsgC(Color(200, 200, 200), "[RTX HashFix] No hash collisions detected.\n")
-        return
+    MsgC(Color(100, 200, 255), "[RTX SolidFix] Solid-color materials pending fix: ", #pending, "\n")
+    for _, matName in ipairs(pending) do
+        MsgC(Color(200, 200, 200), "  - ", matName, "\n")
     end
-    
-    MsgC(Color(100, 200, 255), "[RTX HashFix] Detected hash collisions:\n")
-    for hashStr, materials in pairs(collisions) do
-        MsgC(Color(255, 200, 100), "  Hash ", hashStr, ":\n")
-        for _, matName in ipairs(materials) do
-            local status = fixedMaterials[matName] and " [FIXED]" or ""
-            MsgC(Color(200, 200, 200), "    - ", matName, status, "\n")
-        end
-    end
-end, nil, "List all detected hash collisions")
-
-concommand.Add("rtx_fix_hash_collisions_add", function(ply, cmd, args)
-    if #args < 1 then
-        MsgC(Color(255, 200, 100), "[RTX HashFix] Usage: rtx_fix_hash_collisions_add <material_name>\n")
-        return
-    end
-    
-    local matName = args[1]
-    
-    if FixMaterialCollision(matName) then
-        MsgC(Color(100, 255, 100), "[RTX HashFix] Manually fixed: '", matName, "'\n")
-    end
-end, nil, "Manually fix a material's hash collision")
+end, nil, "List solid-color materials pending fix")
 
 concommand.Add("rtx_fix_hash_collisions_check", function(ply, cmd, args)
     if #args < 1 then
-        MsgC(Color(255, 200, 100), "[RTX HashFix] Usage: rtx_fix_hash_collisions_check <material_name>\n")
+        MsgC(Color(255, 200, 100), "[RTX SolidFix] Usage: rtx_fix_hash_collisions_check <material_name>\n")
         return
     end
     
     local matName = args[1]
     
-    if not RemixMaterial or not RemixMaterial.GetMaterialCollisions then
-        MsgC(Color(255, 200, 100), "[RTX HashFix] RemixMaterial.GetMaterialCollisions not available.\n")
+    if not RemixMaterial then
+        MsgC(Color(255, 200, 100), "[RTX SolidFix] RemixMaterial not available.\n")
         return
     end
     
-    local collisions = RemixMaterial.GetMaterialCollisions(matName)
-    
-    if #collisions == 0 then
-        MsgC(Color(100, 255, 100), "[RTX HashFix] '", matName, "' has no hash collisions.\n")
-    else
-        MsgC(Color(255, 200, 100), "[RTX HashFix] '", matName, "' collides with:\n")
-        for _, otherMat in ipairs(collisions) do
-            MsgC(Color(200, 200, 200), "    - ", otherMat, "\n")
+    -- Check if it's a solid color
+    if RemixMaterial.IsSolidColor then
+        local isSolid, color = RemixMaterial.IsSolidColor(matName)
+        if isSolid then
+            MsgC(Color(100, 255, 100), "[RTX SolidFix] '", matName, "' IS a solid color")
+            if color then
+                MsgC(Color(100, 255, 100), " (RGB: ", color.r, ", ", color.g, ", ", color.b, ")")
+            end
+            MsgC(Color(100, 255, 100), "\n")
+        else
+            MsgC(Color(200, 200, 200), "[RTX SolidFix] '", matName, "' is NOT a solid color (or not in cache)\n")
         end
     end
-end, nil, "Check if a material has hash collisions with other materials")
+    
+    -- Check if it's been fixed
+    if RemixMaterial.IsMaterialFixed then
+        local isFixed = RemixMaterial.IsMaterialFixed(matName)
+        MsgC(Color(200, 200, 200), "[RTX SolidFix] Fixed status: ", isFixed and "YES" or "NO", "\n")
+    end
+end, nil, "Check if a material is a solid color and its fix status")
+
+concommand.Add("rtx_fix_hash_collisions_add", function(ply, cmd, args)
+    if #args < 1 then
+        MsgC(Color(255, 200, 100), "[RTX SolidFix] Usage: rtx_fix_hash_collisions_add <material_name>\n")
+        return
+    end
+    
+    local matName = args[1]
+    
+    if FixSolidColorMaterial(matName) then
+        MsgC(Color(100, 255, 100), "[RTX SolidFix] Manually fixed: '", matName, "'\n")
+    end
+end, nil, "Manually fix a material (force it to have a unique texture)")
 
 -- Startup message
-MsgC(Color(100, 255, 100), "[RTX HashFix] Hash Collision Fixer loaded.\n")
-MsgC(Color(200, 200, 200), "  Uses C++ detection to find actual hash collisions (no hardcoded lists).\n")
-MsgC(Color(200, 200, 200), "  Commands: rtx_fix_hash_collisions_list, rtx_fix_hash_collisions_check <mat>\n")
+MsgC(Color(100, 255, 100), "[RTX SolidFix] Solid Color Texture Fixer loaded.\n")
+MsgC(Color(200, 200, 200), "  Automatically detects and fixes solid-color textures as they load.\n")
+MsgC(Color(200, 200, 200), "  Commands: rtx_fix_hash_collisions_stats, rtx_fix_hash_collisions_check <mat>\n")
