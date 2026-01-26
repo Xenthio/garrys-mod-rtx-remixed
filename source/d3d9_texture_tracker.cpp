@@ -1515,7 +1515,7 @@ bool D3D9TextureTracker::IsSolidColorTexture(IDirect3DTexture9* pTexture, D3DCOL
     for (UINT y = 0; y < desc.Height && isSolidColor; y++) {
         BYTE* row = static_cast<BYTE*>(lockedRect.pBits) + y * lockedRect.Pitch;
         for (UINT x = 0; x < desc.Width && isSolidColor; x++) {
-            D3DCOLOR pixel = *reinterpret_cast<D3DCOLOR*>(row + x * 4);
+            D3DCOLOR pixel = *reinterpret_cast<D3DCOLOR*>(row + x * sizeof(D3DCOLOR));
             
             if (x == 0 && y == 0) {
                 firstColor = pixel;
@@ -1561,7 +1561,7 @@ bool D3D9TextureTracker::ModifySolidColorTexture(IDirect3DTexture9* pTexture, co
     UINT modifyY = desc.Height - 1;
     
     BYTE* row = static_cast<BYTE*>(lockedRect.pBits) + modifyY * lockedRect.Pitch;
-    D3DCOLOR* pixel = reinterpret_cast<D3DCOLOR*>(row + modifyX * 4);
+    D3DCOLOR* pixel = reinterpret_cast<D3DCOLOR*>(row + modifyX * sizeof(D3DCOLOR));
     
     // Extract ARGB components from base color
     BYTE a = (baseColor >> 24) & 0xFF;
