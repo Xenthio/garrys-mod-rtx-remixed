@@ -934,11 +934,13 @@ uint64_t TextureProcessor::GenerateTextureHashWithPixelData(const std::string& p
 uint64_t TextureProcessor::MixMaterialNameIntoHash(uint64_t baseHash, const std::string& materialName) {
     // Mix the material name into the base hash using FNV-1a
     // This ensures that different materials using the same base texture get unique hashes
+    // We start with the base hash instead of FNV offset basis to preserve texture identity
     uint64_t hash = baseHash;
     
+    // Use unsigned char to ensure consistent hash values across platforms
     for (char c : materialName) {
-        hash ^= static_cast<uint64_t>(c);
-        hash *= 1099511628211ULL;
+        hash ^= static_cast<uint64_t>(static_cast<unsigned char>(c));
+        hash *= 1099511628211ULL;  // FNV-1a prime
     }
     
     // Ensure it's not 0
