@@ -173,9 +173,6 @@ void D3D9TextureTracker::Shutdown() {
         }
         m_pendingCategories.clear();
         
-        // Clear solid color texture tracking
-        m_modifiedSolidColorTextures.clear();
-        
         m_currentMaterialName.clear();
         m_currentMaterial = nullptr;
     }
@@ -270,9 +267,6 @@ void D3D9TextureTracker::ClearCache() {
     }
     m_pendingCategories.clear();
     
-    // Clear solid color texture tracking
-    m_modifiedSolidColorTextures.clear();
-    
     Msg("[D3D9TextureTracker] Cache cleared\n");
 }
 
@@ -343,16 +337,6 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                     
                     // Only log when we discover a NEW variant
                     if (!found) {
-                        // Fix solid color hash collisions BEFORE getting the hash
-                        // This modifies the texture pixel data to make each solid-color texture unique
-                        // Must happen before dxvk_GetTextureHash so Remix sees the modified texture
-                        bool wasModified = false;
-                        if (Stage == 0) {
-                            // Note: We call this outside the lock since it has its own locking
-                            // and we want to release the main lock while doing texture operations
-                            wasModified = tracker.FixSolidColorHashCollision(p2DTexture, tracker.m_currentMaterialName);
-                        }
-                        
                         // Get the hash immediately to see what Remix thinks
                         uint64_t hash = 0;
                         if (g_remix) {
@@ -367,10 +351,9 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                         textures.push_back(p2DTexture);
                         // Re-enable logging for debugging texture capture issues
                         if (tracker.m_enableDebugOutput) {
-                            Msg("[D3D9TextureTracker] NEW texture variant #%zu: 0x%p for '%s'%s (hash: 0x%llX)%s\n", 
+                            Msg("[D3D9TextureTracker] NEW texture variant #%zu: 0x%p for '%s'%s (hash: 0x%llX)\n", 
                                 textures.size(), p2DTexture, tracker.m_currentMaterialName.c_str(), 
-                                Stage == 1 ? " [STAGE1]" : "", hash,
-                                wasModified ? " [SOLID_COLOR_FIXED]" : "");
+                                Stage == 1 ? " [STAGE1]" : "", hash);
                         }
                             
                         // Apply automatic categorization logic (Particles, Emissive)
@@ -1472,160 +1455,6 @@ void D3D9TextureTracker::SetDebugOutput(bool enabled) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_enableDebugOutput = enabled;
     Msg("[D3D9TextureTracker] Debug output %s\n", enabled ? "enabled" : "disabled");
-}
-
-// Enable or disable solid color hash collision fix
-void D3D9TextureTracker::SetSolidColorHashFix(bool enabled) {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    m_enableSolidColorHashFix = enabled;
-    Msg("[D3D9TextureTracker] Solid color hash collision fix %s\n", enabled ? "enabled" : "disabled");
-}
-
-// Check if a texture is a solid color (all pixels are the same)
-bool D3D9TextureTracker::IsSolidColorTexture(IDirect3DTexture9* pTexture, D3DCOLOR* outColor, D3DSURFACE_DESC* outDesc) {
-    if (!pTexture) return false;
-    
-    // Get texture description
-    D3DSURFACE_DESC desc;
-    if (FAILED(pTexture->GetLevelDesc(0, &desc))) {
-        return false;
-    }
-    
-    // Only check small textures (solid colors are typically small)
-    // This avoids expensive checks on large textures
-    if (desc.Width > 64 || desc.Height > 64) {
-        return false;
-    }
-    
-    // Only handle A8R8G8B8 and X8R8G8B8 formats (common for solid colors)
-    if (desc.Format != D3DFMT_A8R8G8B8 && desc.Format != D3DFMT_X8R8G8B8) {
-        return false;
-    }
-    
-    // Lock the texture to read pixel data
-    D3DLOCKED_RECT lockedRect;
-    if (FAILED(pTexture->LockRect(0, &lockedRect, nullptr, D3DLOCK_READONLY))) {
-        return false;
-    }
-    
-    bool isSolidColor = true;
-    D3DCOLOR firstColor = 0;
-    
-    // Read and compare pixels
-    for (UINT y = 0; y < desc.Height && isSolidColor; y++) {
-        BYTE* row = static_cast<BYTE*>(lockedRect.pBits) + y * lockedRect.Pitch;
-        for (UINT x = 0; x < desc.Width && isSolidColor; x++) {
-            D3DCOLOR pixel = *reinterpret_cast<D3DCOLOR*>(row + x * sizeof(D3DCOLOR));
-            
-            if (x == 0 && y == 0) {
-                firstColor = pixel;
-            } else if (pixel != firstColor) {
-                isSolidColor = false;
-            }
-        }
-    }
-    
-    pTexture->UnlockRect(0);
-    
-    if (isSolidColor) {
-        if (outColor) *outColor = firstColor;
-        if (outDesc) *outDesc = desc;
-    }
-    
-    return isSolidColor;
-}
-
-// Modify a single pixel in a solid color texture to make it unique
-bool D3D9TextureTracker::ModifySolidColorTexture(IDirect3DTexture9* pTexture, const std::string& materialName, 
-                                                   D3DCOLOR baseColor, const D3DSURFACE_DESC& desc) {
-    if (!pTexture || materialName.empty()) return false;
-    
-    // Generate a unique modifier based on material name hash
-    // We use FNV-1a hash to get a good distribution
-    uint64_t nameHash = 14695981039346656037ULL;
-    for (char c : materialName) {
-        nameHash ^= static_cast<uint64_t>(static_cast<unsigned char>(c));
-        nameHash *= 1099511628211ULL;
-    }
-    
-    // Lock the texture for writing
-    D3DLOCKED_RECT lockedRect;
-    if (FAILED(pTexture->LockRect(0, &lockedRect, nullptr, 0))) {
-        return false;
-    }
-    
-    // Modify the bottom-right pixel with a unique value
-    // This preserves the visual appearance while making the texture hash unique
-    // We modify the last pixel to minimize visual impact
-    UINT modifyX = desc.Width - 1;
-    UINT modifyY = desc.Height - 1;
-    
-    BYTE* row = static_cast<BYTE*>(lockedRect.pBits) + modifyY * lockedRect.Pitch;
-    D3DCOLOR* pixel = reinterpret_cast<D3DCOLOR*>(row + modifyX * sizeof(D3DCOLOR));
-    
-    // Extract ARGB components from base color
-    BYTE a = (baseColor >> 24) & 0xFF;
-    BYTE r = (baseColor >> 16) & 0xFF;
-    BYTE g = (baseColor >> 8) & 0xFF;
-    BYTE b = baseColor & 0xFF;
-    
-    // Modify RGB values slightly based on material name hash
-    // We add small offsets (1-2) to each channel to avoid noticeable color changes
-    // but enough to make the hash unique
-    BYTE rMod = static_cast<BYTE>((nameHash & 0x3) + 1);          // 1-4
-    BYTE gMod = static_cast<BYTE>(((nameHash >> 2) & 0x3) + 1);   // 1-4
-    BYTE bMod = static_cast<BYTE>(((nameHash >> 4) & 0x3) + 1);   // 1-4
-    
-    // Apply modifications (with overflow protection)
-    r = (r < 255 - rMod) ? r + rMod : r - rMod;
-    g = (g < 255 - gMod) ? g + gMod : g - gMod;
-    b = (b < 255 - bMod) ? b + bMod : b - bMod;
-    
-    // Write modified pixel
-    *pixel = D3DCOLOR_ARGB(a, r, g, b);
-    
-    pTexture->UnlockRect(0);
-    
-    return true;
-}
-
-// Main entry point for solid color hash collision fix
-bool D3D9TextureTracker::FixSolidColorHashCollision(IDirect3DTexture9* pTexture, const std::string& materialName) {
-    if (!pTexture || materialName.empty()) return false;
-    if (!m_enableSolidColorHashFix) return false;
-    
-    // Check if we've already modified this texture
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        if (m_modifiedSolidColorTextures.find(pTexture) != m_modifiedSolidColorTextures.end()) {
-            return false;  // Already modified
-        }
-    }
-    
-    // Check if it's a solid color texture
-    D3DCOLOR baseColor;
-    D3DSURFACE_DESC desc;
-    if (!IsSolidColorTexture(pTexture, &baseColor, &desc)) {
-        return false;  // Not a solid color
-    }
-    
-    // Modify the texture to make it unique
-    if (!ModifySolidColorTexture(pTexture, materialName, baseColor, desc)) {
-        return false;  // Modification failed
-    }
-    
-    // Track that we've modified this texture
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        m_modifiedSolidColorTextures.insert(pTexture);
-    }
-    
-    if (m_enableDebugOutput) {
-        Msg("[D3D9TextureTracker] Fixed solid color hash collision for '%s' (color: 0x%08X, size: %dx%d)\n",
-            materialName.c_str(), baseColor, desc.Width, desc.Height);
-    }
-    
-    return true;
 }
 
 // Check if material is a world texture
