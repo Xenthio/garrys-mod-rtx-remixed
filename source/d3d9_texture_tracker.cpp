@@ -347,10 +347,10 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                             }
                         }
                         
-                        // Check for hash collision and fix if possible (runs independently of LegacyTextureProcessor)
-                        if (hash != 0 && Stage == 0) {
-                            hash = tracker.CheckAndFixHashCollision(p2DTexture, tracker.m_currentMaterialName, hash);
-                        }
+                        // NOTE: Hash collision detection/fixing has been moved to Lua.
+                        // We don't modify anything in Hook_SetTexture to avoid DXVK crashes.
+                        // The Lua script uses RemixMaterial.GetHashCollisions() to find collisions
+                        // and mat:SetTexture() to fix them (which goes through Source Engine properly).
                         
                         // AddRef to keep the texture alive while we reference it
                         p2DTexture->AddRef();
