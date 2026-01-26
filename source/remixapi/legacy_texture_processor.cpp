@@ -3689,17 +3689,40 @@ int TextureProcessor::ProcessTrackedMaterialsBatch(int maxBatch) {
         
         // Get hash for first variant
         uint64_t textureHash = 0;
+        IDirect3DTexture9* originalTexture = nullptr;
         for (IDirect3DTexture9* tex : *variants) {
             if (!tex) continue;
             auto result = g_remix->dxvk_GetTextureHash(tex);
             if (result && result.value() != 0) {
                 textureHash = result.value();
+                originalTexture = tex;
                 break;
             }
         }
         
         if (textureHash == 0) {
             continue;
+        }
+        
+        // Check for hash collision and attempt to fix it
+        ConVar* fixCvar = GlobalConvars::rtx_fix_solid_color_collisions;
+        if (fixCvar && fixCvar->GetBool() && originalTexture) {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            if (m_processedMaterialInfo.find(textureHash) != m_processedMaterialInfo.end()) {
+                // Collision detected - try to create a modified texture
+                uint64_t newHash = 0;
+                IDirect3DTexture9* modifiedTex = D3D9TextureTracker::Instance().CreateModifiedTexture(
+                    originalTexture, matName, &newHash);
+                
+                if (modifiedTex && newHash != 0 && newHash != textureHash) {
+                    // Success! Use the new hash
+                    Msg("[LegacyTextureProcessor] Fixed hash collision for '%s': 0x%llX -> 0x%llX\n",
+                        matName.c_str(), textureHash, newHash);
+                    textureHash = newHash;
+                    // Note: We don't need to track the modified texture - it's already registered with DXVK
+                    // when we called dxvk_GetTextureHash on it
+                }
+            }
         }
         
         props.baseTextureHash = textureHash;

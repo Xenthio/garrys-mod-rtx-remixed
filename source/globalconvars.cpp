@@ -16,6 +16,7 @@ ConVar* GlobalConvars::r_worldnodenocull;
 ConVar* GlobalConvars::r_forcehwlight;
 ConVar* GlobalConvars::rtx_force_static_lighting;
 ConVar* GlobalConvars::rtx_hash_collision_detection;
+ConVar* GlobalConvars::rtx_fix_solid_color_collisions;
 void GlobalConvars::InitialiseConVars() {
 	m_pLuaConVars = loader_lua_shared.GetInterface<GarrysMod::Lua::ILuaConVars>(GMOD_LUACONVARS_INTERFACE);
 	if (!m_pLuaConVars) {
@@ -55,4 +56,9 @@ void GlobalConvars::InitialiseConVars() {
 	if (!rtx_hash_collision_detection) { rtx_hash_collision_detection = cvar->FindVar("rtx_hash_collision_detection"); }
 	if (!rtx_hash_collision_detection) { Error("[RTX Fixes 2] Failed to create rtx_hash_collision_detection convar\n"); }
 	else { Msg("[RTX Fixes 2] rtx_hash_collision_detection convar created\n"); }
+
+	rtx_fix_solid_color_collisions = m_pLuaConVars->CreateConVar("rtx_fix_solid_color_collisions", "1", "Fix texture hash collisions by creating modified runtime textures for solid-color materials", FCVAR_ARCHIVE);
+	if (!rtx_fix_solid_color_collisions) { rtx_fix_solid_color_collisions = cvar->FindVar("rtx_fix_solid_color_collisions"); }
+	if (!rtx_fix_solid_color_collisions) { Error("[RTX Fixes 2] Failed to create rtx_fix_solid_color_collisions convar\n"); }
+	else { Msg("[RTX Fixes 2] rtx_fix_solid_color_collisions convar created\n"); }
 }

@@ -1457,6 +1457,152 @@ void D3D9TextureTracker::SetDebugOutput(bool enabled) {
     Msg("[D3D9TextureTracker] Debug output %s\n", enabled ? "enabled" : "disabled");
 }
 
+// Create a modified copy of a texture with slightly different pixels
+IDirect3DTexture9* D3D9TextureTracker::CreateModifiedTexture(IDirect3DTexture9* pOriginal, 
+                                                               const std::string& materialName, 
+                                                               uint64_t* outHash) {
+    if (!pOriginal || !m_pDevice || materialName.empty()) {
+        return nullptr;
+    }
+    
+    // Get original texture description
+    D3DSURFACE_DESC desc;
+    if (FAILED(pOriginal->GetLevelDesc(0, &desc))) {
+        Warning("[D3D9TextureTracker] Failed to get texture description\n");
+        return nullptr;
+    }
+    
+    // Only handle manageable formats
+    if (desc.Format != D3DFMT_A8R8G8B8 && desc.Format != D3DFMT_X8R8G8B8) {
+        // Skip unsupported formats
+        return nullptr;
+    }
+    
+    // Only handle small textures (solid colors are typically small)
+    if (desc.Width > 64 || desc.Height > 64) {
+        return nullptr;
+    }
+    
+    // Lock the original texture to read pixel data
+    D3DLOCKED_RECT srcRect;
+    if (FAILED(pOriginal->LockRect(0, &srcRect, nullptr, D3DLOCK_READONLY))) {
+        Warning("[D3D9TextureTracker] Failed to lock original texture for reading\n");
+        return nullptr;
+    }
+    
+    // Check if it's a solid color texture
+    bool isSolidColor = true;
+    DWORD firstColor = 0;
+    
+    for (UINT y = 0; y < desc.Height && isSolidColor; y++) {
+        BYTE* row = static_cast<BYTE*>(srcRect.pBits) + y * srcRect.Pitch;
+        for (UINT x = 0; x < desc.Width && isSolidColor; x++) {
+            DWORD pixel = *reinterpret_cast<DWORD*>(row + x * sizeof(DWORD));
+            if (x == 0 && y == 0) {
+                firstColor = pixel;
+            } else if (pixel != firstColor) {
+                isSolidColor = false;
+            }
+        }
+    }
+    
+    pOriginal->UnlockRect(0);
+    
+    if (!isSolidColor) {
+        // Not a solid color, no need to modify
+        return nullptr;
+    }
+    
+    // Create a new texture with the same dimensions but managed pool
+    // (D3DPOOL_MANAGED allows CPU access for modification)
+    IDirect3DTexture9* pNewTexture = nullptr;
+    HRESULT hr = m_pDevice->CreateTexture(
+        desc.Width, desc.Height, 1,
+        0,  // No usage flags
+        desc.Format,
+        D3DPOOL_MANAGED,  // Managed pool for CPU access
+        &pNewTexture,
+        nullptr);
+    
+    if (FAILED(hr) || !pNewTexture) {
+        Warning("[D3D9TextureTracker] Failed to create new texture: 0x%X\n", hr);
+        return nullptr;
+    }
+    
+    // Lock both textures
+    D3DLOCKED_RECT dstRect;
+    if (FAILED(pOriginal->LockRect(0, &srcRect, nullptr, D3DLOCK_READONLY))) {
+        pNewTexture->Release();
+        return nullptr;
+    }
+    
+    if (FAILED(pNewTexture->LockRect(0, &dstRect, nullptr, 0))) {
+        pOriginal->UnlockRect(0);
+        pNewTexture->Release();
+        return nullptr;
+    }
+    
+    // Generate a unique modifier based on material name hash (FNV-1a)
+    uint64_t nameHash = 14695981039346656037ULL;
+    for (char c : materialName) {
+        nameHash ^= static_cast<uint64_t>(static_cast<unsigned char>(c));
+        nameHash *= 1099511628211ULL;
+    }
+    
+    // Copy pixels with modification on bottom-right pixel
+    for (UINT y = 0; y < desc.Height; y++) {
+        BYTE* srcRow = static_cast<BYTE*>(srcRect.pBits) + y * srcRect.Pitch;
+        BYTE* dstRow = static_cast<BYTE*>(dstRect.pBits) + y * dstRect.Pitch;
+        
+        for (UINT x = 0; x < desc.Width; x++) {
+            DWORD pixel = *reinterpret_cast<DWORD*>(srcRow + x * sizeof(DWORD));
+            
+            // Modify the bottom-right pixel based on material name hash
+            if (x == desc.Width - 1 && y == desc.Height - 1) {
+                // Extract ARGB components
+                BYTE a = (pixel >> 24) & 0xFF;
+                BYTE r = (pixel >> 16) & 0xFF;
+                BYTE g = (pixel >> 8) & 0xFF;
+                BYTE b = pixel & 0xFF;
+                
+                // Apply small modifications (1-4 per channel)
+                BYTE rMod = static_cast<BYTE>((nameHash & 0x3) + 1);
+                BYTE gMod = static_cast<BYTE>(((nameHash >> 2) & 0x3) + 1);
+                BYTE bMod = static_cast<BYTE>(((nameHash >> 4) & 0x3) + 1);
+                
+                r = (r < 255 - rMod) ? r + rMod : r - rMod;
+                g = (g < 255 - gMod) ? g + gMod : g - gMod;
+                b = (b < 255 - bMod) ? b + bMod : b - bMod;
+                
+                pixel = (a << 24) | (r << 16) | (g << 8) | b;
+            }
+            
+            *reinterpret_cast<DWORD*>(dstRow + x * sizeof(DWORD)) = pixel;
+        }
+    }
+    
+    pOriginal->UnlockRect(0);
+    pNewTexture->UnlockRect(0);
+    
+    // Get the hash for the new texture
+    if (outHash && g_remix) {
+        auto result = g_remix->dxvk_GetTextureHash(pNewTexture);
+        if (result) {
+            *outHash = result.value();
+        } else {
+            *outHash = 0;
+        }
+    }
+    
+    if (m_enableDebugOutput) {
+        uint64_t hash = outHash ? *outHash : 0;
+        Msg("[D3D9TextureTracker] Created modified texture for '%s' (hash: 0x%llX)\n", 
+            materialName.c_str(), hash);
+    }
+    
+    return pNewTexture;
+}
+
 // Check if material is a world texture
 bool D3D9TextureTracker::IsWorldTexture(const std::string& materialName) const {
     if (materialName.empty()) return false;

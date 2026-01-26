@@ -112,6 +112,14 @@ public:
     
     // Enable/disable debug output
     void SetDebugOutput(bool enabled);
+    
+    // Create a modified copy of a texture with slightly different pixels (for hash collision fix)
+    // Returns the new texture and its hash, or nullptr/0 if failed
+    // The modification is based on materialName to ensure unique hashes for different materials
+    IDirect3DTexture9* CreateModifiedTexture(IDirect3DTexture9* pOriginal, const std::string& materialName, uint64_t* outHash);
+    
+    // Get the D3D9 device (for texture creation)
+    IDirect3DDevice9Ex* GetDevice() const { return m_pDevice; }
 
 private:
     // Pending categorization entry
