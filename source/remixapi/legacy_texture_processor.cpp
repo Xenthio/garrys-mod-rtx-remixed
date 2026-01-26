@@ -3447,18 +3447,17 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
         std::lock_guard<std::mutex> lock(m_mutex);
         if (m_processedMaterialInfo.find(textureHash) != m_processedMaterialInfo.end()) {
             // Hash collision detection: check if this is a different material with the same hash
-            if (GlobalConvars::rtx_hash_collision_detection && 
-                GlobalConvars::rtx_hash_collision_detection->GetBool()) {
+            ConVar* collisionCvar = GlobalConvars::rtx_hash_collision_detection;
+            if (collisionCvar && collisionCvar->GetBool()) {
                 auto it = m_hashToMaterialName.find(textureHash);
                 if (it != m_hashToMaterialName.end() && !props.materialName.empty() && 
                     it->second != props.materialName) {
                     // Different material name, same hash - this is a collision!
                     Warning("[LegacyTextureProcessor] HASH COLLISION DETECTED:\n");
-                    Warning("  Material 1: %s\n", it->second.c_str());
-                    Warning("  Material 2: %s (skipped)\n", props.materialName.c_str());
+                    Warning("  First material:   %s\n", it->second.c_str());
+                    Warning("  Current material: %s (skipped)\n", props.materialName.c_str());
                     Warning("  Hash: 0x%llX\n", textureHash);
-                    Warning("  $basetexture 1: %s\n", props.baseTexturePath.c_str());
-                    Warning("  Tip: These textures likely have identical colors and dimensions.\n");
+                    Warning("  Tip: These textures likely have identical content/dimensions.\n");
                     Warning("       Use rtx_hash_collision_detection 0 to disable this warning.\n");
                 }
             }
