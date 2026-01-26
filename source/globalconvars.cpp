@@ -15,6 +15,7 @@ ConVar* GlobalConvars::c_frustumcull;
 ConVar* GlobalConvars::r_worldnodenocull;
 ConVar* GlobalConvars::r_forcehwlight;
 ConVar* GlobalConvars::rtx_force_static_lighting;
+ConVar* GlobalConvars::rtx_hash_collision_detection;
 void GlobalConvars::InitialiseConVars() {
 	m_pLuaConVars = loader_lua_shared.GetInterface<GarrysMod::Lua::ILuaConVars>(GMOD_LUACONVARS_INTERFACE);
 	if (!m_pLuaConVars) {
@@ -49,4 +50,9 @@ void GlobalConvars::InitialiseConVars() {
 	if (!rtx_force_static_lighting) { rtx_force_static_lighting = cvar->FindVar("rtx_force_static_lighting"); }
 	if (!rtx_force_static_lighting) { Error("[RTX Fixes 2] Failed to create rtx_force_static_lighting convar\n"); }
 	else { Msg("[RTX Fixes 2] rtx_force_static_lighting convar created\n"); }
+
+	rtx_hash_collision_detection = m_pLuaConVars->CreateConVar("rtx_hash_collision_detection", "1", "Enable detection and logging of texture hash collisions (solid-color textures with same dimensions)", FCVAR_ARCHIVE);
+	if (!rtx_hash_collision_detection) { rtx_hash_collision_detection = cvar->FindVar("rtx_hash_collision_detection"); }
+	if (!rtx_hash_collision_detection) { Error("[RTX Fixes 2] Failed to create rtx_hash_collision_detection convar\n"); }
+	else { Msg("[RTX Fixes 2] rtx_hash_collision_detection convar created\n"); }
 }

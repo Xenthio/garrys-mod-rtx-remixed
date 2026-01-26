@@ -13,6 +13,7 @@
 #include <d3d9.h>
 #include <Windows.h>
 #include "../d3d9_texture_tracker.h"
+#include "../globalconvars.h"
 #include "legacy_texture_processor.h"
 
 #include <algorithm>
@@ -3445,7 +3446,28 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         if (m_processedMaterialInfo.find(textureHash) != m_processedMaterialInfo.end()) {
+            // Hash collision detection: check if this is a different material with the same hash
+            if (GlobalConvars::rtx_hash_collision_detection && 
+                GlobalConvars::rtx_hash_collision_detection->GetBool()) {
+                auto it = m_hashToMaterialName.find(textureHash);
+                if (it != m_hashToMaterialName.end() && !props.materialName.empty() && 
+                    it->second != props.materialName) {
+                    // Different material name, same hash - this is a collision!
+                    Warning("[LegacyTextureProcessor] HASH COLLISION DETECTED:\n");
+                    Warning("  Material 1: %s\n", it->second.c_str());
+                    Warning("  Material 2: %s (skipped)\n", props.materialName.c_str());
+                    Warning("  Hash: 0x%llX\n", textureHash);
+                    Warning("  $basetexture 1: %s\n", props.baseTexturePath.c_str());
+                    Warning("  Tip: These textures likely have identical colors and dimensions.\n");
+                    Warning("       Use rtx_hash_collision_detection 0 to disable this warning.\n");
+                }
+            }
             return true; // Already done
+        }
+        
+        // Track which material name first processed this hash
+        if (!props.materialName.empty()) {
+            m_hashToMaterialName[textureHash] = props.materialName;
         }
     }
     
@@ -3723,6 +3745,7 @@ void TextureProcessor::ClearCache() {
     m_processedMaterials.clear();
     m_uploadedTextures.clear();
     m_processedMaterialInfo.clear();
+    m_hashToMaterialName.clear();
     m_needsUSDAUpdate = false;
     m_stats = {};
     
