@@ -118,6 +118,10 @@ public:
     // The modification is based on materialName to ensure unique hashes for different materials
     IDirect3DTexture9* CreateModifiedTexture(IDirect3DTexture9* pOriginal, const std::string& materialName, uint64_t* outHash);
     
+    // Check for hash collision and fix if possible (returns the fixed hash, or original if no fix needed/possible)
+    // This is called automatically when new textures are detected, independent of LegacyTextureProcessor
+    uint64_t CheckAndFixHashCollision(IDirect3DTexture9* pTexture, const std::string& materialName, uint64_t originalHash);
+    
     // Get the D3D9 device (for texture creation)
     IDirect3DDevice9Ex* GetDevice() const { return m_pDevice; }
 
@@ -172,6 +176,12 @@ private:
     
     // Hash to category flags mapping
     std::unordered_map<uint64_t, uint32_t> m_hashToCategoryFlags;
+    
+    // Hash to material name mapping (for collision detection)
+    std::unordered_map<uint64_t, std::string> m_hashToMaterialName;
+    
+    // Modified textures created for collision fixes (keep references to prevent cleanup)
+    std::vector<IDirect3DTexture9*> m_modifiedTextures;
     
     // Pending categorizations (textures that returned hash=0)
     std::vector<PendingCategory> m_pendingCategories;

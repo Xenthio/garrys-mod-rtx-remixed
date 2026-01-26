@@ -3446,25 +3446,13 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         if (m_processedMaterialInfo.find(textureHash) != m_processedMaterialInfo.end()) {
-            // Hash collision detection: check if this is a different material with the same hash
-            ConVar* collisionCvar = GlobalConvars::rtx_hash_collision_detection;
-            if (collisionCvar && collisionCvar->GetBool()) {
-                auto it = m_hashToMaterialName.find(textureHash);
-                if (it != m_hashToMaterialName.end() && !props.materialName.empty() && 
-                    it->second != props.materialName) {
-                    // Different material name, same hash - this is a collision!
-                    Warning("[LegacyTextureProcessor] HASH COLLISION DETECTED:\n");
-                    Warning("  First material:   %s\n", it->second.c_str());
-                    Warning("  Current material: %s (skipped)\n", props.materialName.c_str());
-                    Warning("  Hash: 0x%llX\n", textureHash);
-                    Warning("  Tip: These textures likely have identical content/dimensions.\n");
-                    Warning("       Use rtx_hash_collision_detection 0 to disable this warning.\n");
-                }
-            }
+            // Note: Hash collision detection is now handled in D3D9TextureTracker
+            // when textures are first discovered. This allows collision detection
+            // to work independently of LegacyTextureProcessor.
             return true; // Already done
         }
         
-        // Track which material name first processed this hash
+        // Track which material name first processed this hash (for reference)
         if (!props.materialName.empty()) {
             m_hashToMaterialName[textureHash] = props.materialName;
         }
@@ -3704,26 +3692,9 @@ int TextureProcessor::ProcessTrackedMaterialsBatch(int maxBatch) {
             continue;
         }
         
-        // Check for hash collision and attempt to fix it
-        ConVar* fixCvar = GlobalConvars::rtx_fix_solid_color_collisions;
-        if (fixCvar && fixCvar->GetBool() && originalTexture) {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            if (m_processedMaterialInfo.find(textureHash) != m_processedMaterialInfo.end()) {
-                // Collision detected - try to create a modified texture
-                uint64_t newHash = 0;
-                IDirect3DTexture9* modifiedTex = D3D9TextureTracker::Instance().CreateModifiedTexture(
-                    originalTexture, matName, &newHash);
-                
-                if (modifiedTex && newHash != 0 && newHash != textureHash) {
-                    // Success! Use the new hash
-                    Msg("[LegacyTextureProcessor] Fixed hash collision for '%s': 0x%llX -> 0x%llX\n",
-                        matName.c_str(), textureHash, newHash);
-                    textureHash = newHash;
-                    // Note: We don't need to track the modified texture - it's already registered with DXVK
-                    // when we called dxvk_GetTextureHash on it
-                }
-            }
-        }
+        // Note: Hash collision detection and fixing is now handled in D3D9TextureTracker
+        // when textures are first discovered, independently of LegacyTextureProcessor.
+        // This allows collision fixing to work even when LegacyTextureProcessor is disabled.
         
         props.baseTextureHash = textureHash;
         

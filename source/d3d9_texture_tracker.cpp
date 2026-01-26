@@ -12,6 +12,7 @@
 #include <cctype>
 #include <remix/remix.h>
 #include "remixapi/legacy_texture_processor.h"
+#include "globalconvars.h"
 
 // Global material system pointer (from module.cpp)
 extern IMaterialSystem* materials;
@@ -344,6 +345,11 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                             if (result) {
                                 hash = result.value();
                             }
+                        }
+                        
+                        // Check for hash collision and fix if possible (runs independently of LegacyTextureProcessor)
+                        if (hash != 0 && Stage == 0) {
+                            hash = tracker.CheckAndFixHashCollision(p2DTexture, tracker.m_currentMaterialName, hash);
                         }
                         
                         // AddRef to keep the texture alive while we reference it
@@ -1461,6 +1467,9 @@ void D3D9TextureTracker::SetDebugOutput(bool enabled) {
 constexpr uint64_t FNV_OFFSET_BASIS_64 = 14695981039346656037ULL;
 constexpr uint64_t FNV_PRIME_64 = 1099511628211ULL;
 
+// Maximum texture size for solid-color collision fix (increased to handle larger textures)
+constexpr UINT MAX_COLLISION_FIX_SIZE = 512;
+
 // Create a modified copy of a texture with slightly different pixels
 IDirect3DTexture9* D3D9TextureTracker::CreateModifiedTexture(IDirect3DTexture9* pOriginal, 
                                                                const std::string& materialName, 
@@ -1486,8 +1495,12 @@ IDirect3DTexture9* D3D9TextureTracker::CreateModifiedTexture(IDirect3DTexture9* 
         return nullptr;
     }
     
-    // Only handle small textures (solid colors are typically small, e.g., 1x1 to 64x64)
-    if (desc.Width > 64 || desc.Height > 64) {
+    // Limit maximum texture size for performance (solid colors can be any size)
+    if (desc.Width > MAX_COLLISION_FIX_SIZE || desc.Height > MAX_COLLISION_FIX_SIZE) {
+        if (m_enableDebugOutput) {
+            Msg("[D3D9TextureTracker] Texture too large (%dx%d) for collision fix: '%s'\n", 
+                desc.Width, desc.Height, materialName.c_str());
+        }
         return nullptr;
     }
     
@@ -1500,19 +1513,45 @@ IDirect3DTexture9* D3D9TextureTracker::CreateModifiedTexture(IDirect3DTexture9* 
         return nullptr;
     }
     
-    // Check if it's a solid color texture (all pixels identical)
+    // Check if it's a solid color texture using sampling for large textures
     bool isSolidColor = true;
     DWORD firstColor = 0;
     
-    for (UINT y = 0; y < desc.Height && isSolidColor; y++) {
+    // For large textures, sample instead of checking every pixel
+    UINT sampleStep = 1;
+    if (desc.Width > 64 || desc.Height > 64) {
+        // Sample every Nth pixel for performance
+        sampleStep = (desc.Width > desc.Height ? desc.Width : desc.Height) / 64;
+        if (sampleStep < 1) sampleStep = 1;
+    }
+    
+    for (UINT y = 0; y < desc.Height && isSolidColor; y += sampleStep) {
         BYTE* row = static_cast<BYTE*>(srcRect.pBits) + y * srcRect.Pitch;
-        for (UINT x = 0; x < desc.Width && isSolidColor; x++) {
+        for (UINT x = 0; x < desc.Width && isSolidColor; x += sampleStep) {
             DWORD pixel = *reinterpret_cast<DWORD*>(row + x * sizeof(DWORD));
             if (x == 0 && y == 0) {
                 firstColor = pixel;
             } else if (pixel != firstColor) {
                 isSolidColor = false;
             }
+        }
+    }
+    
+    // Also check edge pixels (corners) for large textures to catch non-solid textures
+    if (isSolidColor && sampleStep > 1) {
+        // Check corners
+        BYTE* row = static_cast<BYTE*>(srcRect.pBits);
+        DWORD topLeft = *reinterpret_cast<DWORD*>(row);
+        row = static_cast<BYTE*>(srcRect.pBits) + (desc.Width - 1) * sizeof(DWORD);
+        DWORD topRight = *reinterpret_cast<DWORD*>(row);
+        row = static_cast<BYTE*>(srcRect.pBits) + (desc.Height - 1) * srcRect.Pitch;
+        DWORD bottomLeft = *reinterpret_cast<DWORD*>(row);
+        row = static_cast<BYTE*>(srcRect.pBits) + (desc.Height - 1) * srcRect.Pitch + (desc.Width - 1) * sizeof(DWORD);
+        DWORD bottomRight = *reinterpret_cast<DWORD*>(row);
+        
+        if (topLeft != firstColor || topRight != firstColor || 
+            bottomLeft != firstColor || bottomRight != firstColor) {
+            isSolidColor = false;
         }
     }
     
@@ -1651,6 +1690,69 @@ bool D3D9TextureTracker::IsWorldTexture(const std::string& materialName) const {
         // Silently fail - better than crashing during rendering
         return false;
     }
+}
+
+// Check for hash collision and fix if possible
+// This runs independently of LegacyTextureProcessor
+uint64_t D3D9TextureTracker::CheckAndFixHashCollision(IDirect3DTexture9* pTexture, 
+                                                        const std::string& materialName, 
+                                                        uint64_t originalHash) {
+    if (!pTexture || materialName.empty() || originalHash == 0) {
+        return originalHash;
+    }
+    
+    // Check if collision fix is enabled
+    ConVar* fixCvar = GlobalConvars::rtx_fix_solid_color_collisions;
+    if (!fixCvar || !fixCvar->GetBool()) {
+        return originalHash;
+    }
+    
+    // Check if this hash has already been seen
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    auto it = m_hashToMaterialName.find(originalHash);
+    if (it == m_hashToMaterialName.end()) {
+        // First time seeing this hash - record it
+        m_hashToMaterialName[originalHash] = materialName;
+        return originalHash;
+    }
+    
+    // Hash already exists - check if it's a different material
+    if (it->second == materialName) {
+        // Same material, no collision
+        return originalHash;
+    }
+    
+    // Collision detected! Try to create a modified texture
+    ConVar* detectCvar = GlobalConvars::rtx_hash_collision_detection;
+    if (detectCvar && detectCvar->GetBool()) {
+        Msg("[D3D9TextureTracker] HASH COLLISION DETECTED:\n");
+        Msg("  First material:   %s\n", it->second.c_str());
+        Msg("  Current material: %s\n", materialName.c_str());
+        Msg("  Hash: 0x%llX\n", originalHash);
+    }
+    
+    // Try to create a modified texture
+    uint64_t newHash = 0;
+    IDirect3DTexture9* modifiedTex = CreateModifiedTexture(pTexture, materialName, &newHash);
+    
+    if (modifiedTex && newHash != 0 && newHash != originalHash) {
+        // Success! Track the modified texture to prevent cleanup
+        m_modifiedTextures.push_back(modifiedTex);
+        m_hashToMaterialName[newHash] = materialName;
+        
+        Msg("[D3D9TextureTracker] Fixed hash collision for '%s': 0x%llX -> 0x%llX\n",
+            materialName.c_str(), originalHash, newHash);
+        
+        return newHash;
+    } else {
+        if (detectCvar && detectCvar->GetBool()) {
+            Msg("  Could not fix collision (texture not solid color or format unsupported)\n");
+            Msg("  Tip: Use rtx_hash_collision_detection 0 to disable this warning.\n");
+        }
+    }
+    
+    return originalHash;
 }
 
 #endif // _WIN64
