@@ -112,8 +112,21 @@ public:
     
     // Enable/disable debug output
     void SetDebugOutput(bool enabled);
+    
+    // Enable/disable solid color hash collision fix
+    void SetSolidColorHashFix(bool enabled);
+    
+    // Check if a texture is a solid color and modify it to prevent hash collisions
+    // Returns true if the texture was modified
+    bool FixSolidColorHashCollision(IDirect3DTexture9* pTexture, const std::string& materialName);
 
 private:
+    // Check if texture is a solid color (all pixels are the same)
+    bool IsSolidColorTexture(IDirect3DTexture9* pTexture, D3DCOLOR* outColor = nullptr, D3DSURFACE_DESC* outDesc = nullptr);
+    
+    // Modify a single pixel in a solid color texture to make it unique
+    bool ModifySolidColorTexture(IDirect3DTexture9* pTexture, const std::string& materialName, D3DCOLOR baseColor, const D3DSURFACE_DESC& desc);
+
     // Pending categorization entry
     struct PendingCategory {
         IDirect3DTexture9* texture;
@@ -179,6 +192,12 @@ private:
     
     // Debug output flag
     bool m_enableDebugOutput = false;
+    
+    // Solid color hash collision fix flag
+    bool m_enableSolidColorHashFix = true;
+    
+    // Track textures that have been modified for hash collision fix
+    std::unordered_set<IDirect3DTexture9*> m_modifiedSolidColorTextures;
     
     // Track whether we're initialized
     bool m_bInitialized = false;
