@@ -1457,6 +1457,10 @@ void D3D9TextureTracker::SetDebugOutput(bool enabled) {
     Msg("[D3D9TextureTracker] Debug output %s\n", enabled ? "enabled" : "disabled");
 }
 
+// FNV-1a hash constants for generating unique texture modifications
+constexpr uint64_t FNV_OFFSET_BASIS_64 = 14695981039346656037ULL;
+constexpr uint64_t FNV_PRIME_64 = 1099511628211ULL;
+
 // Create a modified copy of a texture with slightly different pixels
 IDirect3DTexture9* D3D9TextureTracker::CreateModifiedTexture(IDirect3DTexture9* pOriginal, 
                                                                const std::string& materialName, 
@@ -1468,17 +1472,21 @@ IDirect3DTexture9* D3D9TextureTracker::CreateModifiedTexture(IDirect3DTexture9* 
     // Get original texture description
     D3DSURFACE_DESC desc;
     if (FAILED(pOriginal->GetLevelDesc(0, &desc))) {
-        Warning("[D3D9TextureTracker] Failed to get texture description\n");
+        if (m_enableDebugOutput) {
+            Warning("[D3D9TextureTracker] Failed to get texture description for '%s'\n", materialName.c_str());
+        }
         return nullptr;
     }
     
-    // Only handle manageable formats
+    // Only handle common 32-bit ARGB formats that we can easily modify
     if (desc.Format != D3DFMT_A8R8G8B8 && desc.Format != D3DFMT_X8R8G8B8) {
-        // Skip unsupported formats
+        if (m_enableDebugOutput) {
+            Msg("[D3D9TextureTracker] Skipping unsupported format %d for '%s'\n", desc.Format, materialName.c_str());
+        }
         return nullptr;
     }
     
-    // Only handle small textures (solid colors are typically small)
+    // Only handle small textures (solid colors are typically small, e.g., 1x1 to 64x64)
     if (desc.Width > 64 || desc.Height > 64) {
         return nullptr;
     }
@@ -1486,11 +1494,13 @@ IDirect3DTexture9* D3D9TextureTracker::CreateModifiedTexture(IDirect3DTexture9* 
     // Lock the original texture to read pixel data
     D3DLOCKED_RECT srcRect;
     if (FAILED(pOriginal->LockRect(0, &srcRect, nullptr, D3DLOCK_READONLY))) {
-        Warning("[D3D9TextureTracker] Failed to lock original texture for reading\n");
+        if (m_enableDebugOutput) {
+            Warning("[D3D9TextureTracker] Failed to lock original texture for reading\n");
+        }
         return nullptr;
     }
     
-    // Check if it's a solid color texture
+    // Check if it's a solid color texture (all pixels identical)
     bool isSolidColor = true;
     DWORD firstColor = 0;
     
@@ -1542,11 +1552,11 @@ IDirect3DTexture9* D3D9TextureTracker::CreateModifiedTexture(IDirect3DTexture9* 
         return nullptr;
     }
     
-    // Generate a unique modifier based on material name hash (FNV-1a)
-    uint64_t nameHash = 14695981039346656037ULL;
+    // Generate a unique modifier based on material name using FNV-1a hash
+    uint64_t nameHash = FNV_OFFSET_BASIS_64;
     for (char c : materialName) {
         nameHash ^= static_cast<uint64_t>(static_cast<unsigned char>(c));
-        nameHash *= 1099511628211ULL;
+        nameHash *= FNV_PRIME_64;
     }
     
     // Copy pixels with modification on bottom-right pixel
@@ -1558,6 +1568,7 @@ IDirect3DTexture9* D3D9TextureTracker::CreateModifiedTexture(IDirect3DTexture9* 
             DWORD pixel = *reinterpret_cast<DWORD*>(srcRow + x * sizeof(DWORD));
             
             // Modify the bottom-right pixel based on material name hash
+            // This ensures each material gets a unique texture hash
             if (x == desc.Width - 1 && y == desc.Height - 1) {
                 // Extract ARGB components
                 BYTE a = (pixel >> 24) & 0xFF;
@@ -1565,11 +1576,14 @@ IDirect3DTexture9* D3D9TextureTracker::CreateModifiedTexture(IDirect3DTexture9* 
                 BYTE g = (pixel >> 8) & 0xFF;
                 BYTE b = pixel & 0xFF;
                 
-                // Apply small modifications (1-4 per channel)
-                BYTE rMod = static_cast<BYTE>((nameHash & 0x3) + 1);
-                BYTE gMod = static_cast<BYTE>(((nameHash >> 2) & 0x3) + 1);
-                BYTE bMod = static_cast<BYTE>(((nameHash >> 4) & 0x3) + 1);
+                // Apply small modifications (1-4 per channel) based on different bits of the hash
+                // 0x3 masks the lowest 2 bits (0-3), +1 gives range 1-4
+                // Shifting by 2 and 4 bits uses different parts of the hash for each channel
+                BYTE rMod = static_cast<BYTE>((nameHash & 0x3) + 1);         // Bits 0-1
+                BYTE gMod = static_cast<BYTE>(((nameHash >> 2) & 0x3) + 1);  // Bits 2-3
+                BYTE bMod = static_cast<BYTE>(((nameHash >> 4) & 0x3) + 1);  // Bits 4-5
                 
+                // Add or subtract the modification, avoiding overflow
                 r = (r < 255 - rMod) ? r + rMod : r - rMod;
                 g = (g < 255 - gMod) ? g + gMod : g - gMod;
                 b = (b < 255 - bMod) ? b + bMod : b - bMod;
