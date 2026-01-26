@@ -1471,189 +1471,25 @@ constexpr uint64_t FNV_PRIME_64 = 1099511628211ULL;
 constexpr UINT MAX_COLLISION_FIX_SIZE = 512;
 
 // Create a modified copy of a texture with slightly different pixels
+// NOTE: This function is currently DISABLED because DXVK/RTX Remix textures
+// cannot be safely locked with LockRect after creation - they're backed by
+// Vulkan resources that don't support CPU access. Attempting to lock them
+// causes crashes ("An invalid parameter was passed to a function").
+// 
+// For now, we only provide collision DETECTION, not automatic fixing.
+// Future work could explore alternative approaches like:
+// - Creating textures earlier before DXVK processes them
+// - Using a different texture creation path
+// - Working with Remix API directly
 IDirect3DTexture9* D3D9TextureTracker::CreateModifiedTexture(IDirect3DTexture9* pOriginal, 
                                                                const std::string& materialName, 
                                                                uint64_t* outHash) {
-    if (!pOriginal || !m_pDevice || materialName.empty()) {
-        return nullptr;
-    }
-    
-    // Get original texture description
-    D3DSURFACE_DESC desc;
-    if (FAILED(pOriginal->GetLevelDesc(0, &desc))) {
-        if (m_enableDebugOutput) {
-            Warning("[D3D9TextureTracker] Failed to get texture description for '%s'\n", materialName.c_str());
-        }
-        return nullptr;
-    }
-    
-    // Only handle common 32-bit ARGB formats that we can easily modify
-    if (desc.Format != D3DFMT_A8R8G8B8 && desc.Format != D3DFMT_X8R8G8B8) {
-        if (m_enableDebugOutput) {
-            Msg("[D3D9TextureTracker] Skipping unsupported format %d for '%s'\n", desc.Format, materialName.c_str());
-        }
-        return nullptr;
-    }
-    
-    // Limit maximum texture size for performance (solid colors can be any size)
-    if (desc.Width > MAX_COLLISION_FIX_SIZE || desc.Height > MAX_COLLISION_FIX_SIZE) {
-        if (m_enableDebugOutput) {
-            Msg("[D3D9TextureTracker] Texture too large (%dx%d) for collision fix: '%s'\n", 
-                desc.Width, desc.Height, materialName.c_str());
-        }
-        return nullptr;
-    }
-    
-    // Lock the original texture to read pixel data
-    D3DLOCKED_RECT srcRect;
-    if (FAILED(pOriginal->LockRect(0, &srcRect, nullptr, D3DLOCK_READONLY))) {
-        if (m_enableDebugOutput) {
-            Warning("[D3D9TextureTracker] Failed to lock original texture for reading\n");
-        }
-        return nullptr;
-    }
-    
-    // Check if it's a solid color texture using sampling for large textures
-    bool isSolidColor = true;
-    DWORD firstColor = 0;
-    
-    // For large textures, sample instead of checking every pixel
-    UINT sampleStep = 1;
-    if (desc.Width > 64 || desc.Height > 64) {
-        // Sample every Nth pixel for performance
-        sampleStep = (desc.Width > desc.Height ? desc.Width : desc.Height) / 64;
-        if (sampleStep < 1) sampleStep = 1;
-    }
-    
-    for (UINT y = 0; y < desc.Height && isSolidColor; y += sampleStep) {
-        BYTE* row = static_cast<BYTE*>(srcRect.pBits) + y * srcRect.Pitch;
-        for (UINT x = 0; x < desc.Width && isSolidColor; x += sampleStep) {
-            DWORD pixel = *reinterpret_cast<DWORD*>(row + x * sizeof(DWORD));
-            if (x == 0 && y == 0) {
-                firstColor = pixel;
-            } else if (pixel != firstColor) {
-                isSolidColor = false;
-            }
-        }
-    }
-    
-    // Also check edge pixels (corners) for large textures to catch non-solid textures
-    if (isSolidColor && sampleStep > 1) {
-        // Check corners
-        BYTE* row = static_cast<BYTE*>(srcRect.pBits);
-        DWORD topLeft = *reinterpret_cast<DWORD*>(row);
-        row = static_cast<BYTE*>(srcRect.pBits) + (desc.Width - 1) * sizeof(DWORD);
-        DWORD topRight = *reinterpret_cast<DWORD*>(row);
-        row = static_cast<BYTE*>(srcRect.pBits) + (desc.Height - 1) * srcRect.Pitch;
-        DWORD bottomLeft = *reinterpret_cast<DWORD*>(row);
-        row = static_cast<BYTE*>(srcRect.pBits) + (desc.Height - 1) * srcRect.Pitch + (desc.Width - 1) * sizeof(DWORD);
-        DWORD bottomRight = *reinterpret_cast<DWORD*>(row);
-        
-        if (topLeft != firstColor || topRight != firstColor || 
-            bottomLeft != firstColor || bottomRight != firstColor) {
-            isSolidColor = false;
-        }
-    }
-    
-    pOriginal->UnlockRect(0);
-    
-    if (!isSolidColor) {
-        // Not a solid color, no need to modify
-        return nullptr;
-    }
-    
-    // Create a new texture with the same dimensions but managed pool
-    // (D3DPOOL_MANAGED allows CPU access for modification)
-    IDirect3DTexture9* pNewTexture = nullptr;
-    HRESULT hr = m_pDevice->CreateTexture(
-        desc.Width, desc.Height, 1,
-        0,  // No usage flags
-        desc.Format,
-        D3DPOOL_MANAGED,  // Managed pool for CPU access
-        &pNewTexture,
-        nullptr);
-    
-    if (FAILED(hr) || !pNewTexture) {
-        Warning("[D3D9TextureTracker] Failed to create new texture: 0x%X\n", hr);
-        return nullptr;
-    }
-    
-    // Lock both textures
-    D3DLOCKED_RECT dstRect;
-    if (FAILED(pOriginal->LockRect(0, &srcRect, nullptr, D3DLOCK_READONLY))) {
-        pNewTexture->Release();
-        return nullptr;
-    }
-    
-    if (FAILED(pNewTexture->LockRect(0, &dstRect, nullptr, 0))) {
-        pOriginal->UnlockRect(0);
-        pNewTexture->Release();
-        return nullptr;
-    }
-    
-    // Generate a unique modifier based on material name using FNV-1a hash
-    uint64_t nameHash = FNV_OFFSET_BASIS_64;
-    for (char c : materialName) {
-        nameHash ^= static_cast<uint64_t>(static_cast<unsigned char>(c));
-        nameHash *= FNV_PRIME_64;
-    }
-    
-    // Copy pixels with modification on bottom-right pixel
-    for (UINT y = 0; y < desc.Height; y++) {
-        BYTE* srcRow = static_cast<BYTE*>(srcRect.pBits) + y * srcRect.Pitch;
-        BYTE* dstRow = static_cast<BYTE*>(dstRect.pBits) + y * dstRect.Pitch;
-        
-        for (UINT x = 0; x < desc.Width; x++) {
-            DWORD pixel = *reinterpret_cast<DWORD*>(srcRow + x * sizeof(DWORD));
-            
-            // Modify the bottom-right pixel based on material name hash
-            // This ensures each material gets a unique texture hash
-            if (x == desc.Width - 1 && y == desc.Height - 1) {
-                // Extract ARGB components
-                BYTE a = (pixel >> 24) & 0xFF;
-                BYTE r = (pixel >> 16) & 0xFF;
-                BYTE g = (pixel >> 8) & 0xFF;
-                BYTE b = pixel & 0xFF;
-                
-                // Apply small modifications (1-4 per channel) based on different bits of the hash
-                // 0x3 masks the lowest 2 bits (0-3), +1 gives range 1-4
-                // Shifting by 2 and 4 bits uses different parts of the hash for each channel
-                BYTE rMod = static_cast<BYTE>((nameHash & 0x3) + 1);         // Bits 0-1
-                BYTE gMod = static_cast<BYTE>(((nameHash >> 2) & 0x3) + 1);  // Bits 2-3
-                BYTE bMod = static_cast<BYTE>(((nameHash >> 4) & 0x3) + 1);  // Bits 4-5
-                
-                // Add or subtract the modification, avoiding overflow
-                r = (r < 255 - rMod) ? r + rMod : r - rMod;
-                g = (g < 255 - gMod) ? g + gMod : g - gMod;
-                b = (b < 255 - bMod) ? b + bMod : b - bMod;
-                
-                pixel = (a << 24) | (r << 16) | (g << 8) | b;
-            }
-            
-            *reinterpret_cast<DWORD*>(dstRow + x * sizeof(DWORD)) = pixel;
-        }
-    }
-    
-    pOriginal->UnlockRect(0);
-    pNewTexture->UnlockRect(0);
-    
-    // Get the hash for the new texture
-    if (outHash && g_remix) {
-        auto result = g_remix->dxvk_GetTextureHash(pNewTexture);
-        if (result) {
-            *outHash = result.value();
-        } else {
-            *outHash = 0;
-        }
-    }
-    
-    if (m_enableDebugOutput) {
-        uint64_t hash = outHash ? *outHash : 0;
-        Msg("[D3D9TextureTracker] Created modified texture for '%s' (hash: 0x%llX)\n", 
-            materialName.c_str(), hash);
-    }
-    
-    return pNewTexture;
+    // DISABLED: LockRect on DXVK-managed textures causes crashes
+    // Return nullptr to indicate we couldn't create a modified texture
+    (void)pOriginal;
+    (void)materialName;
+    if (outHash) *outHash = 0;
+    return nullptr;
 }
 
 // Check if material is a world texture
@@ -1723,34 +1559,20 @@ uint64_t D3D9TextureTracker::CheckAndFixHashCollision(IDirect3DTexture9* pTextur
         return originalHash;
     }
     
-    // Collision detected! Try to create a modified texture
+    // Collision detected! Log it if detection is enabled
     ConVar* detectCvar = GlobalConvars::rtx_hash_collision_detection;
     if (detectCvar && detectCvar->GetBool()) {
         Msg("[D3D9TextureTracker] HASH COLLISION DETECTED:\n");
         Msg("  First material:   %s\n", it->second.c_str());
         Msg("  Current material: %s\n", materialName.c_str());
         Msg("  Hash: 0x%llX\n", originalHash);
+        Msg("  Note: Automatic fix is currently disabled (DXVK textures cannot be safely modified).\n");
+        Msg("  Tip: Use rtx_hash_collision_detection 0 to disable this warning.\n");
     }
     
-    // Try to create a modified texture
-    uint64_t newHash = 0;
-    IDirect3DTexture9* modifiedTex = CreateModifiedTexture(pTexture, materialName, &newHash);
-    
-    if (modifiedTex && newHash != 0 && newHash != originalHash) {
-        // Success! Track the modified texture to prevent cleanup
-        m_modifiedTextures.push_back(modifiedTex);
-        m_hashToMaterialName[newHash] = materialName;
-        
-        Msg("[D3D9TextureTracker] Fixed hash collision for '%s': 0x%llX -> 0x%llX\n",
-            materialName.c_str(), originalHash, newHash);
-        
-        return newHash;
-    } else {
-        if (detectCvar && detectCvar->GetBool()) {
-            Msg("  Could not fix collision (texture not solid color or format unsupported)\n");
-            Msg("  Tip: Use rtx_hash_collision_detection 0 to disable this warning.\n");
-        }
-    }
+    // NOTE: Automatic fixing via CreateModifiedTexture is disabled because
+    // DXVK/RTX Remix textures cannot be safely locked with LockRect after creation.
+    // For now, we only provide collision detection.
     
     return originalHash;
 }
