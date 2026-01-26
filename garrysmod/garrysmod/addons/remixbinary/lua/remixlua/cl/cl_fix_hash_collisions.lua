@@ -6,13 +6,15 @@
     texture. This script fixes that by giving each solid-color material a unique texture.
     
     How it works:
-    1. C++ detects solid-color textures as they load and tracks them
-    2. Lua periodically queries C++ for newly detected solid-color materials
-    3. For each solid-color material, Lua creates a unique procedural texture
-    4. The $basetexture is swapped to the unique texture via mat:SetTexture()
+    1. C++ detects solid-color textures as they load and queues them
+    2. Lua periodically calls RemixMaterial.ProcessPendingSolidColors()
+    3. C++ fires "RTX_SolidColorDetected" hook for each pending material
+    4. Lua's hook handler creates a unique texture and swaps $basetexture
     5. RTX Remix now computes unique hashes for each material
     
-    This happens automatically as textures load - no hardcoded lists needed!
+    Hook: RTX_SolidColorDetected(materialName)
+    - Called when C++ detects a solid-color texture
+    - Return true from your hook to prevent the default fix
 ]]
 
 if not CLIENT then return end
@@ -27,8 +29,8 @@ local fixCount = 0
 -- Generated unique textures
 local uniqueTextures = {}
 
--- Timer identifiers
-local TIMER_NAME = "SolidColorFixerContinuous"
+-- Timer for processing pending materials
+local TIMER_NAME = "RTX_SolidColorProcessor"
 
 -- Debug print function
 local function DebugPrint(...)
@@ -121,56 +123,41 @@ local function FixSolidColorMaterial(matName)
     return false
 end
 
--- Query C++ for newly detected solid-color materials and fix them
-local function FixNewSolidColorMaterials(showOutput)
-    if not enable_addon:GetBool() then return 0 end
+-- Hook handler for when C++ detects a solid-color texture
+hook.Add("RTX_SolidColorDetected", "RTX_SolidColorFixer", function(materialName)
+    if not enable_addon:GetBool() then return end
     
-    -- Check if RemixMaterial API is available
-    if not RemixMaterial or not RemixMaterial.GetSolidColorMaterials then
-        if showOutput then
-            MsgC(Color(255, 200, 100), "[RTX SolidFix] RemixMaterial.GetSolidColorMaterials not available yet.\n")
-        end
-        return 0
+    DebugPrint("Solid color detected: ", materialName)
+    
+    -- Fix the material
+    FixSolidColorMaterial(materialName)
+end)
+
+-- Process pending solid-color materials (calls C++ which fires hooks)
+local function ProcessPending()
+    if not enable_addon:GetBool() then return end
+    if not RemixMaterial or not RemixMaterial.ProcessPendingSolidColors then return end
+    
+    -- This calls hook.Call("RTX_SolidColorDetected", nil, materialName) for each pending material
+    local count = RemixMaterial.ProcessPendingSolidColors()
+    
+    if count > 0 and debug_mode:GetBool() then
+        DebugPrint("Processed ", count, " pending solid-color materials")
     end
-    
-    local previousFixed = fixCount
-    
-    -- Query C++ for solid-color materials that need fixing
-    local materials = RemixMaterial.GetSolidColorMaterials()
-    
-    if not materials or #materials == 0 then
-        return 0
-    end
-    
-    -- Fix each solid-color material
-    local newFixed = 0
-    for _, matName in ipairs(materials) do
-        if FixSolidColorMaterial(matName) then
-            newFixed = newFixed + 1
-        end
-    end
-    
-    if showOutput and newFixed > 0 then
-        MsgC(Color(100, 255, 100), "[RTX SolidFix] Fixed ", newFixed, " solid-color textures\n")
-    end
-    
-    return newFixed
 end
 
--- Start continuous checking (runs frequently to catch newly loaded textures)
-local function StartContinuousChecking()
-    if timer.Exists(TIMER_NAME) then 
+-- Start the processing timer
+local function StartProcessing()
+    if timer.Exists(TIMER_NAME) then
         timer.Remove(TIMER_NAME)
     end
     
-    -- Run every 0.5 seconds to quickly fix newly loaded textures
-    timer.Create(TIMER_NAME, 0.5, 0, function()
-        FixNewSolidColorMaterials(false)
-    end)
+    -- Process every 0.1 seconds (10 times per second)
+    timer.Create(TIMER_NAME, 0.1, 0, ProcessPending)
 end
 
--- Stop continuous checking
-local function StopContinuousChecking()
+-- Stop the processing timer
+local function StopProcessing()
     if timer.Exists(TIMER_NAME) then
         timer.Remove(TIMER_NAME)
     end
@@ -179,40 +166,34 @@ end
 -- Handle cvar changes
 cvars.AddChangeCallback("rtx_fix_hash_collisions", function(_, _, new)
     if new == "1" then
-        FixNewSolidColorMaterials(true)
-        StartContinuousChecking()
+        StartProcessing()
     else
-        StopContinuousChecking()
+        StopProcessing()
     end
 end)
 
 -- Initial run with delay
 hook.Add("InitPostEntity", "FixSolidColorsOnMapLoad", function()
     if enable_addon:GetBool() then
-        -- Wait a bit for initial textures to load
+        -- Wait a bit for initial textures to load, then start processing
         timer.Simple(1, function()
-            FixNewSolidColorMaterials(true)
-            StartContinuousChecking()
+            StartProcessing()
         end)
     end
 end)
 
 -- Reset on map change
 hook.Add("ShutDown", "CleanupSolidColorFixer", function()
-    StopContinuousChecking()
+    StopProcessing()
     fixCount = 0
     uniqueTextures = {}
 end)
 
 -- Console commands
 concommand.Add("rtx_fix_hash_collisions_process", function()
-    local fixed = FixNewSolidColorMaterials(true)
-    if fixed > 0 then
-        notification.AddLegacy("Fixed " .. fixed .. " solid-color textures", NOTIFY_GENERIC, 3)
-    else
-        notification.AddLegacy("No new solid-color textures to fix", NOTIFY_GENERIC, 3)
-    end
-end, nil, "Manually trigger solid-color texture fixing")
+    ProcessPending()
+    notification.AddLegacy("Processed pending solid-color textures", NOTIFY_GENERIC, 3)
+end, nil, "Manually trigger solid-color texture processing")
 
 concommand.Add("rtx_fix_hash_collisions_stats", function()
     MsgC(Color(100, 200, 255), "[RTX SolidFix] Statistics:\n")
@@ -296,5 +277,5 @@ end, nil, "Manually fix a material (force it to have a unique texture)")
 
 -- Startup message
 MsgC(Color(100, 255, 100), "[RTX SolidFix] Solid Color Texture Fixer loaded.\n")
-MsgC(Color(200, 200, 200), "  Automatically detects and fixes solid-color textures as they load.\n")
+MsgC(Color(200, 200, 200), "  Hook: RTX_SolidColorDetected(materialName) - fired when solid colors are detected\n")
 MsgC(Color(200, 200, 200), "  Commands: rtx_fix_hash_collisions_stats, rtx_fix_hash_collisions_check <mat>\n")

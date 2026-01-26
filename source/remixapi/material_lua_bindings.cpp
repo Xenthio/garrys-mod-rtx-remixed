@@ -1315,6 +1315,36 @@ LUA_FUNCTION(RemixMaterial_IsMaterialFixed) {
     return 1;
 }
 
+// Lua function: RemixMaterial.ProcessPendingSolidColors()
+// Processes all pending solid-color materials and fires the "RTX_SolidColorDetected" hook for each
+// Returns the number of materials processed
+// This should be called from a Think hook or timer to process materials on the main thread
+LUA_FUNCTION(RemixMaterial_ProcessPendingSolidColors) {
+    auto materials = D3D9TextureTracker::Instance().GetSolidColorMaterials();
+    
+    int count = 0;
+    for (const auto& materialName : materials) {
+        // Fire hook: hook.Call("RTX_SolidColorDetected", nil, materialName)
+        LUA->PushSpecial(SPECIAL_GLOB);     // Push _G
+        LUA->GetField(-1, "hook");          // Push hook
+        LUA->GetField(-1, "Call");          // Push hook.Call
+        LUA->Remove(-2);                    // Remove hook table
+        LUA->Remove(-2);                    // Remove _G
+        
+        LUA->PushString("RTX_SolidColorDetected");  // Hook name
+        LUA->PushNil();                             // Gamemode table (nil)
+        LUA->PushString(materialName.c_str());      // Material name argument
+        
+        // Call with 3 args (hookName, gm, materialName), expect 0 returns
+        LUA->Call(3, 0);
+        
+        count++;
+    }
+    
+    LUA->PushNumber(count);
+    return 1;
+}
+
 // Initialize Material Manager Lua bindings
 void MaterialManager::InitializeLuaBindings() {
     if (!m_lua) return;
@@ -1429,6 +1459,9 @@ void MaterialManager::InitializeLuaBindings() {
     
     m_lua->PushCFunction(RemixMaterial_IsMaterialFixed);
     m_lua->SetField(-2, "IsMaterialFixed");
+    
+    m_lua->PushCFunction(RemixMaterial_ProcessPendingSolidColors);
+    m_lua->SetField(-2, "ProcessPendingSolidColors");
     
     // Set the table as the global "RemixMaterial"
     m_lua->SetField(-2, "RemixMaterial");
