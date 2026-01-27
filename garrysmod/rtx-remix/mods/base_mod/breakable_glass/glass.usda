@@ -1,0 +1,214 @@
+#usda 1.0
+(
+    customLayerData = {
+        string lightspeed_game_name = "Garry's Mod"
+        string lightspeed_layer_type = "replacement"
+        dictionary lightspeed_mod_dependencies = {
+        }
+        string lightspeed_mod_name = "testofsomething"
+        string lightspeed_mod_version = "1.0.0"
+    }
+    timeCodesPerSecond = 24
+    upAxis = "Z"
+)
+
+def "RootNode"
+{
+    def Scope "Looks"
+    {
+        over "mat_C0C4BC4C02DBDF70" (
+            references = @./materials/AperturePBR_Translucent.usda@</Looks/mat_AperturePBR_Translucent>
+        )
+        {
+            over "Shader"
+            {
+                float inputs:ior_constant = 1.517 (
+                    customData = {
+                        float default = 1.3
+                        dictionary range = {
+                            float max = 3
+                            float min = 1
+                        }
+                    }
+                    displayGroup = "Specular"
+                    displayName = "Index of Refraction"
+                    doc = """Index of Refraction of the material
+
+"""
+                    hidden = false
+                )
+                bool inputs:thin_walled = 0 (
+                    customData = {
+                        bool default = 0
+                    }
+                    displayGroup = "Specular"
+                    displayName = "Thin-walled"
+                    doc = """Whether the material is thin-walled, use when material is being applied to single triangle thick geometry.
+
+"""
+                    hidden = false
+                )
+            }
+        }
+
+        def "mat_F1BD142E6D6F9733"
+        {
+            token outputs:mdl:displacement:displacement.connect = </RootNode/Looks/mat_F1BD142E6D6F9733/shader_11929c16c1f355dca5ceb1f7a42bbd72.outputs:out>
+            token outputs:mdl:surface:surface.connect = </RootNode/Looks/mat_F1BD142E6D6F9733/shader_11929c16c1f355dca5ceb1f7a42bbd72.outputs:out>
+            token outputs:mdl:volume:volume.connect = </RootNode/Looks/mat_F1BD142E6D6F9733/shader_11929c16c1f355dca5ceb1f7a42bbd72.outputs:out>
+
+            def Shader "shader_11929c16c1f355dca5ceb1f7a42bbd72"
+            {
+                uniform token info:implementationSource = "sourceAsset"
+                custom asset info:mdl:sourceAsset = @AperturePBR_Opacity.mdl@
+                custom token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opacity"
+                custom asset inputs:diffuse_texture = @./rtx-remix/textures/glasswindowbreak070b.a.rtex.dds@
+                custom float inputs:emissive_color_constant = 0.29134
+                custom float inputs:metallic_constant = 0
+                custom float inputs:reflection_roughness_constant = 0.5
+                token outputs:out (
+                    renderType = "material"
+                )
+            }
+        }
+
+        def "mat_E0901E60E3FBCE56"
+        {
+            token outputs:mdl:displacement:displacement.connect = </RootNode/Looks/mat_E0901E60E3FBCE56/shader_e9a54425955c5308ab5cf4acdc204bdc.outputs:out>
+            token outputs:mdl:surface:surface.connect = </RootNode/Looks/mat_E0901E60E3FBCE56/shader_e9a54425955c5308ab5cf4acdc204bdc.outputs:out>
+            token outputs:mdl:volume:volume.connect = </RootNode/Looks/mat_E0901E60E3FBCE56/shader_e9a54425955c5308ab5cf4acdc204bdc.outputs:out>
+
+            def Shader "shader_e9a54425955c5308ab5cf4acdc204bdc"
+            {
+                uniform token info:implementationSource = "sourceAsset"
+                custom asset info:mdl:sourceAsset = @AperturePBR_Opacity.mdl@
+                custom token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opacity"
+                custom asset inputs:diffuse_texture = @rtx-remix/textures/glasswindowbreak070b.a.rtex.dds@
+                custom float inputs:emissive_color_constant = 0.29134
+                custom bool inputs:enable_opacity_texture = 1
+                custom float inputs:metallic_constant = 0
+                custom asset inputs:opacity_texture = @rtx-remix/textures/E0901E60E3FBCE56.o.rtex.dds@
+                custom float inputs:reflection_roughness_constant = 0.5
+                token outputs:out (
+                    renderType = "material"
+                )
+            }
+        }
+
+        def "mat_044B6FC4AC8596D4"
+        {
+            token outputs:mdl:displacement:displacement.connect = </RootNode/Looks/mat_044B6FC4AC8596D4/shader_c6ad3748914d5de5a6b0008741c971c3.outputs:out>
+            token outputs:mdl:surface:surface.connect = </RootNode/Looks/mat_044B6FC4AC8596D4/shader_c6ad3748914d5de5a6b0008741c971c3.outputs:out>
+            token outputs:mdl:volume:volume.connect = </RootNode/Looks/mat_044B6FC4AC8596D4/shader_c6ad3748914d5de5a6b0008741c971c3.outputs:out>
+
+            def Shader "shader_c6ad3748914d5de5a6b0008741c971c3"
+            {
+                uniform token info:implementationSource = "sourceAsset"
+                custom asset info:mdl:sourceAsset = @AperturePBR_Opacity.mdl@
+                custom token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opacity"
+                custom asset inputs:diffuse_texture = @rtx-remix/textures/glasswindowbreak070b.a.rtex.dds@
+                custom float inputs:emissive_color_constant = 0.29134
+                custom bool inputs:enable_opacity_texture = 1
+                custom float inputs:metallic_constant = 0
+                custom asset inputs:opacity_texture = @rtx-remix/textures/044B6FC4AC8596D4.o.rtex.dds@
+                custom float inputs:reflection_roughness_constant = 0.5
+                token outputs:out (
+                    renderType = "material"
+                )
+            }
+        }
+
+        def "mat_472BD2BCB90FE5B4"
+        {
+            token outputs:mdl:displacement:displacement.connect = </RootNode/Looks/mat_472BD2BCB90FE5B4/shader_3d2fbda7f45551f6acbc471eeaf534e1.outputs:out>
+            token outputs:mdl:surface:surface.connect = </RootNode/Looks/mat_472BD2BCB90FE5B4/shader_3d2fbda7f45551f6acbc471eeaf534e1.outputs:out>
+            token outputs:mdl:volume:volume.connect = </RootNode/Looks/mat_472BD2BCB90FE5B4/shader_3d2fbda7f45551f6acbc471eeaf534e1.outputs:out>
+
+            def Shader "shader_3d2fbda7f45551f6acbc471eeaf534e1"
+            {
+                uniform token info:implementationSource = "sourceAsset"
+                custom asset info:mdl:sourceAsset = @AperturePBR_Opacity.mdl@
+                custom token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opacity"
+                custom asset inputs:diffuse_texture = @rtx-remix/textures/glasswindowbreak070b.a.rtex.dds@
+                custom float inputs:emissive_color_constant = 0.29134
+                custom bool inputs:enable_opacity_texture = 1
+                custom float inputs:metallic_constant = 0
+                custom asset inputs:opacity_texture = @rtx-remix/textures/472BD2BCB90FE5B4.o.rtex.dds@
+                custom float inputs:reflection_roughness_constant = 0.5
+                token outputs:out (
+                    renderType = "material"
+                )
+            }
+        }
+
+        def "mat_26FCA00D7C9E8179"
+        {
+            token outputs:mdl:displacement:displacement.connect = </RootNode/Looks/mat_26FCA00D7C9E8179/shader_2179e8ae5dd65c91a8074180c43e1ec8.outputs:out>
+            token outputs:mdl:surface:surface.connect = </RootNode/Looks/mat_26FCA00D7C9E8179/shader_2179e8ae5dd65c91a8074180c43e1ec8.outputs:out>
+            token outputs:mdl:volume:volume.connect = </RootNode/Looks/mat_26FCA00D7C9E8179/shader_2179e8ae5dd65c91a8074180c43e1ec8.outputs:out>
+
+            def Shader "shader_2179e8ae5dd65c91a8074180c43e1ec8"
+            {
+                uniform token info:implementationSource = "sourceAsset"
+                custom asset info:mdl:sourceAsset = @AperturePBR_Opacity.mdl@
+                custom token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opacity"
+                custom asset inputs:diffuse_texture = @rtx-remix/textures/glasswindowbreak070b.a.rtex.dds@
+                custom float inputs:emissive_color_constant = 0.29134
+                custom bool inputs:enable_opacity_texture = 1
+                custom float inputs:metallic_constant = 0
+                custom asset inputs:opacity_texture = @rtx-remix/textures/26FCA00D7C9E8179.o.rtex.dds@
+                custom float inputs:reflection_roughness_constant = 0.5
+                token outputs:out (
+                    renderType = "material"
+                )
+            }
+        }
+
+        def "mat_FEABD5B514665A45"
+        {
+            token outputs:mdl:displacement:displacement.connect = </RootNode/Looks/mat_FEABD5B514665A45/shader_5404597eb1605c7881554c933f5e4526.outputs:out>
+            token outputs:mdl:surface:surface.connect = </RootNode/Looks/mat_FEABD5B514665A45/shader_5404597eb1605c7881554c933f5e4526.outputs:out>
+            token outputs:mdl:volume:volume.connect = </RootNode/Looks/mat_FEABD5B514665A45/shader_5404597eb1605c7881554c933f5e4526.outputs:out>
+
+            def Shader "shader_5404597eb1605c7881554c933f5e4526"
+            {
+                uniform token info:implementationSource = "sourceAsset"
+                custom asset info:mdl:sourceAsset = @AperturePBR_Opacity.mdl@
+                custom token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opacity"
+                custom asset inputs:diffuse_texture = @rtx-remix/textures/glasswindowbreak070b.a.rtex.dds@
+                custom float inputs:emissive_color_constant = 0.29134
+                custom bool inputs:enable_opacity_texture = 1
+                custom float inputs:metallic_constant = 0
+                custom asset inputs:opacity_texture = @rtx-remix/textures/FEABD5B514665A45.o.rtex.dds@
+                custom float inputs:reflection_roughness_constant = 0.5
+                token outputs:out (
+                    renderType = "material"
+                )
+            }
+        }
+
+        def "mat_5AEE9DF8BF14D41D"
+        {
+            token outputs:mdl:displacement:displacement.connect = </RootNode/Looks/mat_5AEE9DF8BF14D41D/shader_7af3e71930f951ce9f94a05e938a40ff.outputs:out>
+            token outputs:mdl:surface:surface.connect = </RootNode/Looks/mat_5AEE9DF8BF14D41D/shader_7af3e71930f951ce9f94a05e938a40ff.outputs:out>
+            token outputs:mdl:volume:volume.connect = </RootNode/Looks/mat_5AEE9DF8BF14D41D/shader_7af3e71930f951ce9f94a05e938a40ff.outputs:out>
+
+            def Shader "shader_7af3e71930f951ce9f94a05e938a40ff"
+            {
+                uniform token info:implementationSource = "sourceAsset"
+                custom asset info:mdl:sourceAsset = @AperturePBR_Opacity.mdl@
+                custom token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opacity"
+                custom asset inputs:diffuse_texture = @rtx-remix/textures/glasswindowbreak070b.a.rtex.dds@
+                custom float inputs:emissive_color_constant = 0.29134
+                custom bool inputs:enable_opacity_texture = 1
+                custom float inputs:metallic_constant = 0
+                custom asset inputs:opacity_texture = @rtx-remix/textures/5AEE9DF8BF14D41D.o.rtex.dds@
+                custom float inputs:reflection_roughness_constant = 0.5
+                token outputs:out (
+                    renderType = "material"
+                )
+            }
+        }
+    }
+}
+

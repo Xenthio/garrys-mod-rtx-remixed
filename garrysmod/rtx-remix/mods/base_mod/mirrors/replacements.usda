@@ -1,0 +1,47 @@
+#usda 1.0
+(
+    upAxis = "Z"
+)
+
+over "RootNode"
+{
+    over "Looks"
+    {
+        over "mat_6CAD4AC1E5798A48" (
+            references = @./SubUSDs/AperturePBR_Opacity.usda@</Looks/mat_AperturePBR_Opacity>
+        )
+        {
+            over "Shader"
+            {
+				asset inputs:diffuse_texture = @./SubUSDs/textures/mirror_diffuse.dds@ (
+                    customData = {
+                        asset default = @@
+                    }
+                    displayGroup = "Diffuse"
+                    displayName = "Albedo Map"
+                    doc = "The texture specifying the albedo value and the optional opacity value to use in the alpha channel"
+                    hidden = false
+                )
+                asset inputs:reflectionroughness_texture = @./SubUSDs/textures/mirror_rough.dds@ (
+                    colorSpace = "auto"
+                    customData = {
+                        asset default = @@
+                    }
+                    displayGroup = "Specular"
+                    displayName = "Roughness Map"
+                    hidden = false
+                )
+                asset inputs:metallic_texture = @./SubUSDs/textures/mirror_metal.dds@ (
+                    colorSpace = "auto"
+                    customData = {
+                        asset default = @@
+                    }
+                    displayGroup = "Specular"
+                    displayName = "Metallic Map"
+                    hidden = false
+                )
+            }
+        }
+    }
+}
+

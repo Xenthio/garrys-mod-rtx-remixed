@@ -1,0 +1,2195 @@
+#usda 1.0
+(
+    upAxis = "Z"
+)
+
+over "RootNode"
+{
+    over "Looks"
+    {
+        over "mat_EB6766890A976112" (
+            references = @./SubUSDs/AperturePBR_Translucent.usda@</Looks/mat_AperturePBR_Translucent>
+        )
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                int inputs:encoding = 0 (
+                    customData = {
+                        int default = 0
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map Encoding"
+                    doc = "Encoding type for the normal map.  Octahedral for 2 channel textures. tangent_space_dx for 3 channel normals, and tangent_space_ogl for 3 channel normals with an inverted (OpenGL style) G channel."
+                    hidden = false
+                    renderType = "::Z36c_3A::users::vernon::appdata::local::ov::pkg::ZA8trex_2D2022_2E6_2E26::_build::Z0Awindows_2Dx86_5F64::release::omni_core_materials::Base::AperturePBR_Normal::normalmap_encoding"
+                    sdrMetadata = {
+                        string __SDR__enum_value = "octahedral"
+                        string options = "octahedral:0|tangent_space_ogl:1|tangent_space_dx:2"
+                    }
+                )
+                float inputs:ior_constant = 1.33 (
+                    customData = {
+                        float default = 1.3
+                        dictionary range = {
+                            float max = 3
+                            float min = 1
+                        }
+                    }
+                    displayGroup = "Specular"
+                    displayName = "Index of Refraction"
+                    doc = "Index of Refraction of the material"
+                    hidden = false
+                )
+                asset inputs:normalmap_texture = @./SubUSDs/textures/6D2C268A20F8E02B_normal.dds@ (
+                    colorSpace = "raw"
+                    customData = {
+                        asset default = @@
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map"
+                    hidden = false
+                )
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86) (
+                    customData = {
+                        float3 default = (0.97, 0.97, 0.97)
+                        dictionary range = {
+                            float3 max = (1, 1, 1)
+                            float3 min = (0, 0, 0)
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Color"
+                    doc = "Expected transmittance after the specified transmittance distance through the volume."
+                    hidden = false
+                    renderType = "color"
+                )
+                float inputs:transmittance_measurement_distance = 800 (
+                    customData = {
+                        float default = 1
+                        dictionary range = {
+                            float max = 65504
+                            float min = 0.001
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Measurement Distance"
+                    doc = "Distance to match the transmittance through the volume at."
+                    hidden = false
+
+
+                )
+            }
+        }
+
+        over "mat_9348FF78D9BE2BC9" (
+            references = @./SubUSDs/AperturePBR_Translucent.usda@</Looks/mat_AperturePBR_Translucent>
+        )
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                int inputs:encoding = 0 (
+                    customData = {
+                        int default = 0
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map Encoding"
+                    doc = "Encoding type for the normal map.  Octahedral for 2 channel textures. tangent_space_dx for 3 channel normals, and tangent_space_ogl for 3 channel normals with an inverted (OpenGL style) G channel."
+                    hidden = false
+                    renderType = "::Z36c_3A::users::vernon::appdata::local::ov::pkg::ZA8trex_2D2022_2E6_2E26::_build::Z0Awindows_2Dx86_5F64::release::omni_core_materials::Base::AperturePBR_Normal::normalmap_encoding"
+                    sdrMetadata = {
+                        string __SDR__enum_value = "octahedral"
+                        string options = "octahedral:0|tangent_space_ogl:1|tangent_space_dx:2"
+                    }
+                )
+                float inputs:ior_constant = 1.33 (
+                    customData = {
+                        float default = 1.3
+                        dictionary range = {
+                            float max = 3
+                            float min = 1
+                        }
+                    }
+                    displayGroup = "Specular"
+                    displayName = "Index of Refraction"
+                    doc = "Index of Refraction of the material"
+                    hidden = false
+                )
+                asset inputs:normalmap_texture = @./SubUSDs/textures/7FF15B347FAA1EFE_normal.dds@ (
+                    colorSpace = "raw"
+                    customData = {
+                        asset default = @@
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map"
+                    hidden = false
+                )
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86) (
+                    customData = {
+                        float3 default = (0.97, 0.97, 0.97)
+                        dictionary range = {
+                            float3 max = (1, 1, 1)
+                            float3 min = (0, 0, 0)
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Color"
+                    doc = "Expected transmittance after the specified transmittance distance through the volume."
+                    hidden = false
+                    renderType = "color"
+                )
+                float inputs:transmittance_measurement_distance = 800 (
+                    customData = {
+                        float default = 1
+                        dictionary range = {
+                            float max = 65504
+                            float min = 0.001
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Measurement Distance"
+                    doc = "Distance to match the transmittance through the volume at."
+                    hidden = false
+
+
+                )
+            }
+        }
+
+        over "mat_987025126739525A" (
+            references = @./SubUSDs/AperturePBR_Translucent.usda@</Looks/mat_AperturePBR_Translucent>
+        )
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                int inputs:encoding = 0 (
+                    customData = {
+                        int default = 0
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map Encoding"
+                    doc = "Encoding type for the normal map.  Octahedral for 2 channel textures. tangent_space_dx for 3 channel normals, and tangent_space_ogl for 3 channel normals with an inverted (OpenGL style) G channel."
+                    hidden = false
+                    renderType = "::Z36c_3A::users::vernon::appdata::local::ov::pkg::ZA8trex_2D2022_2E6_2E26::_build::Z0Awindows_2Dx86_5F64::release::omni_core_materials::Base::AperturePBR_Normal::normalmap_encoding"
+                    sdrMetadata = {
+                        string __SDR__enum_value = "octahedral"
+                        string options = "octahedral:0|tangent_space_ogl:1|tangent_space_dx:2"
+                    }
+                )
+                float inputs:ior_constant = 1.33 (
+                    customData = {
+                        float default = 1.3
+                        dictionary range = {
+                            float max = 3
+                            float min = 1
+                        }
+                    }
+                    displayGroup = "Specular"
+                    displayName = "Index of Refraction"
+                    doc = "Index of Refraction of the material"
+                    hidden = false
+                )
+                asset inputs:normalmap_texture = @./SubUSDs/textures/08B7FA3FF95E74CD_normal.dds@ (
+                    colorSpace = "raw"
+                    customData = {
+                        asset default = @@
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map"
+                    hidden = false
+                )
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86) (
+                    customData = {
+                        float3 default = (0.97, 0.97, 0.97)
+                        dictionary range = {
+                            float3 max = (1, 1, 1)
+                            float3 min = (0, 0, 0)
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Color"
+                    doc = "Expected transmittance after the specified transmittance distance through the volume."
+                    hidden = false
+                    renderType = "color"
+                )
+                float inputs:transmittance_measurement_distance = 800 (
+                    customData = {
+                        float default = 1
+                        dictionary range = {
+                            float max = 65504
+                            float min = 0.001
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Measurement Distance"
+                    doc = "Distance to match the transmittance through the volume at."
+                    hidden = false
+
+
+                )
+            }
+        }
+
+        over "mat_8D415A461AFEE86B" (
+            references = @./SubUSDs/AperturePBR_Translucent.usda@</Looks/mat_AperturePBR_Translucent>
+        )
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                int inputs:encoding = 0 (
+                    customData = {
+                        int default = 0
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map Encoding"
+                    doc = "Encoding type for the normal map.  Octahedral for 2 channel textures. tangent_space_dx for 3 channel normals, and tangent_space_ogl for 3 channel normals with an inverted (OpenGL style) G channel."
+                    hidden = false
+                    renderType = "::Z36c_3A::users::vernon::appdata::local::ov::pkg::ZA8trex_2D2022_2E6_2E26::_build::Z0Awindows_2Dx86_5F64::release::omni_core_materials::Base::AperturePBR_Normal::normalmap_encoding"
+                    sdrMetadata = {
+                        string __SDR__enum_value = "octahedral"
+                        string options = "octahedral:0|tangent_space_ogl:1|tangent_space_dx:2"
+                    }
+                )
+                float inputs:ior_constant = 1.33 (
+                    customData = {
+                        float default = 1.3
+                        dictionary range = {
+                            float max = 3
+                            float min = 1
+                        }
+                    }
+                    displayGroup = "Specular"
+                    displayName = "Index of Refraction"
+                    doc = "Index of Refraction of the material"
+                    hidden = false
+                )
+                asset inputs:normalmap_texture = @./SubUSDs/textures/8D415A461AFEE86B_normal.dds@ (
+                    colorSpace = "raw"
+                    customData = {
+                        asset default = @@
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map"
+                    hidden = false
+                )
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86) (
+                    customData = {
+                        float3 default = (0.97, 0.97, 0.97)
+                        dictionary range = {
+                            float3 max = (1, 1, 1)
+                            float3 min = (0, 0, 0)
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Color"
+                    doc = "Expected transmittance after the specified transmittance distance through the volume."
+                    hidden = false
+                    renderType = "color"
+                )
+                float inputs:transmittance_measurement_distance = 800 (
+                    customData = {
+                        float default = 1
+                        dictionary range = {
+                            float max = 65504
+                            float min = 0.001
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Measurement Distance"
+                    doc = "Distance to match the transmittance through the volume at."
+                    hidden = false
+
+
+                )
+            }
+        }
+
+        over "mat_9CEE5C631301A0C2" (
+            references = @./SubUSDs/AperturePBR_Translucent.usda@</Looks/mat_AperturePBR_Translucent>
+        )
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                int inputs:encoding = 0 (
+                    customData = {
+                        int default = 0
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map Encoding"
+                    doc = "Encoding type for the normal map.  Octahedral for 2 channel textures. tangent_space_dx for 3 channel normals, and tangent_space_ogl for 3 channel normals with an inverted (OpenGL style) G channel."
+                    hidden = false
+                    renderType = "::Z36c_3A::users::vernon::appdata::local::ov::pkg::ZA8trex_2D2022_2E6_2E26::_build::Z0Awindows_2Dx86_5F64::release::omni_core_materials::Base::AperturePBR_Normal::normalmap_encoding"
+                    sdrMetadata = {
+                        string __SDR__enum_value = "octahedral"
+                        string options = "octahedral:0|tangent_space_ogl:1|tangent_space_dx:2"
+                    }
+                )
+                float inputs:ior_constant = 1.33 (
+                    customData = {
+                        float default = 1.3
+                        dictionary range = {
+                            float max = 3
+                            float min = 1
+                        }
+                    }
+                    displayGroup = "Specular"
+                    displayName = "Index of Refraction"
+                    doc = "Index of Refraction of the material"
+                    hidden = false
+                )
+                asset inputs:normalmap_texture = @./SubUSDs/textures/9CEE5C631301A0C2_normal.dds@ (
+                    colorSpace = "raw"
+                    customData = {
+                        asset default = @@
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map"
+                    hidden = false
+                )
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86) (
+                    customData = {
+                        float3 default = (0.97, 0.97, 0.97)
+                        dictionary range = {
+                            float3 max = (1, 1, 1)
+                            float3 min = (0, 0, 0)
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Color"
+                    doc = "Expected transmittance after the specified transmittance distance through the volume."
+                    hidden = false
+                    renderType = "color"
+                )
+                float inputs:transmittance_measurement_distance = 800 (
+                    customData = {
+                        float default = 1
+                        dictionary range = {
+                            float max = 65504
+                            float min = 0.001
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Measurement Distance"
+                    doc = "Distance to match the transmittance through the volume at."
+                    hidden = false
+
+
+                )
+            }
+        }
+
+        over "mat_31ADE31994D1DC7D" (
+            references = @./SubUSDs/AperturePBR_Translucent.usda@</Looks/mat_AperturePBR_Translucent>
+        )
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                int inputs:encoding = 0 (
+                    customData = {
+                        int default = 0
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map Encoding"
+                    doc = "Encoding type for the normal map.  Octahedral for 2 channel textures. tangent_space_dx for 3 channel normals, and tangent_space_ogl for 3 channel normals with an inverted (OpenGL style) G channel."
+                    hidden = false
+                    renderType = "::Z36c_3A::users::vernon::appdata::local::ov::pkg::ZA8trex_2D2022_2E6_2E26::_build::Z0Awindows_2Dx86_5F64::release::omni_core_materials::Base::AperturePBR_Normal::normalmap_encoding"
+                    sdrMetadata = {
+                        string __SDR__enum_value = "octahedral"
+                        string options = "octahedral:0|tangent_space_ogl:1|tangent_space_dx:2"
+                    }
+                )
+                float inputs:ior_constant = 1.33 (
+                    customData = {
+                        float default = 1.3
+                        dictionary range = {
+                            float max = 3
+                            float min = 1
+                        }
+                    }
+                    displayGroup = "Specular"
+                    displayName = "Index of Refraction"
+                    doc = "Index of Refraction of the material"
+                    hidden = false
+                )
+                asset inputs:normalmap_texture = @./SubUSDs/textures/31ADE31994D1DC7D_normal.dds@ (
+                    colorSpace = "raw"
+                    customData = {
+                        asset default = @@
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map"
+                    hidden = false
+                )
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86) (
+                    customData = {
+                        float3 default = (0.97, 0.97, 0.97)
+                        dictionary range = {
+                            float3 max = (1, 1, 1)
+                            float3 min = (0, 0, 0)
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Color"
+                    doc = "Expected transmittance after the specified transmittance distance through the volume."
+                    hidden = false
+                    renderType = "color"
+                )
+                float inputs:transmittance_measurement_distance = 800 (
+                    customData = {
+                        float default = 1
+                        dictionary range = {
+                            float max = 65504
+                            float min = 0.001
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Measurement Distance"
+                    doc = "Distance to match the transmittance through the volume at."
+                    hidden = false
+
+
+                )
+            }
+        }
+
+        over "mat_60A74211A2E39BF6" (
+            references = @./SubUSDs/AperturePBR_Translucent.usda@</Looks/mat_AperturePBR_Translucent>
+        )
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                int inputs:encoding = 0 (
+                    customData = {
+                        int default = 0
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map Encoding"
+                    doc = "Encoding type for the normal map.  Octahedral for 2 channel textures. tangent_space_dx for 3 channel normals, and tangent_space_ogl for 3 channel normals with an inverted (OpenGL style) G channel."
+                    hidden = false
+                    renderType = "::Z36c_3A::users::vernon::appdata::local::ov::pkg::ZA8trex_2D2022_2E6_2E26::_build::Z0Awindows_2Dx86_5F64::release::omni_core_materials::Base::AperturePBR_Normal::normalmap_encoding"
+                    sdrMetadata = {
+                        string __SDR__enum_value = "octahedral"
+                        string options = "octahedral:0|tangent_space_ogl:1|tangent_space_dx:2"
+                    }
+                )
+                float inputs:ior_constant = 1.33 (
+                    customData = {
+                        float default = 1.3
+                        dictionary range = {
+                            float max = 3
+                            float min = 1
+                        }
+                    }
+                    displayGroup = "Specular"
+                    displayName = "Index of Refraction"
+                    doc = "Index of Refraction of the material"
+                    hidden = false
+                )
+                asset inputs:normalmap_texture = @./SubUSDs/textures/60A74211A2E39BF6_normal.dds@ (
+                    colorSpace = "raw"
+                    customData = {
+                        asset default = @@
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map"
+                    hidden = false
+                )
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86) (
+                    customData = {
+                        float3 default = (0.97, 0.97, 0.97)
+                        dictionary range = {
+                            float3 max = (1, 1, 1)
+                            float3 min = (0, 0, 0)
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Color"
+                    doc = "Expected transmittance after the specified transmittance distance through the volume."
+                    hidden = false
+                    renderType = "color"
+                )
+                float inputs:transmittance_measurement_distance = 800 (
+                    customData = {
+                        float default = 1
+                        dictionary range = {
+                            float max = 65504
+                            float min = 0.001
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Measurement Distance"
+                    doc = "Distance to match the transmittance through the volume at."
+                    hidden = false
+
+
+                )
+            }
+        }
+
+        over "mat_66C5C2BC703FF956" (
+            references = @./SubUSDs/AperturePBR_Translucent.usda@</Looks/mat_AperturePBR_Translucent>
+        )
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                int inputs:encoding = 0 (
+                    customData = {
+                        int default = 0
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map Encoding"
+                    doc = "Encoding type for the normal map.  Octahedral for 2 channel textures. tangent_space_dx for 3 channel normals, and tangent_space_ogl for 3 channel normals with an inverted (OpenGL style) G channel."
+                    hidden = false
+                    renderType = "::Z36c_3A::users::vernon::appdata::local::ov::pkg::ZA8trex_2D2022_2E6_2E26::_build::Z0Awindows_2Dx86_5F64::release::omni_core_materials::Base::AperturePBR_Normal::normalmap_encoding"
+                    sdrMetadata = {
+                        string __SDR__enum_value = "octahedral"
+                        string options = "octahedral:0|tangent_space_ogl:1|tangent_space_dx:2"
+                    }
+                )
+                float inputs:ior_constant = 1.33 (
+                    customData = {
+                        float default = 1.3
+                        dictionary range = {
+                            float max = 3
+                            float min = 1
+                        }
+                    }
+                    displayGroup = "Specular"
+                    displayName = "Index of Refraction"
+                    doc = "Index of Refraction of the material"
+                    hidden = false
+                )
+                asset inputs:normalmap_texture = @./SubUSDs/textures/66C5C2BC703FF956_normal.dds@ (
+                    colorSpace = "raw"
+                    customData = {
+                        asset default = @@
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map"
+                    hidden = false
+                )
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86) (
+                    customData = {
+                        float3 default = (0.97, 0.97, 0.97)
+                        dictionary range = {
+                            float3 max = (1, 1, 1)
+                            float3 min = (0, 0, 0)
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Color"
+                    doc = "Expected transmittance after the specified transmittance distance through the volume."
+                    hidden = false
+                    renderType = "color"
+                )
+                float inputs:transmittance_measurement_distance = 800 (
+                    customData = {
+                        float default = 1
+                        dictionary range = {
+                            float max = 65504
+                            float min = 0.001
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Measurement Distance"
+                    doc = "Distance to match the transmittance through the volume at."
+                    hidden = false
+
+
+                )
+            }
+        }
+
+        over "mat_473CFF9EEF64180E" (
+            references = @./SubUSDs/AperturePBR_Translucent.usda@</Looks/mat_AperturePBR_Translucent>
+        )
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                int inputs:encoding = 0 (
+                    customData = {
+                        int default = 0
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map Encoding"
+                    doc = "Encoding type for the normal map.  Octahedral for 2 channel textures. tangent_space_dx for 3 channel normals, and tangent_space_ogl for 3 channel normals with an inverted (OpenGL style) G channel."
+                    hidden = false
+                    renderType = "::Z36c_3A::users::vernon::appdata::local::ov::pkg::ZA8trex_2D2022_2E6_2E26::_build::Z0Awindows_2Dx86_5F64::release::omni_core_materials::Base::AperturePBR_Normal::normalmap_encoding"
+                    sdrMetadata = {
+                        string __SDR__enum_value = "octahedral"
+                        string options = "octahedral:0|tangent_space_ogl:1|tangent_space_dx:2"
+                    }
+                )
+                float inputs:ior_constant = 1.33 (
+                    customData = {
+                        float default = 1.3
+                        dictionary range = {
+                            float max = 3
+                            float min = 1
+                        }
+                    }
+                    displayGroup = "Specular"
+                    displayName = "Index of Refraction"
+                    doc = "Index of Refraction of the material"
+                    hidden = false
+                )
+                asset inputs:normalmap_texture = @./SubUSDs/textures/473CFF9EEF64180E_normal.dds@ (
+                    colorSpace = "raw"
+                    customData = {
+                        asset default = @@
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map"
+                    hidden = false
+                )
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86) (
+                    customData = {
+                        float3 default = (0.97, 0.97, 0.97)
+                        dictionary range = {
+                            float3 max = (1, 1, 1)
+                            float3 min = (0, 0, 0)
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Color"
+                    doc = "Expected transmittance after the specified transmittance distance through the volume."
+                    hidden = false
+                    renderType = "color"
+                )
+                float inputs:transmittance_measurement_distance = 800 (
+                    customData = {
+                        float default = 1
+                        dictionary range = {
+                            float max = 65504
+                            float min = 0.001
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Measurement Distance"
+                    doc = "Distance to match the transmittance through the volume at."
+                    hidden = false
+
+
+                )
+            }
+        }
+
+        over "mat_612D8E17AAF3601A" (
+            references = @./SubUSDs/AperturePBR_Translucent.usda@</Looks/mat_AperturePBR_Translucent>
+        )
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                int inputs:encoding = 0 (
+                    customData = {
+                        int default = 0
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map Encoding"
+                    doc = "Encoding type for the normal map.  Octahedral for 2 channel textures. tangent_space_dx for 3 channel normals, and tangent_space_ogl for 3 channel normals with an inverted (OpenGL style) G channel."
+                    hidden = false
+                    renderType = "::Z36c_3A::users::vernon::appdata::local::ov::pkg::ZA8trex_2D2022_2E6_2E26::_build::Z0Awindows_2Dx86_5F64::release::omni_core_materials::Base::AperturePBR_Normal::normalmap_encoding"
+                    sdrMetadata = {
+                        string __SDR__enum_value = "octahedral"
+                        string options = "octahedral:0|tangent_space_ogl:1|tangent_space_dx:2"
+                    }
+                )
+                float inputs:ior_constant = 1.33 (
+                    customData = {
+                        float default = 1.3
+                        dictionary range = {
+                            float max = 3
+                            float min = 1
+                        }
+                    }
+                    displayGroup = "Specular"
+                    displayName = "Index of Refraction"
+                    doc = "Index of Refraction of the material"
+                    hidden = false
+                )
+                asset inputs:normalmap_texture = @./SubUSDs/textures/612D8E17AAF3601A_normal.dds@ (
+                    colorSpace = "raw"
+                    customData = {
+                        asset default = @@
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map"
+                    hidden = false
+                )
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86) (
+                    customData = {
+                        float3 default = (0.97, 0.97, 0.97)
+                        dictionary range = {
+                            float3 max = (1, 1, 1)
+                            float3 min = (0, 0, 0)
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Color"
+                    doc = "Expected transmittance after the specified transmittance distance through the volume."
+                    hidden = false
+                    renderType = "color"
+                )
+                float inputs:transmittance_measurement_distance = 800 (
+                    customData = {
+                        float default = 1
+                        dictionary range = {
+                            float max = 65504
+                            float min = 0.001
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Measurement Distance"
+                    doc = "Distance to match the transmittance through the volume at."
+                    hidden = false
+
+
+                )
+            }
+        }
+
+        over "mat_632E0D7BCC66855E" (
+            references = @./SubUSDs/AperturePBR_Translucent.usda@</Looks/mat_AperturePBR_Translucent>
+        )
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                int inputs:encoding = 0 (
+                    customData = {
+                        int default = 0
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map Encoding"
+                    doc = "Encoding type for the normal map.  Octahedral for 2 channel textures. tangent_space_dx for 3 channel normals, and tangent_space_ogl for 3 channel normals with an inverted (OpenGL style) G channel."
+                    hidden = false
+                    renderType = "::Z36c_3A::users::vernon::appdata::local::ov::pkg::ZA8trex_2D2022_2E6_2E26::_build::Z0Awindows_2Dx86_5F64::release::omni_core_materials::Base::AperturePBR_Normal::normalmap_encoding"
+                    sdrMetadata = {
+                        string __SDR__enum_value = "octahedral"
+                        string options = "octahedral:0|tangent_space_ogl:1|tangent_space_dx:2"
+                    }
+                )
+                float inputs:ior_constant = 1.33 (
+                    customData = {
+                        float default = 1.3
+                        dictionary range = {
+                            float max = 3
+                            float min = 1
+                        }
+                    }
+                    displayGroup = "Specular"
+                    displayName = "Index of Refraction"
+                    doc = "Index of Refraction of the material"
+                    hidden = false
+                )
+                asset inputs:normalmap_texture = @./SubUSDs/textures/632E0D7BCC66855E_normal.dds@ (
+                    colorSpace = "raw"
+                    customData = {
+                        asset default = @@
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map"
+                    hidden = false
+                )
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86) (
+                    customData = {
+                        float3 default = (0.97, 0.97, 0.97)
+                        dictionary range = {
+                            float3 max = (1, 1, 1)
+                            float3 min = (0, 0, 0)
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Color"
+                    doc = "Expected transmittance after the specified transmittance distance through the volume."
+                    hidden = false
+                    renderType = "color"
+                )
+                float inputs:transmittance_measurement_distance = 800 (
+                    customData = {
+                        float default = 1
+                        dictionary range = {
+                            float max = 65504
+                            float min = 0.001
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Measurement Distance"
+                    doc = "Distance to match the transmittance through the volume at."
+                    hidden = false
+
+
+                )
+            }
+        }
+
+
+        over "mat_781AFB54E334E469" (
+            references = @./SubUSDs/AperturePBR_Translucent.usda@</Looks/mat_AperturePBR_Translucent>
+        )
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                int inputs:encoding = 0 (
+                    customData = {
+                        int default = 0
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map Encoding"
+                    doc = "Encoding type for the normal map.  Octahedral for 2 channel textures. tangent_space_dx for 3 channel normals, and tangent_space_ogl for 3 channel normals with an inverted (OpenGL style) G channel."
+                    hidden = false
+                    renderType = "::Z36c_3A::users::vernon::appdata::local::ov::pkg::ZA8trex_2D2022_2E6_2E26::_build::Z0Awindows_2Dx86_5F64::release::omni_core_materials::Base::AperturePBR_Normal::normalmap_encoding"
+                    sdrMetadata = {
+                        string __SDR__enum_value = "octahedral"
+                        string options = "octahedral:0|tangent_space_ogl:1|tangent_space_dx:2"
+                    }
+                )
+                float inputs:ior_constant = 1.33 (
+                    customData = {
+                        float default = 1.3
+                        dictionary range = {
+                            float max = 3
+                            float min = 1
+                        }
+                    }
+                    displayGroup = "Specular"
+                    displayName = "Index of Refraction"
+                    doc = "Index of Refraction of the material"
+                    hidden = false
+                )
+                asset inputs:normalmap_texture = @./SubUSDs/textures/781AFB54E334E469_normal.dds@ (
+                    colorSpace = "raw"
+                    customData = {
+                        asset default = @@
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map"
+                    hidden = false
+                )
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86) (
+                    customData = {
+                        float3 default = (0.97, 0.97, 0.97)
+                        dictionary range = {
+                            float3 max = (1, 1, 1)
+                            float3 min = (0, 0, 0)
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Color"
+                    doc = "Expected transmittance after the specified transmittance distance through the volume."
+                    hidden = false
+                    renderType = "color"
+                )
+                float inputs:transmittance_measurement_distance = 800 (
+                    customData = {
+                        float default = 1
+                        dictionary range = {
+                            float max = 65504
+                            float min = 0.001
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Measurement Distance"
+                    doc = "Distance to match the transmittance through the volume at."
+                    hidden = false
+
+
+                )
+            }
+        }
+
+
+        over "mat_847FFF41F57A6766" (
+            references = @./SubUSDs/AperturePBR_Translucent.usda@</Looks/mat_AperturePBR_Translucent>
+        )
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                int inputs:encoding = 0 (
+                    customData = {
+                        int default = 0
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map Encoding"
+                    doc = "Encoding type for the normal map.  Octahedral for 2 channel textures. tangent_space_dx for 3 channel normals, and tangent_space_ogl for 3 channel normals with an inverted (OpenGL style) G channel."
+                    hidden = false
+                    renderType = "::Z36c_3A::users::vernon::appdata::local::ov::pkg::ZA8trex_2D2022_2E6_2E26::_build::Z0Awindows_2Dx86_5F64::release::omni_core_materials::Base::AperturePBR_Normal::normalmap_encoding"
+                    sdrMetadata = {
+                        string __SDR__enum_value = "octahedral"
+                        string options = "octahedral:0|tangent_space_ogl:1|tangent_space_dx:2"
+                    }
+                )
+                float inputs:ior_constant = 1.33 (
+                    customData = {
+                        float default = 1.3
+                        dictionary range = {
+                            float max = 3
+                            float min = 1
+                        }
+                    }
+                    displayGroup = "Specular"
+                    displayName = "Index of Refraction"
+                    doc = "Index of Refraction of the material"
+                    hidden = false
+                )
+                asset inputs:normalmap_texture = @./SubUSDs/textures/847FFF41F57A6766_normal.dds@ (
+                    colorSpace = "raw"
+                    customData = {
+                        asset default = @@
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map"
+                    hidden = false
+                )
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86) (
+                    customData = {
+                        float3 default = (0.97, 0.97, 0.97)
+                        dictionary range = {
+                            float3 max = (1, 1, 1)
+                            float3 min = (0, 0, 0)
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Color"
+                    doc = "Expected transmittance after the specified transmittance distance through the volume."
+                    hidden = false
+                    renderType = "color"
+                )
+                float inputs:transmittance_measurement_distance = 800 (
+                    customData = {
+                        float default = 1
+                        dictionary range = {
+                            float max = 65504
+                            float min = 0.001
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Measurement Distance"
+                    doc = "Distance to match the transmittance through the volume at."
+                    hidden = false
+
+
+                )
+            }
+        }
+
+
+        over "mat_3731E05C22BA24CB" (
+            references = @./SubUSDs/AperturePBR_Translucent.usda@</Looks/mat_AperturePBR_Translucent>
+        )
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                int inputs:encoding = 0 (
+                    customData = {
+                        int default = 0
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map Encoding"
+                    doc = "Encoding type for the normal map.  Octahedral for 2 channel textures. tangent_space_dx for 3 channel normals, and tangent_space_ogl for 3 channel normals with an inverted (OpenGL style) G channel."
+                    hidden = false
+                    renderType = "::Z36c_3A::users::vernon::appdata::local::ov::pkg::ZA8trex_2D2022_2E6_2E26::_build::Z0Awindows_2Dx86_5F64::release::omni_core_materials::Base::AperturePBR_Normal::normalmap_encoding"
+                    sdrMetadata = {
+                        string __SDR__enum_value = "octahedral"
+                        string options = "octahedral:0|tangent_space_ogl:1|tangent_space_dx:2"
+                    }
+                )
+                float inputs:ior_constant = 1.33 (
+                    customData = {
+                        float default = 1.3
+                        dictionary range = {
+                            float max = 3
+                            float min = 1
+                        }
+                    }
+                    displayGroup = "Specular"
+                    displayName = "Index of Refraction"
+                    doc = "Index of Refraction of the material"
+                    hidden = false
+                )
+                asset inputs:normalmap_texture = @./SubUSDs/textures/3731E05C22BA24CB_normal.dds@ (
+                    colorSpace = "raw"
+                    customData = {
+                        asset default = @@
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map"
+                    hidden = false
+                )
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86) (
+                    customData = {
+                        float3 default = (0.97, 0.97, 0.97)
+                        dictionary range = {
+                            float3 max = (1, 1, 1)
+                            float3 min = (0, 0, 0)
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Color"
+                    doc = "Expected transmittance after the specified transmittance distance through the volume."
+                    hidden = false
+                    renderType = "color"
+                )
+                float inputs:transmittance_measurement_distance = 800 (
+                    customData = {
+                        float default = 1
+                        dictionary range = {
+                            float max = 65504
+                            float min = 0.001
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Measurement Distance"
+                    doc = "Distance to match the transmittance through the volume at."
+                    hidden = false
+
+
+                )
+            }
+        }
+
+
+
+        over "mat_86594A9762B608BF" (
+            references = @./SubUSDs/AperturePBR_Translucent.usda@</Looks/mat_AperturePBR_Translucent>
+        )
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                int inputs:encoding = 0 (
+                    customData = {
+                        int default = 0
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map Encoding"
+                    doc = "Encoding type for the normal map.  Octahedral for 2 channel textures. tangent_space_dx for 3 channel normals, and tangent_space_ogl for 3 channel normals with an inverted (OpenGL style) G channel."
+                    hidden = false
+                    renderType = "::Z36c_3A::users::vernon::appdata::local::ov::pkg::ZA8trex_2D2022_2E6_2E26::_build::Z0Awindows_2Dx86_5F64::release::omni_core_materials::Base::AperturePBR_Normal::normalmap_encoding"
+                    sdrMetadata = {
+                        string __SDR__enum_value = "octahedral"
+                        string options = "octahedral:0|tangent_space_ogl:1|tangent_space_dx:2"
+                    }
+                )
+                float inputs:ior_constant = 1.33 (
+                    customData = {
+                        float default = 1.3
+                        dictionary range = {
+                            float max = 3
+                            float min = 1
+                        }
+                    }
+                    displayGroup = "Specular"
+                    displayName = "Index of Refraction"
+                    doc = "Index of Refraction of the material"
+                    hidden = false
+                )
+                asset inputs:normalmap_texture = @./SubUSDs/textures/86594A9762B608BF_normal.dds@ (
+                    colorSpace = "raw"
+                    customData = {
+                        asset default = @@
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map"
+                    hidden = false
+                )
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86) (
+                    customData = {
+                        float3 default = (0.97, 0.97, 0.97)
+                        dictionary range = {
+                            float3 max = (1, 1, 1)
+                            float3 min = (0, 0, 0)
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Color"
+                    doc = "Expected transmittance after the specified transmittance distance through the volume."
+                    hidden = false
+                    renderType = "color"
+                )
+                float inputs:transmittance_measurement_distance = 800 (
+                    customData = {
+                        float default = 1
+                        dictionary range = {
+                            float max = 65504
+                            float min = 0.001
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Measurement Distance"
+                    doc = "Distance to match the transmittance through the volume at."
+                    hidden = false
+
+
+                )
+            }
+        }
+
+        over "mat_02321695709F9126" (
+            references = @./SubUSDs/AperturePBR_Translucent.usda@</Looks/mat_AperturePBR_Translucent>
+        )
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                int inputs:encoding = 0 (
+                    customData = {
+                        int default = 0
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map Encoding"
+                    doc = "Encoding type for the normal map.  Octahedral for 2 channel textures. tangent_space_dx for 3 channel normals, and tangent_space_ogl for 3 channel normals with an inverted (OpenGL style) G channel."
+                    hidden = false
+                    renderType = "::Z36c_3A::users::vernon::appdata::local::ov::pkg::ZA8trex_2D2022_2E6_2E26::_build::Z0Awindows_2Dx86_5F64::release::omni_core_materials::Base::AperturePBR_Normal::normalmap_encoding"
+                    sdrMetadata = {
+                        string __SDR__enum_value = "octahedral"
+                        string options = "octahedral:0|tangent_space_ogl:1|tangent_space_dx:2"
+                    }
+                )
+                float inputs:ior_constant = 1.33 (
+                    customData = {
+                        float default = 1.3
+                        dictionary range = {
+                            float max = 3
+                            float min = 1
+                        }
+                    }
+                    displayGroup = "Specular"
+                    displayName = "Index of Refraction"
+                    doc = "Index of Refraction of the material"
+                    hidden = false
+                )
+                asset inputs:normalmap_texture = @./SubUSDs/textures/02321695709F9126_normal.dds@ (
+                    colorSpace = "raw"
+                    customData = {
+                        asset default = @@
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map"
+                    hidden = false
+                )
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86) (
+                    customData = {
+                        float3 default = (0.97, 0.97, 0.97)
+                        dictionary range = {
+                            float3 max = (1, 1, 1)
+                            float3 min = (0, 0, 0)
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Color"
+                    doc = "Expected transmittance after the specified transmittance distance through the volume."
+                    hidden = false
+                    renderType = "color"
+                )
+                float inputs:transmittance_measurement_distance = 800 (
+                    customData = {
+                        float default = 1
+                        dictionary range = {
+                            float max = 65504
+                            float min = 0.001
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Measurement Distance"
+                    doc = "Distance to match the transmittance through the volume at."
+                    hidden = false
+
+
+                )
+            }
+        }
+
+        over "mat_A6FC48D9F7E26496" (
+            references = @./SubUSDs/AperturePBR_Translucent.usda@</Looks/mat_AperturePBR_Translucent>
+        )
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                int inputs:encoding = 0 (
+                    customData = {
+                        int default = 0
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map Encoding"
+                    doc = "Encoding type for the normal map.  Octahedral for 2 channel textures. tangent_space_dx for 3 channel normals, and tangent_space_ogl for 3 channel normals with an inverted (OpenGL style) G channel."
+                    hidden = false
+                    renderType = "::Z36c_3A::users::vernon::appdata::local::ov::pkg::ZA8trex_2D2022_2E6_2E26::_build::Z0Awindows_2Dx86_5F64::release::omni_core_materials::Base::AperturePBR_Normal::normalmap_encoding"
+                    sdrMetadata = {
+                        string __SDR__enum_value = "octahedral"
+                        string options = "octahedral:0|tangent_space_ogl:1|tangent_space_dx:2"
+                    }
+                )
+                float inputs:ior_constant = 1.33 (
+                    customData = {
+                        float default = 1.3
+                        dictionary range = {
+                            float max = 3
+                            float min = 1
+                        }
+                    }
+                    displayGroup = "Specular"
+                    displayName = "Index of Refraction"
+                    doc = "Index of Refraction of the material"
+                    hidden = false
+                )
+                asset inputs:normalmap_texture = @./SubUSDs/textures/A6FC48D9F7E26496_normal.dds@ (
+                    colorSpace = "raw"
+                    customData = {
+                        asset default = @@
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map"
+                    hidden = false
+                )
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86) (
+                    customData = {
+                        float3 default = (0.97, 0.97, 0.97)
+                        dictionary range = {
+                            float3 max = (1, 1, 1)
+                            float3 min = (0, 0, 0)
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Color"
+                    doc = "Expected transmittance after the specified transmittance distance through the volume."
+                    hidden = false
+                    renderType = "color"
+                )
+                float inputs:transmittance_measurement_distance = 800 (
+                    customData = {
+                        float default = 1
+                        dictionary range = {
+                            float max = 65504
+                            float min = 0.001
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Measurement Distance"
+                    doc = "Distance to match the transmittance through the volume at."
+                    hidden = false
+
+
+                )
+            }
+        }
+
+        over "mat_A14F575A0869E82F" (
+            references = @./SubUSDs/AperturePBR_Translucent.usda@</Looks/mat_AperturePBR_Translucent>
+        )
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                int inputs:encoding = 0 (
+                    customData = {
+                        int default = 0
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map Encoding"
+                    doc = "Encoding type for the normal map.  Octahedral for 2 channel textures. tangent_space_dx for 3 channel normals, and tangent_space_ogl for 3 channel normals with an inverted (OpenGL style) G channel."
+                    hidden = false
+                    renderType = "::Z36c_3A::users::vernon::appdata::local::ov::pkg::ZA8trex_2D2022_2E6_2E26::_build::Z0Awindows_2Dx86_5F64::release::omni_core_materials::Base::AperturePBR_Normal::normalmap_encoding"
+                    sdrMetadata = {
+                        string __SDR__enum_value = "octahedral"
+                        string options = "octahedral:0|tangent_space_ogl:1|tangent_space_dx:2"
+                    }
+                )
+                float inputs:ior_constant = 1.33 (
+                    customData = {
+                        float default = 1.3
+                        dictionary range = {
+                            float max = 3
+                            float min = 1
+                        }
+                    }
+                    displayGroup = "Specular"
+                    displayName = "Index of Refraction"
+                    doc = "Index of Refraction of the material"
+                    hidden = false
+                )
+                asset inputs:normalmap_texture = @./SubUSDs/textures/A14F575A0869E82F_normal.dds@ (
+                    colorSpace = "raw"
+                    customData = {
+                        asset default = @@
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map"
+                    hidden = false
+                )
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86) (
+                    customData = {
+                        float3 default = (0.97, 0.97, 0.97)
+                        dictionary range = {
+                            float3 max = (1, 1, 1)
+                            float3 min = (0, 0, 0)
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Color"
+                    doc = "Expected transmittance after the specified transmittance distance through the volume."
+                    hidden = false
+                    renderType = "color"
+                )
+                float inputs:transmittance_measurement_distance = 800 (
+                    customData = {
+                        float default = 1
+                        dictionary range = {
+                            float max = 65504
+                            float min = 0.001
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Measurement Distance"
+                    doc = "Distance to match the transmittance through the volume at."
+                    hidden = false
+
+
+                )
+            }
+        }
+
+        over "mat_A9206CDB73538E57" (
+            references = @./SubUSDs/AperturePBR_Translucent.usda@</Looks/mat_AperturePBR_Translucent>
+        )
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                int inputs:encoding = 0 (
+                    customData = {
+                        int default = 0
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map Encoding"
+                    doc = "Encoding type for the normal map.  Octahedral for 2 channel textures. tangent_space_dx for 3 channel normals, and tangent_space_ogl for 3 channel normals with an inverted (OpenGL style) G channel."
+                    hidden = false
+                    renderType = "::Z36c_3A::users::vernon::appdata::local::ov::pkg::ZA8trex_2D2022_2E6_2E26::_build::Z0Awindows_2Dx86_5F64::release::omni_core_materials::Base::AperturePBR_Normal::normalmap_encoding"
+                    sdrMetadata = {
+                        string __SDR__enum_value = "octahedral"
+                        string options = "octahedral:0|tangent_space_ogl:1|tangent_space_dx:2"
+                    }
+                )
+                float inputs:ior_constant = 1.33 (
+                    customData = {
+                        float default = 1.3
+                        dictionary range = {
+                            float max = 3
+                            float min = 1
+                        }
+                    }
+                    displayGroup = "Specular"
+                    displayName = "Index of Refraction"
+                    doc = "Index of Refraction of the material"
+                    hidden = false
+                )
+                asset inputs:normalmap_texture = @./SubUSDs/textures/A9206CDB73538E57_normal.dds@ (
+                    colorSpace = "raw"
+                    customData = {
+                        asset default = @@
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map"
+                    hidden = false
+                )
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86) (
+                    customData = {
+                        float3 default = (0.97, 0.97, 0.97)
+                        dictionary range = {
+                            float3 max = (1, 1, 1)
+                            float3 min = (0, 0, 0)
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Color"
+                    doc = "Expected transmittance after the specified transmittance distance through the volume."
+                    hidden = false
+                    renderType = "color"
+                )
+                float inputs:transmittance_measurement_distance = 800 (
+                    customData = {
+                        float default = 1
+                        dictionary range = {
+                            float max = 65504
+                            float min = 0.001
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Measurement Distance"
+                    doc = "Distance to match the transmittance through the volume at."
+                    hidden = false
+
+
+                )
+            }
+        }
+
+
+        over "mat_A43588A603A9DA8F" (
+            references = @./SubUSDs/AperturePBR_Translucent.usda@</Looks/mat_AperturePBR_Translucent>
+        )
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                int inputs:encoding = 0 (
+                    customData = {
+                        int default = 0
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map Encoding"
+                    doc = "Encoding type for the normal map.  Octahedral for 2 channel textures. tangent_space_dx for 3 channel normals, and tangent_space_ogl for 3 channel normals with an inverted (OpenGL style) G channel."
+                    hidden = false
+                    renderType = "::Z36c_3A::users::vernon::appdata::local::ov::pkg::ZA8trex_2D2022_2E6_2E26::_build::Z0Awindows_2Dx86_5F64::release::omni_core_materials::Base::AperturePBR_Normal::normalmap_encoding"
+                    sdrMetadata = {
+                        string __SDR__enum_value = "octahedral"
+                        string options = "octahedral:0|tangent_space_ogl:1|tangent_space_dx:2"
+                    }
+                )
+                float inputs:ior_constant = 1.33 (
+                    customData = {
+                        float default = 1.3
+                        dictionary range = {
+                            float max = 3
+                            float min = 1
+                        }
+                    }
+                    displayGroup = "Specular"
+                    displayName = "Index of Refraction"
+                    doc = "Index of Refraction of the material"
+                    hidden = false
+                )
+                asset inputs:normalmap_texture = @./SubUSDs/textures/A43588A603A9DA8F_normal.dds@ (
+                    colorSpace = "raw"
+                    customData = {
+                        asset default = @@
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map"
+                    hidden = false
+                )
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86) (
+                    customData = {
+                        float3 default = (0.97, 0.97, 0.97)
+                        dictionary range = {
+                            float3 max = (1, 1, 1)
+                            float3 min = (0, 0, 0)
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Color"
+                    doc = "Expected transmittance after the specified transmittance distance through the volume."
+                    hidden = false
+                    renderType = "color"
+                )
+                float inputs:transmittance_measurement_distance = 800 (
+                    customData = {
+                        float default = 1
+                        dictionary range = {
+                            float max = 65504
+                            float min = 0.001
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Measurement Distance"
+                    doc = "Distance to match the transmittance through the volume at."
+                    hidden = false
+
+
+                )
+            }
+        }
+
+        over "mat_BAD8E58F028B48C9" (
+            references = @./SubUSDs/AperturePBR_Translucent.usda@</Looks/mat_AperturePBR_Translucent>
+        )
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                int inputs:encoding = 0 (
+                    customData = {
+                        int default = 0
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map Encoding"
+                    doc = "Encoding type for the normal map.  Octahedral for 2 channel textures. tangent_space_dx for 3 channel normals, and tangent_space_ogl for 3 channel normals with an inverted (OpenGL style) G channel."
+                    hidden = false
+                    renderType = "::Z36c_3A::users::vernon::appdata::local::ov::pkg::ZA8trex_2D2022_2E6_2E26::_build::Z0Awindows_2Dx86_5F64::release::omni_core_materials::Base::AperturePBR_Normal::normalmap_encoding"
+                    sdrMetadata = {
+                        string __SDR__enum_value = "octahedral"
+                        string options = "octahedral:0|tangent_space_ogl:1|tangent_space_dx:2"
+                    }
+                )
+                float inputs:ior_constant = 1.33 (
+                    customData = {
+                        float default = 1.3
+                        dictionary range = {
+                            float max = 3
+                            float min = 1
+                        }
+                    }
+                    displayGroup = "Specular"
+                    displayName = "Index of Refraction"
+                    doc = "Index of Refraction of the material"
+                    hidden = false
+                )
+                asset inputs:normalmap_texture = @./SubUSDs/textures/BAD8E58F028B48C9_normal.dds@ (
+                    colorSpace = "raw"
+                    customData = {
+                        asset default = @@
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map"
+                    hidden = false
+                )
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86) (
+                    customData = {
+                        float3 default = (0.97, 0.97, 0.97)
+                        dictionary range = {
+                            float3 max = (1, 1, 1)
+                            float3 min = (0, 0, 0)
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Color"
+                    doc = "Expected transmittance after the specified transmittance distance through the volume."
+                    hidden = false
+                    renderType = "color"
+                )
+                float inputs:transmittance_measurement_distance = 800 (
+                    customData = {
+                        float default = 1
+                        dictionary range = {
+                            float max = 65504
+                            float min = 0.001
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Measurement Distance"
+                    doc = "Distance to match the transmittance through the volume at."
+                    hidden = false
+
+
+                )
+            }
+        }
+
+
+        over "mat_BD87C8184BCF97DE" (
+            references = @./SubUSDs/AperturePBR_Translucent.usda@</Looks/mat_AperturePBR_Translucent>
+        )
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                int inputs:encoding = 0 (
+                    customData = {
+                        int default = 0
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map Encoding"
+                    doc = "Encoding type for the normal map.  Octahedral for 2 channel textures. tangent_space_dx for 3 channel normals, and tangent_space_ogl for 3 channel normals with an inverted (OpenGL style) G channel."
+                    hidden = false
+                    renderType = "::Z36c_3A::users::vernon::appdata::local::ov::pkg::ZA8trex_2D2022_2E6_2E26::_build::Z0Awindows_2Dx86_5F64::release::omni_core_materials::Base::AperturePBR_Normal::normalmap_encoding"
+                    sdrMetadata = {
+                        string __SDR__enum_value = "octahedral"
+                        string options = "octahedral:0|tangent_space_ogl:1|tangent_space_dx:2"
+                    }
+                )
+                float inputs:ior_constant = 1.33 (
+                    customData = {
+                        float default = 1.3
+                        dictionary range = {
+                            float max = 3
+                            float min = 1
+                        }
+                    }
+                    displayGroup = "Specular"
+                    displayName = "Index of Refraction"
+                    doc = "Index of Refraction of the material"
+                    hidden = false
+                )
+                asset inputs:normalmap_texture = @./SubUSDs/textures/BD87C8184BCF97DE_normal.dds@ (
+                    colorSpace = "raw"
+                    customData = {
+                        asset default = @@
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map"
+                    hidden = false
+                )
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86) (
+                    customData = {
+                        float3 default = (0.97, 0.97, 0.97)
+                        dictionary range = {
+                            float3 max = (1, 1, 1)
+                            float3 min = (0, 0, 0)
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Color"
+                    doc = "Expected transmittance after the specified transmittance distance through the volume."
+                    hidden = false
+                    renderType = "color"
+                )
+                float inputs:transmittance_measurement_distance = 800 (
+                    customData = {
+                        float default = 1
+                        dictionary range = {
+                            float max = 65504
+                            float min = 0.001
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Measurement Distance"
+                    doc = "Distance to match the transmittance through the volume at."
+                    hidden = false
+
+
+                )
+            }
+        }
+
+        over "mat_C11DEE50697D3E6C" (
+            references = @./SubUSDs/AperturePBR_Translucent.usda@</Looks/mat_AperturePBR_Translucent>
+        )
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                int inputs:encoding = 0 (
+                    customData = {
+                        int default = 0
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map Encoding"
+                    doc = "Encoding type for the normal map.  Octahedral for 2 channel textures. tangent_space_dx for 3 channel normals, and tangent_space_ogl for 3 channel normals with an inverted (OpenGL style) G channel."
+                    hidden = false
+                    renderType = "::Z36c_3A::users::vernon::appdata::local::ov::pkg::ZA8trex_2D2022_2E6_2E26::_build::Z0Awindows_2Dx86_5F64::release::omni_core_materials::Base::AperturePBR_Normal::normalmap_encoding"
+                    sdrMetadata = {
+                        string __SDR__enum_value = "octahedral"
+                        string options = "octahedral:0|tangent_space_ogl:1|tangent_space_dx:2"
+                    }
+                )
+                float inputs:ior_constant = 1.33 (
+                    customData = {
+                        float default = 1.3
+                        dictionary range = {
+                            float max = 3
+                            float min = 1
+                        }
+                    }
+                    displayGroup = "Specular"
+                    displayName = "Index of Refraction"
+                    doc = "Index of Refraction of the material"
+                    hidden = false
+                )
+                asset inputs:normalmap_texture = @./SubUSDs/textures/C11DEE50697D3E6C_normal.dds@ (
+                    colorSpace = "raw"
+                    customData = {
+                        asset default = @@
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map"
+                    hidden = false
+                )
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86) (
+                    customData = {
+                        float3 default = (0.97, 0.97, 0.97)
+                        dictionary range = {
+                            float3 max = (1, 1, 1)
+                            float3 min = (0, 0, 0)
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Color"
+                    doc = "Expected transmittance after the specified transmittance distance through the volume."
+                    hidden = false
+                    renderType = "color"
+                )
+                float inputs:transmittance_measurement_distance = 800 (
+                    customData = {
+                        float default = 1
+                        dictionary range = {
+                            float max = 65504
+                            float min = 0.001
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Measurement Distance"
+                    doc = "Distance to match the transmittance through the volume at."
+                    hidden = false
+
+
+                )
+            }
+        }
+
+
+        over "mat_CA5A60067E927360" (
+            references = @./SubUSDs/AperturePBR_Translucent.usda@</Looks/mat_AperturePBR_Translucent>
+        )
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                int inputs:encoding = 0 (
+                    customData = {
+                        int default = 0
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map Encoding"
+                    doc = "Encoding type for the normal map.  Octahedral for 2 channel textures. tangent_space_dx for 3 channel normals, and tangent_space_ogl for 3 channel normals with an inverted (OpenGL style) G channel."
+                    hidden = false
+                    renderType = "::Z36c_3A::users::vernon::appdata::local::ov::pkg::ZA8trex_2D2022_2E6_2E26::_build::Z0Awindows_2Dx86_5F64::release::omni_core_materials::Base::AperturePBR_Normal::normalmap_encoding"
+                    sdrMetadata = {
+                        string __SDR__enum_value = "octahedral"
+                        string options = "octahedral:0|tangent_space_ogl:1|tangent_space_dx:2"
+                    }
+                )
+                float inputs:ior_constant = 1.33 (
+                    customData = {
+                        float default = 1.3
+                        dictionary range = {
+                            float max = 3
+                            float min = 1
+                        }
+                    }
+                    displayGroup = "Specular"
+                    displayName = "Index of Refraction"
+                    doc = "Index of Refraction of the material"
+                    hidden = false
+                )
+                asset inputs:normalmap_texture = @./SubUSDs/textures/CA5A60067E927360_normal.dds@ (
+                    colorSpace = "raw"
+                    customData = {
+                        asset default = @@
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map"
+                    hidden = false
+                )
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86) (
+                    customData = {
+                        float3 default = (0.97, 0.97, 0.97)
+                        dictionary range = {
+                            float3 max = (1, 1, 1)
+                            float3 min = (0, 0, 0)
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Color"
+                    doc = "Expected transmittance after the specified transmittance distance through the volume."
+                    hidden = false
+                    renderType = "color"
+                )
+                float inputs:transmittance_measurement_distance = 800 (
+                    customData = {
+                        float default = 1
+                        dictionary range = {
+                            float max = 65504
+                            float min = 0.001
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Measurement Distance"
+                    doc = "Distance to match the transmittance through the volume at."
+                    hidden = false
+
+
+                )
+            }
+        }
+
+
+        over "mat_CD8E5F32F39D7051" (
+            references = @./SubUSDs/AperturePBR_Translucent.usda@</Looks/mat_AperturePBR_Translucent>
+        )
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                int inputs:encoding = 0 (
+                    customData = {
+                        int default = 0
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map Encoding"
+                    doc = "Encoding type for the normal map.  Octahedral for 2 channel textures. tangent_space_dx for 3 channel normals, and tangent_space_ogl for 3 channel normals with an inverted (OpenGL style) G channel."
+                    hidden = false
+                    renderType = "::Z36c_3A::users::vernon::appdata::local::ov::pkg::ZA8trex_2D2022_2E6_2E26::_build::Z0Awindows_2Dx86_5F64::release::omni_core_materials::Base::AperturePBR_Normal::normalmap_encoding"
+                    sdrMetadata = {
+                        string __SDR__enum_value = "octahedral"
+                        string options = "octahedral:0|tangent_space_ogl:1|tangent_space_dx:2"
+                    }
+                )
+                float inputs:ior_constant = 1.33 (
+                    customData = {
+                        float default = 1.3
+                        dictionary range = {
+                            float max = 3
+                            float min = 1
+                        }
+                    }
+                    displayGroup = "Specular"
+                    displayName = "Index of Refraction"
+                    doc = "Index of Refraction of the material"
+                    hidden = false
+                )
+                asset inputs:normalmap_texture = @./SubUSDs/textures/CD8E5F32F39D7051_normal.dds@ (
+                    colorSpace = "raw"
+                    customData = {
+                        asset default = @@
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map"
+                    hidden = false
+                )
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86) (
+                    customData = {
+                        float3 default = (0.97, 0.97, 0.97)
+                        dictionary range = {
+                            float3 max = (1, 1, 1)
+                            float3 min = (0, 0, 0)
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Color"
+                    doc = "Expected transmittance after the specified transmittance distance through the volume."
+                    hidden = false
+                    renderType = "color"
+                )
+                float inputs:transmittance_measurement_distance = 800 (
+                    customData = {
+                        float default = 1
+                        dictionary range = {
+                            float max = 65504
+                            float min = 0.001
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Measurement Distance"
+                    doc = "Distance to match the transmittance through the volume at."
+                    hidden = false
+
+
+                )
+            }
+        }
+
+        over "mat_D4A739F974E77B37" (
+            references = @./SubUSDs/AperturePBR_Translucent.usda@</Looks/mat_AperturePBR_Translucent>
+        )
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                int inputs:encoding = 0 (
+                    customData = {
+                        int default = 0
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map Encoding"
+                    doc = "Encoding type for the normal map.  Octahedral for 2 channel textures. tangent_space_dx for 3 channel normals, and tangent_space_ogl for 3 channel normals with an inverted (OpenGL style) G channel."
+                    hidden = false
+                    renderType = "::Z36c_3A::users::vernon::appdata::local::ov::pkg::ZA8trex_2D2022_2E6_2E26::_build::Z0Awindows_2Dx86_5F64::release::omni_core_materials::Base::AperturePBR_Normal::normalmap_encoding"
+                    sdrMetadata = {
+                        string __SDR__enum_value = "octahedral"
+                        string options = "octahedral:0|tangent_space_ogl:1|tangent_space_dx:2"
+                    }
+                )
+                float inputs:ior_constant = 1.33 (
+                    customData = {
+                        float default = 1.3
+                        dictionary range = {
+                            float max = 3
+                            float min = 1
+                        }
+                    }
+                    displayGroup = "Specular"
+                    displayName = "Index of Refraction"
+                    doc = "Index of Refraction of the material"
+                    hidden = false
+                )
+                asset inputs:normalmap_texture = @./SubUSDs/textures/D4A739F974E77B37_normal.dds@ (
+                    colorSpace = "raw"
+                    customData = {
+                        asset default = @@
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map"
+                    hidden = false
+                )
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86) (
+                    customData = {
+                        float3 default = (0.97, 0.97, 0.97)
+                        dictionary range = {
+                            float3 max = (1, 1, 1)
+                            float3 min = (0, 0, 0)
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Color"
+                    doc = "Expected transmittance after the specified transmittance distance through the volume."
+                    hidden = false
+                    renderType = "color"
+                )
+                float inputs:transmittance_measurement_distance = 800 (
+                    customData = {
+                        float default = 1
+                        dictionary range = {
+                            float max = 65504
+                            float min = 0.001
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Measurement Distance"
+                    doc = "Distance to match the transmittance through the volume at."
+                    hidden = false
+
+
+                )
+            }
+        }
+
+        over "mat_DA5CDFC6943FDFF3" (
+            references = @./SubUSDs/AperturePBR_Translucent.usda@</Looks/mat_AperturePBR_Translucent>
+        )
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                int inputs:encoding = 0 (
+                    customData = {
+                        int default = 0
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map Encoding"
+                    doc = "Encoding type for the normal map.  Octahedral for 2 channel textures. tangent_space_dx for 3 channel normals, and tangent_space_ogl for 3 channel normals with an inverted (OpenGL style) G channel."
+                    hidden = false
+                    renderType = "::Z36c_3A::users::vernon::appdata::local::ov::pkg::ZA8trex_2D2022_2E6_2E26::_build::Z0Awindows_2Dx86_5F64::release::omni_core_materials::Base::AperturePBR_Normal::normalmap_encoding"
+                    sdrMetadata = {
+                        string __SDR__enum_value = "octahedral"
+                        string options = "octahedral:0|tangent_space_ogl:1|tangent_space_dx:2"
+                    }
+                )
+                float inputs:ior_constant = 1.33 (
+                    customData = {
+                        float default = 1.3
+                        dictionary range = {
+                            float max = 3
+                            float min = 1
+                        }
+                    }
+                    displayGroup = "Specular"
+                    displayName = "Index of Refraction"
+                    doc = "Index of Refraction of the material"
+                    hidden = false
+                )
+                asset inputs:normalmap_texture = @./SubUSDs/textures/DA5CDFC6943FDFF3_normal.dds@ (
+                    colorSpace = "raw"
+                    customData = {
+                        asset default = @@
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map"
+                    hidden = false
+                )
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86) (
+                    customData = {
+                        float3 default = (0.97, 0.97, 0.97)
+                        dictionary range = {
+                            float3 max = (1, 1, 1)
+                            float3 min = (0, 0, 0)
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Color"
+                    doc = "Expected transmittance after the specified transmittance distance through the volume."
+                    hidden = false
+                    renderType = "color"
+                )
+                float inputs:transmittance_measurement_distance = 800 (
+                    customData = {
+                        float default = 1
+                        dictionary range = {
+                            float max = 65504
+                            float min = 0.001
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Measurement Distance"
+                    doc = "Distance to match the transmittance through the volume at."
+                    hidden = false
+
+
+                )
+            }
+        }
+
+        over "mat_F2B341648C28E47C" (
+            references = @./SubUSDs/AperturePBR_Translucent.usda@</Looks/mat_AperturePBR_Translucent>
+        )
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                int inputs:encoding = 0 (
+                    customData = {
+                        int default = 0
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map Encoding"
+                    doc = "Encoding type for the normal map.  Octahedral for 2 channel textures. tangent_space_dx for 3 channel normals, and tangent_space_ogl for 3 channel normals with an inverted (OpenGL style) G channel."
+                    hidden = false
+                    renderType = "::Z36c_3A::users::vernon::appdata::local::ov::pkg::ZA8trex_2D2022_2E6_2E26::_build::Z0Awindows_2Dx86_5F64::release::omni_core_materials::Base::AperturePBR_Normal::normalmap_encoding"
+                    sdrMetadata = {
+                        string __SDR__enum_value = "octahedral"
+                        string options = "octahedral:0|tangent_space_ogl:1|tangent_space_dx:2"
+                    }
+                )
+                float inputs:ior_constant = 1.33 (
+                    customData = {
+                        float default = 1.3
+                        dictionary range = {
+                            float max = 3
+                            float min = 1
+                        }
+                    }
+                    displayGroup = "Specular"
+                    displayName = "Index of Refraction"
+                    doc = "Index of Refraction of the material"
+                    hidden = false
+                )
+                asset inputs:normalmap_texture = @./SubUSDs/textures/F2B341648C28E47C_normal.dds@ (
+                    colorSpace = "raw"
+                    customData = {
+                        asset default = @@
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map"
+                    hidden = false
+                )
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86) (
+                    customData = {
+                        float3 default = (0.97, 0.97, 0.97)
+                        dictionary range = {
+                            float3 max = (1, 1, 1)
+                            float3 min = (0, 0, 0)
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Color"
+                    doc = "Expected transmittance after the specified transmittance distance through the volume."
+                    hidden = false
+                    renderType = "color"
+                )
+                float inputs:transmittance_measurement_distance = 800 (
+                    customData = {
+                        float default = 1
+                        dictionary range = {
+                            float max = 65504
+                            float min = 0.001
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Measurement Distance"
+                    doc = "Distance to match the transmittance through the volume at."
+                    hidden = false
+
+
+                )
+            }
+        }
+
+        over "mat_F1589031BC730661" (
+            references = @./SubUSDs/AperturePBR_Translucent.usda@</Looks/mat_AperturePBR_Translucent>
+        )
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                int inputs:encoding = 0 (
+                    customData = {
+                        int default = 0
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map Encoding"
+                    doc = "Encoding type for the normal map.  Octahedral for 2 channel textures. tangent_space_dx for 3 channel normals, and tangent_space_ogl for 3 channel normals with an inverted (OpenGL style) G channel."
+                    hidden = false
+                    renderType = "::Z36c_3A::users::vernon::appdata::local::ov::pkg::ZA8trex_2D2022_2E6_2E26::_build::Z0Awindows_2Dx86_5F64::release::omni_core_materials::Base::AperturePBR_Normal::normalmap_encoding"
+                    sdrMetadata = {
+                        string __SDR__enum_value = "octahedral"
+                        string options = "octahedral:0|tangent_space_ogl:1|tangent_space_dx:2"
+                    }
+                )
+                float inputs:ior_constant = 1.33 (
+                    customData = {
+                        float default = 1.3
+                        dictionary range = {
+                            float max = 3
+                            float min = 1
+                        }
+                    }
+                    displayGroup = "Specular"
+                    displayName = "Index of Refraction"
+                    doc = "Index of Refraction of the material"
+                    hidden = false
+                )
+                asset inputs:normalmap_texture = @./SubUSDs/textures/F1589031BC730661_normal.dds@ (
+                    colorSpace = "raw"
+                    customData = {
+                        asset default = @@
+                    }
+                    displayGroup = "Normal"
+                    displayName = "Normal Map"
+                    hidden = false
+                )
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86) (
+                    customData = {
+                        float3 default = (0.97, 0.97, 0.97)
+                        dictionary range = {
+                            float3 max = (1, 1, 1)
+                            float3 min = (0, 0, 0)
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Color"
+                    doc = "Expected transmittance after the specified transmittance distance through the volume."
+                    hidden = false
+                    renderType = "color"
+                )
+                float inputs:transmittance_measurement_distance = 800 (
+                    customData = {
+                        float default = 1
+                        dictionary range = {
+                            float max = 65504
+                            float min = 0.001
+                        }
+                    }
+                    displayGroup = "Volume"
+                    displayName = "Transmittance Measurement Distance"
+                    doc = "Distance to match the transmittance through the volume at."
+                    hidden = false
+
+
+                )
+            }
+        }
+    }
+}
+
