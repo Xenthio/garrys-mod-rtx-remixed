@@ -553,7 +553,7 @@ private:
 };
 
 // Lua bindings initialization
-void InitializeToPBRLuaBindings(GarrysMod::Lua::ILuaBase* LUA);
+void InitializeLegacyTextureProcessorLuaBindings(GarrysMod::Lua::ILuaBase* LUA);
 
 // Backwards compatibility alias within this namespace
 using VTFTextureConverter = TextureProcessor;

@@ -11,6 +11,7 @@
 #include <materialsystem/imaterial.h>
 #include <materialsystem/imaterialvar.h>
 #include <algorithm>
+#include <GarrysMod/Lua/Interface.h>
 
 using namespace GarrysMod::Lua;
 
@@ -242,18 +243,18 @@ void Reset() {
 // Lua Bindings
 // =========================================================================
 
-LUA_FUNCTION(Lua_SetEnabled) {
+LUA_FUNCTION(ShaderFixes_SetEnabled) {
     s_config.enabled = LUA->GetBool(1);
     return 0;
 }
 
-LUA_FUNCTION(Lua_IsFixed) {
+LUA_FUNCTION(ShaderFixes_IsFixed) {
     const char* materialName = LUA->CheckString(1);
     LUA->PushBool(IsFixed(materialName));
     return 1;
 }
 
-LUA_FUNCTION(Lua_GetFixedMaterials) {
+LUA_FUNCTION(ShaderFixes_GetFixedMaterials) {
     auto materials = GetFixedMaterials();
     
     LUA->CreateTable();
@@ -267,12 +268,12 @@ LUA_FUNCTION(Lua_GetFixedMaterials) {
     return 1;
 }
 
-LUA_FUNCTION(Lua_GetTotalFixCount) {
+LUA_FUNCTION(ShaderFixes_GetTotalFixCount) {
     LUA->PushNumber(GetTotalFixCount());
     return 1;
 }
 
-LUA_FUNCTION(Lua_Reset) {
+LUA_FUNCTION(ShaderFixes_Reset) {
     Reset();
     return 0;
 }
@@ -281,19 +282,19 @@ void RegisterLuaBindings(GarrysMod::Lua::ILuaBase* LUA) {
     LUA->PushSpecial(SPECIAL_GLOB);
     LUA->CreateTable();
     
-    LUA->PushCFunction(Lua_SetEnabled);
+    LUA->PushCFunction(ShaderFixes_SetEnabled);
     LUA->SetField(-2, "SetEnabled");
     
-    LUA->PushCFunction(Lua_IsFixed);
+    LUA->PushCFunction(ShaderFixes_IsFixed);
     LUA->SetField(-2, "IsFixed");
     
-    LUA->PushCFunction(Lua_GetFixedMaterials);
+    LUA->PushCFunction(ShaderFixes_GetFixedMaterials);
     LUA->SetField(-2, "GetFixedMaterials");
     
-    LUA->PushCFunction(Lua_GetTotalFixCount);
+    LUA->PushCFunction(ShaderFixes_GetTotalFixCount);
     LUA->SetField(-2, "GetTotalFixCount");
     
-    LUA->PushCFunction(Lua_Reset);
+    LUA->PushCFunction(ShaderFixes_Reset);
     LUA->SetField(-2, "Reset");
     
     LUA->SetField(-2, "ShaderFixes");

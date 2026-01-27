@@ -227,7 +227,7 @@ static IFileSystem* GetFileSystem() {
 }
 
 // Lua: HashCollisionFixer.CheckMaterial(materialName, texturePath, [debugOutput])
-LUA_FUNCTION(Lua_CheckMaterial) {
+LUA_FUNCTION(HashFixer_CheckMaterial) {
     const char* materialName = LUA->CheckString(1);
     const char* texturePath = LUA->CheckString(2);
     bool debug = LUA->IsType(3, Type::Bool) ? LUA->GetBool(3) : false;
@@ -244,7 +244,7 @@ LUA_FUNCTION(Lua_CheckMaterial) {
 }
 
 // Lua: HashCollisionFixer.GetMaterialsNeedingFix()
-LUA_FUNCTION(Lua_GetMaterialsNeedingFix) {
+LUA_FUNCTION(HashFixer_GetMaterialsNeedingFix) {
     std::vector<std::string> materials = GetMaterialsNeedingFix();
     
     LUA->CreateTable();
@@ -259,28 +259,28 @@ LUA_FUNCTION(Lua_GetMaterialsNeedingFix) {
 }
 
 // Lua: HashCollisionFixer.MarkMaterialFixed(materialName)
-LUA_FUNCTION(Lua_MarkMaterialFixed) {
+LUA_FUNCTION(HashFixer_MarkMaterialFixed) {
     const char* materialName = LUA->CheckString(1);
     MarkMaterialFixed(materialName);
     return 0;
 }
 
 // Lua: HashCollisionFixer.IsMaterialFixed(materialName)
-LUA_FUNCTION(Lua_IsMaterialFixed) {
+LUA_FUNCTION(HashFixer_IsMaterialFixed) {
     const char* materialName = LUA->CheckString(1);
     LUA->PushBool(IsMaterialFixed(materialName));
     return 1;
 }
 
 // Lua: HashCollisionFixer.IsSolidColorMaterial(materialName)
-LUA_FUNCTION(Lua_IsSolidColorMaterial) {
+LUA_FUNCTION(HashFixer_IsSolidColorMaterial) {
     const char* materialName = LUA->CheckString(1);
     LUA->PushBool(IsSolidColorMaterial(materialName));
     return 1;
 }
 
 // Lua: HashCollisionFixer.GetMaterialColor(materialName)
-LUA_FUNCTION(Lua_GetMaterialColor) {
+LUA_FUNCTION(HashFixer_GetMaterialColor) {
     const char* materialName = LUA->CheckString(1);
     uint8_t r, g, b, a;
     
@@ -296,13 +296,13 @@ LUA_FUNCTION(Lua_GetMaterialColor) {
 }
 
 // Lua: HashCollisionFixer.Reset()
-LUA_FUNCTION(Lua_Reset) {
+LUA_FUNCTION(HashFixer_Reset) {
     Reset();
     return 0;
 }
 
 // Lua: HashCollisionFixer.GetStats()
-LUA_FUNCTION(Lua_GetStats) {
+LUA_FUNCTION(HashFixer_GetStats) {
     LUA->CreateTable();
     
     LUA->PushString("totalDetected");
@@ -321,7 +321,7 @@ LUA_FUNCTION(Lua_GetStats) {
 }
 
 // Lua: HashCollisionFixer.CheckSolidColor(texturePath, [debugOutput])
-LUA_FUNCTION(Lua_CheckSolidColor) {
+LUA_FUNCTION(HashFixer_CheckSolidColor) {
     const char* texturePath = LUA->CheckString(1);
     bool debug = LUA->IsType(2, Type::Bool) ? LUA->GetBool(2) : false;
     
@@ -358,39 +358,39 @@ void RegisterLuaBindings(GarrysMod::Lua::ILuaBase* LUA) {
     LUA->CreateTable();
     
     LUA->PushString("CheckMaterial");
-    LUA->PushCFunction(Lua_CheckMaterial);
+    LUA->PushCFunction(HashFixer_CheckMaterial);
     LUA->SetTable(-3);
     
     LUA->PushString("GetMaterialsNeedingFix");
-    LUA->PushCFunction(Lua_GetMaterialsNeedingFix);
+    LUA->PushCFunction(HashFixer_GetMaterialsNeedingFix);
     LUA->SetTable(-3);
     
     LUA->PushString("MarkMaterialFixed");
-    LUA->PushCFunction(Lua_MarkMaterialFixed);
+    LUA->PushCFunction(HashFixer_MarkMaterialFixed);
     LUA->SetTable(-3);
     
     LUA->PushString("IsMaterialFixed");
-    LUA->PushCFunction(Lua_IsMaterialFixed);
+    LUA->PushCFunction(HashFixer_IsMaterialFixed);
     LUA->SetTable(-3);
     
     LUA->PushString("IsSolidColorMaterial");
-    LUA->PushCFunction(Lua_IsSolidColorMaterial);
+    LUA->PushCFunction(HashFixer_IsSolidColorMaterial);
     LUA->SetTable(-3);
     
     LUA->PushString("GetMaterialColor");
-    LUA->PushCFunction(Lua_GetMaterialColor);
+    LUA->PushCFunction(HashFixer_GetMaterialColor);
     LUA->SetTable(-3);
     
     LUA->PushString("Reset");
-    LUA->PushCFunction(Lua_Reset);
+    LUA->PushCFunction(HashFixer_Reset);
     LUA->SetTable(-3);
     
     LUA->PushString("GetStats");
-    LUA->PushCFunction(Lua_GetStats);
+    LUA->PushCFunction(HashFixer_GetStats);
     LUA->SetTable(-3);
     
     LUA->PushString("CheckSolidColor");
-    LUA->PushCFunction(Lua_CheckSolidColor);
+    LUA->PushCFunction(HashFixer_CheckSolidColor);
     LUA->SetTable(-3);
     
     LUA->SetField(-2, "HashCollisionFixer");

@@ -16,6 +16,7 @@
 #include <Windows.h>
 #include <remix/remix.h>
 #include <algorithm>
+#include <GarrysMod/Lua/Interface.h>
 
 using namespace GarrysMod::Lua;
 
@@ -489,24 +490,28 @@ void ApplyToHash(uint64_t hash, uint32_t flags, const std::string& materialName)
     // Store mapping
     s_hashToCategoryFlags[hash] = flags;
     
+    // Convert hash to string format for Remix API
+    char hashStr[32];
+    sprintf_s(hashStr, "0x%llX", hash);
+    
     // Apply to Remix API
     if (flags & CategoryFlags::SKY) {
-        s_remix->dxvk_AddExternalTexture(hash, "rtx.skyBoxTextures");
+        s_remix->AddTextureHash("rtx.skyBoxTextures", hashStr);
     }
     if (flags & CategoryFlags::IGNORE) {
-        s_remix->dxvk_AddExternalTexture(hash, "rtx.ignoreTextures");
+        s_remix->AddTextureHash("rtx.ignoreTextures", hashStr);
     }
     if (flags & CategoryFlags::PARTICLE) {
-        s_remix->dxvk_AddExternalTexture(hash, "rtx.particleTextures");
+        s_remix->AddTextureHash("rtx.particleTextures", hashStr);
     }
     if (flags & CategoryFlags::DECAL_STATIC) {
-        s_remix->dxvk_AddExternalTexture(hash, "rtx.decalTextures");
+        s_remix->AddTextureHash("rtx.decalTextures", hashStr);
     }
     if (flags & CategoryFlags::ANIMATED_WATER) {
-        s_remix->dxvk_AddExternalTexture(hash, "rtx.animatedWaterTextures");
+        s_remix->AddTextureHash("rtx.animatedWaterTextures", hashStr);
     }
     if (flags & CategoryFlags::EMISSIVE) {
-        s_remix->dxvk_AddExternalTexture(hash, "rtx.legacyEmissiveTextures");
+        s_remix->AddTextureHash("rtx.legacyEmissiveTextures", hashStr);
     }
     
     if (s_config.debugOutput) {
@@ -624,18 +629,22 @@ int RetryPendingCategories() {
             // Actually we can do it inline since we have the lock
             s_hashToCategoryFlags[hash] = it->categoryFlags;
             
+            // Convert hash to string format for Remix API
+            char hashStr[32];
+            sprintf_s(hashStr, "0x%llX", hash);
+            
             // Apply to Remix API
             if (it->categoryFlags & CategoryFlags::SKY) {
-                s_remix->dxvk_AddExternalTexture(hash, "rtx.skyBoxTextures");
+                s_remix->AddTextureHash("rtx.skyBoxTextures", hashStr);
             }
             if (it->categoryFlags & CategoryFlags::PARTICLE) {
-                s_remix->dxvk_AddExternalTexture(hash, "rtx.particleTextures");
+                s_remix->AddTextureHash("rtx.particleTextures", hashStr);
             }
             if (it->categoryFlags & CategoryFlags::DECAL_STATIC) {
-                s_remix->dxvk_AddExternalTexture(hash, "rtx.decalTextures");
+                s_remix->AddTextureHash("rtx.decalTextures", hashStr);
             }
             if (it->categoryFlags & CategoryFlags::EMISSIVE) {
-                s_remix->dxvk_AddExternalTexture(hash, "rtx.legacyEmissiveTextures");
+                s_remix->AddTextureHash("rtx.legacyEmissiveTextures", hashStr);
             }
             
             if (s_config.debugOutput) {
@@ -683,31 +692,31 @@ Stats GetStats() {
 // Lua Bindings
 // =========================================================================
 
-LUA_FUNCTION(Lua_SetEnabled) {
+LUA_FUNCTION(AutoCat_SetEnabled) {
     bool enabled = LUA->GetBool(1);
     SetEnabled(enabled);
     return 0;
 }
 
-LUA_FUNCTION(Lua_SetParticleCategorisation) {
+LUA_FUNCTION(AutoCat_SetParticleCategorisation) {
     bool enabled = LUA->GetBool(1);
     SetParticleCategorisation(enabled);
     return 0;
 }
 
-LUA_FUNCTION(Lua_SetDecalCategorisation) {
+LUA_FUNCTION(AutoCat_SetDecalCategorisation) {
     bool enabled = LUA->GetBool(1);
     SetDecalCategorisation(enabled);
     return 0;
 }
 
-LUA_FUNCTION(Lua_SetEmissiveCategorisation) {
+LUA_FUNCTION(AutoCat_SetEmissiveCategorisation) {
     bool enabled = LUA->GetBool(1);
     SetEmissiveCategorisation(enabled);
     return 0;
 }
 
-LUA_FUNCTION(Lua_SetCategoryFlags) {
+LUA_FUNCTION(AutoCat_SetCategoryFlags) {
     uint64_t hash = 0;
     if (LUA->IsType(1, Type::String)) {
         const char* hashStr = LUA->GetString(1);
@@ -721,7 +730,7 @@ LUA_FUNCTION(Lua_SetCategoryFlags) {
     return 0;
 }
 
-LUA_FUNCTION(Lua_GetCategoryFlags) {
+LUA_FUNCTION(AutoCat_GetCategoryFlags) {
     uint64_t hash = 0;
     if (LUA->IsType(1, Type::String)) {
         const char* hashStr = LUA->GetString(1);
@@ -736,13 +745,13 @@ LUA_FUNCTION(Lua_GetCategoryFlags) {
     return 1;
 }
 
-LUA_FUNCTION(Lua_RetryPending) {
+LUA_FUNCTION(AutoCat_RetryPending) {
     int count = RetryPendingCategories();
     LUA->PushNumber(count);
     return 1;
 }
 
-LUA_FUNCTION(Lua_GetStats) {
+LUA_FUNCTION(AutoCat_GetStats) {
     Stats stats = GetStats();
     
     LUA->CreateTable();
@@ -769,28 +778,28 @@ void RegisterLuaBindings(GarrysMod::Lua::ILuaBase* LUA) {
     LUA->PushSpecial(SPECIAL_GLOB);
     LUA->CreateTable();
     
-    LUA->PushCFunction(Lua_SetEnabled);
+    LUA->PushCFunction(AutoCat_SetEnabled);
     LUA->SetField(-2, "SetEnabled");
     
-    LUA->PushCFunction(Lua_SetParticleCategorisation);
+    LUA->PushCFunction(AutoCat_SetParticleCategorisation);
     LUA->SetField(-2, "SetParticleCategorisation");
     
-    LUA->PushCFunction(Lua_SetDecalCategorisation);
+    LUA->PushCFunction(AutoCat_SetDecalCategorisation);
     LUA->SetField(-2, "SetDecalCategorisation");
     
-    LUA->PushCFunction(Lua_SetEmissiveCategorisation);
+    LUA->PushCFunction(AutoCat_SetEmissiveCategorisation);
     LUA->SetField(-2, "SetEmissiveCategorisation");
     
-    LUA->PushCFunction(Lua_SetCategoryFlags);
+    LUA->PushCFunction(AutoCat_SetCategoryFlags);
     LUA->SetField(-2, "SetCategoryFlags");
     
-    LUA->PushCFunction(Lua_GetCategoryFlags);
+    LUA->PushCFunction(AutoCat_GetCategoryFlags);
     LUA->SetField(-2, "GetCategoryFlags");
     
-    LUA->PushCFunction(Lua_RetryPending);
+    LUA->PushCFunction(AutoCat_RetryPending);
     LUA->SetField(-2, "RetryPending");
     
-    LUA->PushCFunction(Lua_GetStats);
+    LUA->PushCFunction(AutoCat_GetStats);
     LUA->SetField(-2, "GetStats");
     
     LUA->SetField(-2, "AutoCategorisation");
