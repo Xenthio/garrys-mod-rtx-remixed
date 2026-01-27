@@ -173,14 +173,48 @@ local function ProcessWorldMaterials()
         end
     end
     
-    -- Also process NikNaks BSP textures if available
+    -- Process NikNaks BSP textures if available
     if NikNaks and NikNaks.CurrentMap then
         local bsp = NikNaks.CurrentMap
-        if bsp and bsp.GetAllTextureNames then
-            local textures = bsp:GetAllTextureNames()
-            if textures then
-                for _, texName in ipairs(textures) do
-                    RunLuaFixers(texName)
+        
+        -- Get textures from BSP texture list
+        if bsp.GetTextures then
+            for _, texture in ipairs(bsp:GetTextures()) do
+                if texture and texture ~= "" then
+                    RunLuaFixers(texture)
+                end
+            end
+        end
+        
+        -- Get textures from BSP faces
+        if bsp.GetFaces then
+            for _, face in pairs(bsp:GetFaces()) do
+                local texture = face:GetTexture()
+                if texture and texture ~= "" then
+                    RunLuaFixers(texture)
+                end
+            end
+        end
+        
+        -- Get materials from static props
+        if bsp.GetStaticProps then
+            for _, prop in pairs(bsp:GetStaticProps()) do
+                local modelPath = prop:GetModel()
+                if modelPath then
+                    -- Get materials from the model using NikNaks
+                    if NikNaks.ModelMaterials then
+                        local propMaterials = NikNaks.ModelMaterials(modelPath)
+                        if propMaterials then
+                            for _, mat in ipairs(propMaterials) do
+                                if mat and not mat:IsError() then
+                                    local matName = mat:GetName()
+                                    if matName and matName ~= "" then
+                                        RunLuaFixers(matName)
+                                    end
+                                end
+                            end
+                        end
+                    end
                 end
             end
         end
@@ -207,12 +241,44 @@ local function CollectAllMaterials()
     -- Collect from NikNaks BSP if available
     if NikNaks and NikNaks.CurrentMap then
         local bsp = NikNaks.CurrentMap
-        if bsp and bsp.GetAllTextureNames then
-            local textures = bsp:GetAllTextureNames()
-            if textures then
-                for _, texName in ipairs(textures) do
-                    if texName and texName ~= "" then
-                        materials[texName] = true
+        
+        -- Get textures from BSP texture list
+        if bsp.GetTextures then
+            for _, texture in ipairs(bsp:GetTextures()) do
+                if texture and texture ~= "" then
+                    materials[texture] = true
+                end
+            end
+        end
+        
+        -- Get textures from BSP faces
+        if bsp.GetFaces then
+            for _, face in pairs(bsp:GetFaces()) do
+                local texture = face:GetTexture()
+                if texture and texture ~= "" then
+                    materials[texture] = true
+                end
+            end
+        end
+        
+        -- Get materials from static props
+        if bsp.GetStaticProps then
+            for _, prop in pairs(bsp:GetStaticProps()) do
+                local modelPath = prop:GetModel()
+                if modelPath then
+                    -- Get materials from the model using NikNaks
+                    if NikNaks.ModelMaterials then
+                        local propMaterials = NikNaks.ModelMaterials(modelPath)
+                        if propMaterials then
+                            for _, mat in ipairs(propMaterials) do
+                                if mat and not mat:IsError() then
+                                    local matName = mat:GetName()
+                                    if matName and matName ~= "" then
+                                        materials[matName] = true
+                                    end
+                                end
+                            end
+                        end
                     end
                 end
             end
@@ -458,6 +524,36 @@ local function Initialize()
         -- Sync debug setting
         if GetConVar("rtx_mat_debug"):GetBool() then
             RTXMaterialPipeline.SetDebug(true)
+        end
+        
+        -- Sync ToPBR settings from convars
+        local processor = MaterialPipeline and MaterialPipeline.ToPBR
+        if processor then
+            if processor.SetMetallicGeneration then
+                local metallic = GetConVar("rtx_topbr_metallic")
+                if metallic then
+                    processor.SetMetallicGeneration(metallic:GetBool())
+                end
+            end
+            if processor.SetAutoDiscover then
+                local autodiscover = GetConVar("rtx_topbr_autodiscover")
+                if autodiscover then
+                    processor.SetAutoDiscover(autodiscover:GetBool())
+                end
+            end
+            if processor.SetParseCommentedProperties then
+                local parseCommented = GetConVar("rtx_topbr_parse_commented_properties")
+                if parseCommented then
+                    processor.SetParseCommentedProperties(parseCommented:GetBool())
+                end
+            end
+            if processor.SetDebugOutput then
+                local debug = GetConVar("rtx_topbr_debug")
+                if debug then
+                    processor.SetDebugOutput(debug:GetBool())
+                end
+            end
+            DebugPrint("ToPBR settings synced from convars")
         end
     else
         InfoPrint("Waiting for C++ MaterialPipeline binary module...")

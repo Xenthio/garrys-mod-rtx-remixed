@@ -314,9 +314,14 @@ uint32_t DetectCategory(const std::string& materialName, IMaterial* material) {
             std::string shaderName = GetShaderName(material);
             std::transform(shaderName.begin(), shaderName.end(), shaderName.begin(), SafeToLower);
             
-            if (shaderName.find("sprite") != std::string::npos ||
-                shaderName.find("modulate") != std::string::npos ||
-                shaderName == "cable") {
+            // Check for particle shaders
+            // NOTE: Use prefix matching (== 0) to handle DX version suffixes (e.g., Sprite_dx6, Cable_dx6, Modulate_dx6)
+            // This also naturally excludes DecalModulate since "decalmodulate" doesn't start with "modulate"
+            bool isParticleShader = (shaderName.find("sprite") == 0 ||
+                                     shaderName.find("cable") == 0 ||
+                                     shaderName.find("modulate") == 0);
+            
+            if (isParticleShader) {
                 flags = CategoryFlags::PARTICLE;
                 s_stats.particlesCategorized++;
                 return flags;
@@ -384,7 +389,21 @@ uint32_t DetectCategory(const std::string& materialName, IMaterial* material) {
             }
         }
         
-        // Method 2: Path-based detection (exclude light materials)
+        // Method 2: Shader-based detection (Decal, DecalModulate shaders)
+        // Note: Runtime shaders have DX version suffixes (e.g., DecalModulate_dx6)
+        if (!isDecal && material) {
+            std::string shaderName = GetShaderName(material);
+            std::transform(shaderName.begin(), shaderName.end(), shaderName.begin(), SafeToLower);
+            // Check for decal shaders using prefix match to handle DX suffixes
+            // - DecalModulate, DecalModulate_dx6, etc.
+            // - Decal, Decal_dx6, etc. (but not DecalModulate which starts with "decal" too)
+            if (shaderName.find("decalmodulate") == 0 ||
+                (shaderName.find("decal") == 0 && shaderName.find("modulate") == std::string::npos)) {
+                isDecal = true;
+            }
+        }
+        
+        // Method 3: Path-based detection (exclude light materials)
         if (!isDecal &&
             ((lowerName.find("decals/") == 0 ||
               lowerName.find("/decals/") != std::string::npos ||
@@ -400,7 +419,7 @@ uint32_t DetectCategory(const std::string& materialName, IMaterial* material) {
             isDecal = true;
         }
         
-        // Method 3: Check if in world texture list from BSP
+        // Method 4: Check if in world texture list from BSP
         if (!isDecal && IsWorldTexture(materialName)) {
             isDecal = true;
         }
@@ -635,16 +654,18 @@ int RetryPendingCategories() {
         if (result && result.value() != 0) {
             uint64_t hash = result.value();
             
-            // Apply without holding lock (use separate function)
-            // Actually we can do it inline since we have the lock
+            // Store mapping
             s_hashToCategoryFlags[hash] = it->categoryFlags;
             
             // Convert hash to string format for Remix API
             std::string hashStr = HashToString(hash);
             
-            // Apply to Remix API
+            // Apply to Remix API - all category types (same as ApplyToHash)
             if (it->categoryFlags & CategoryFlags::SKY) {
                 s_remix->AddTextureHash("rtx.skyBoxTextures", hashStr.c_str());
+            }
+            if (it->categoryFlags & CategoryFlags::IGNORED) {
+                s_remix->AddTextureHash("rtx.ignoreTextures", hashStr.c_str());
             }
             if (it->categoryFlags & CategoryFlags::PARTICLE) {
                 s_remix->AddTextureHash("rtx.particleTextures", hashStr.c_str());
@@ -652,13 +673,16 @@ int RetryPendingCategories() {
             if (it->categoryFlags & CategoryFlags::DECAL_STATIC) {
                 s_remix->AddTextureHash("rtx.decalTextures", hashStr.c_str());
             }
+            if (it->categoryFlags & CategoryFlags::ANIMATED_WATER) {
+                s_remix->AddTextureHash("rtx.animatedWaterTextures", hashStr.c_str());
+            }
             if (it->categoryFlags & CategoryFlags::EMISSIVE) {
                 s_remix->AddTextureHash("rtx.legacyEmissiveTextures", hashStr.c_str());
             }
             
             if (s_config.debugOutput) {
-                Msg("[AutoCategorisation] Retry succeeded for '%s' -> 0x%llX\n", 
-                    it->materialName.c_str(), hash);
+                Msg("[AutoCategorisation] Retry succeeded for '%s' -> hash 0x%llX, flags 0x%X\n", 
+                    it->materialName.c_str(), hash, it->categoryFlags);
             }
             
             // Release texture and remove from list

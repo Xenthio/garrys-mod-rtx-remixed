@@ -102,6 +102,47 @@ bool CheckExistingMaterials(const std::string& materialsUsdaPath,
     return true;
 }
 
+bool LoadExistingHashes(const std::string& materialsUsdaPath,
+                        std::unordered_set<uint64_t>& existingHashes,
+                        bool debugOutput) {
+    existingHashes.clear();
+    
+    // Read existing materials.usda to find which hashes are already defined
+    std::ifstream existingFile(materialsUsdaPath);
+    if (!existingFile.is_open()) {
+        // File doesn't exist - that's OK, just means no existing hashes
+        if (debugOutput) {
+            Msg("[USDA] No existing materials.usda found at %s\n", materialsUsdaPath.c_str());
+        }
+        return true;
+    }
+    
+    std::string line;
+    while (std::getline(existingFile, line)) {
+        // Look for lines like: over "mat_HASH"
+        size_t matPos = line.find("over \"mat_");
+        if (matPos != std::string::npos) {
+            size_t hashStart = matPos + 10; // Length of 'over "mat_'
+            size_t hashEnd = line.find("\"", hashStart);
+            if (hashEnd != std::string::npos) {
+                std::string hashStr = line.substr(hashStart, hashEnd - hashStart);
+                uint64_t hash = 0;
+                if (sscanf(hashStr.c_str(), "%llX", (unsigned long long*)&hash) == 1) {
+                    existingHashes.insert(hash);
+                }
+            }
+        }
+    }
+    existingFile.close();
+    
+    if (debugOutput) {
+        Msg("[USDA] Loaded %zu existing material hashes from %s\n", 
+            existingHashes.size(), materialsUsdaPath.c_str());
+    }
+    
+    return true;
+}
+
 bool WriteModUSDAFile(const std::string& modDir) {
     std::string modUsdaPath = modDir + "/mod.usda";
     std::ofstream modUsda(modUsdaPath);
@@ -263,48 +304,177 @@ void WriteOpaqueMaterial(std::ostream& stream,
     stream << "        }\n\n";  // Close material
 }
 
-bool WriteMaterialsUSDAFile(const std::string& modDir,
-                            const std::string& outputDirectory,
-                            const std::unordered_map<uint64_t, TextureProcessor::ProcessedMaterialInfo>& materialInfo,
-                            bool debugOutput) {
-    std::string materialsUsdaPath = modDir + "/materials.usda";
-    std::ofstream materialsUsda(materialsUsdaPath);
-    if (!materialsUsda.is_open()) {
-        Warning("[USDA] Failed to create materials.usda at %s\n", materialsUsdaPath.c_str());
-        return false;
-    }
+// Helper function to write fresh USDA content
+static void WriteFreshUSDAContent(std::ostream& stream,
+                                  const std::unordered_map<uint64_t, TextureProcessor::ProcessedMaterialInfo>& materialInfo,
+                                  const std::string& outputDirectory) {
+    stream << "#usda 1.0\n";
+    stream << "(\n";
+    stream << "    upAxis = \"Z\"\n";
+    stream << ")\n\n";
     
-    // Write USDA header
-    materialsUsda << "#usda 1.0\n";
-    materialsUsda << "(\n";
-    materialsUsda << "    upAxis = \"Z\"\n";
-    materialsUsda << ")\n\n";
-    
-    // Write material overrides
-    materialsUsda << "over \"RootNode\"\n";
-    materialsUsda << "{\n";
-    materialsUsda << "    over \"Looks\"\n";
-    materialsUsda << "    {\n";
+    stream << "over \"RootNode\"\n";
+    stream << "{\n";
+    stream << "    over \"Looks\"\n";
+    stream << "    {\n";
     
     for (const auto& pair : materialInfo) {
         const TextureProcessor::ProcessedMaterialInfo& info = pair.second;
         uint64_t hash = info.textureHash;
         
         if (info.isGlass) {
-            WriteGlassMaterial(materialsUsda, hash, info, outputDirectory);
+            WriteGlassMaterial(stream, hash, info, outputDirectory);
         } else {
-            WriteOpaqueMaterial(materialsUsda, hash, info, outputDirectory);
+            WriteOpaqueMaterial(stream, hash, info, outputDirectory);
         }
     }
     
-    materialsUsda << "    }\n";  // Close Looks
-    materialsUsda << "}\n";  // Close RootNode
+    stream << "    }\n";  // Close Looks
+    stream << "}\n";  // Close RootNode
+}
+
+bool WriteMaterialsUSDAFile(const std::string& modDir,
+                            const std::string& outputDirectory,
+                            const std::unordered_map<uint64_t, TextureProcessor::ProcessedMaterialInfo>& materialInfo,
+                            bool debugOutput) {
+    std::string materialsUsdaPath = modDir + "/materials.usda";
+    
+    // First, read existing file content to preserve it
+    std::string existingContent;
+    std::unordered_set<uint64_t> existingHashes;
+    bool fileExists = false;
+    
+    // Use LoadExistingHashes to get the hashes, then read full content separately
+    LoadExistingHashes(materialsUsdaPath, existingHashes, false);
+    
+    {
+        std::ifstream existingFile(materialsUsdaPath);
+        if (existingFile.is_open()) {
+            fileExists = true;
+            std::stringstream buffer;
+            buffer << existingFile.rdbuf();
+            existingContent = buffer.str();
+            existingFile.close();
+            
+            if (debugOutput && !existingHashes.empty()) {
+                Msg("[USDA] Preserving %d existing material entries from file\n", (int)existingHashes.size());
+            }
+        }
+    }
+    
+    // Count how many new materials we'll add
+    int newMaterialCount = 0;
+    for (const auto& pair : materialInfo) {
+        if (existingHashes.find(pair.first) == existingHashes.end()) {
+            newMaterialCount++;
+        }
+    }
+    
+    // If file exists and no new materials, skip writing
+    if (fileExists && newMaterialCount == 0) {
+        if (debugOutput) {
+            Msg("[USDA] No new materials to add, preserving existing file\n");
+        }
+        return true;
+    }
+    
+    std::ofstream materialsUsda(materialsUsdaPath);
+    if (!materialsUsda.is_open()) {
+        Warning("[USDA] Failed to create materials.usda at %s\n", materialsUsdaPath.c_str());
+        return false;
+    }
+    
+    // Decide whether to append or write fresh
+    bool shouldAppend = fileExists && !existingContent.empty() && newMaterialCount > 0;
+    
+    if (shouldAppend) {
+        // Find the closing brackets for the USDA structure.
+        // The structure ends with:
+        //     }  <-- closes "over Looks"
+        // }  <-- closes "over RootNode"
+        //
+        // We search backwards from the end to find the RootNode closing brace first,
+        // then find the Looks closing brace before it.
+        
+        bool validPosition = false;
+        size_t closeLooksPos = std::string::npos;
+        
+        // Find the last '}' (should be RootNode close)
+        size_t closeRootPos = existingContent.rfind('}');
+        if (closeRootPos != std::string::npos && closeRootPos > 0) {
+            // Find the second-to-last '}' (should be Looks close)
+            size_t searchFrom = closeRootPos - 1;
+            size_t closeLooksCandidate = existingContent.rfind('}', searchFrom);
+            
+            if (closeLooksCandidate != std::string::npos) {
+                // Verify the structure: between Looks close and RootNode close should only be whitespace
+                bool onlyWhitespace = true;
+                for (size_t i = closeLooksCandidate + 1; i < closeRootPos; i++) {
+                    char c = existingContent[i];
+                    if (c != ' ' && c != '\t' && c != '\n' && c != '\r') {
+                        onlyWhitespace = false;
+                        break;
+                    }
+                }
+                
+                if (onlyWhitespace) {
+                    // Find the start of the line containing the Looks close brace
+                    // This is where we'll insert new materials
+                    size_t lineStart = closeLooksCandidate;
+                    while (lineStart > 0 && existingContent[lineStart - 1] != '\n') {
+                        lineStart--;
+                    }
+                    closeLooksPos = lineStart;
+                    validPosition = true;
+                }
+            }
+        }
+        
+        if (validPosition) {
+            // Write content up to the closing Looks line
+            materialsUsda << existingContent.substr(0, closeLooksPos);
+            
+            // Write new materials
+            for (const auto& pair : materialInfo) {
+                const TextureProcessor::ProcessedMaterialInfo& info = pair.second;
+                uint64_t hash = info.textureHash;
+                
+                // Skip if already in file
+                if (existingHashes.find(hash) != existingHashes.end()) {
+                    continue;
+                }
+                
+                if (info.isGlass) {
+                    WriteGlassMaterial(materialsUsda, hash, info, outputDirectory);
+                } else {
+                    WriteOpaqueMaterial(materialsUsda, hash, info, outputDirectory);
+                }
+            }
+            
+            // Write the closing brackets (from the Looks close line onwards)
+            materialsUsda << existingContent.substr(closeLooksPos);
+        } else {
+            // Fallback: couldn't find proper structure, write fresh
+            Warning("[USDA] Could not parse existing file structure, writing fresh\n");
+            shouldAppend = false;
+        }
+    }
+    
+    if (!shouldAppend) {
+        // Write fresh USDA file
+        WriteFreshUSDAContent(materialsUsda, materialInfo, outputDirectory);
+    }
     
     materialsUsda.close();
     
     if (debugOutput) {
-        Msg("[USDA] Wrote materials.usda with %d materials to %s\n", 
-            (int)materialInfo.size(), modDir.c_str());
+        if (fileExists && shouldAppend) {
+            Msg("[USDA] Appended %d new materials to materials.usda (total: %d existing + %d new)\n", 
+                newMaterialCount, (int)existingHashes.size(), newMaterialCount);
+        } else {
+            Msg("[USDA] Wrote materials.usda with %d materials to %s\n", 
+                (int)materialInfo.size(), modDir.c_str());
+        }
     }
     
     return true;

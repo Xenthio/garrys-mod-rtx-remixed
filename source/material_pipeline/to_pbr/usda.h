@@ -77,6 +77,15 @@ void WriteOpaqueMaterial(std::ostream& stream,
 // Utility Functions
 // =========================================================================
 
+// Load existing material hashes from a materials.usda file
+// @param materialsUsdaPath - Path to materials.usda
+// @param existingHashes - Output: set of hashes found in the file
+// @param debugOutput - Whether to output debug messages
+// @return true if file was read successfully (false if file doesn't exist is OK)
+bool LoadExistingHashes(const std::string& materialsUsdaPath,
+                        std::unordered_set<uint64_t>& existingHashes,
+                        bool debugOutput = false);
+
 // Convert absolute path to relative path from mod directory
 // @param absolutePath - Full path to texture file
 // @param outputDir - Output directory for context

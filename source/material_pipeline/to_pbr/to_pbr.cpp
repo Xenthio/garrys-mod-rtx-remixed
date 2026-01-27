@@ -178,6 +178,23 @@ bool TextureProcessor::Initialize(remix::Interface* remixInterface) {
         }
     }
     
+    // Load existing hashes from USDA file to skip already-processed materials
+    if (!m_outputDirectory.empty()) {
+        std::string modDir = USDA::GetModDirectory(m_outputDirectory);
+        std::string materialsUsdaPath = modDir + "/materials.usda";
+        
+        std::unordered_set<uint64_t> existingHashes;
+        if (USDA::LoadExistingHashes(materialsUsdaPath, existingHashes, true)) {
+            // Bulk insert existing hashes
+            m_materialsWrittenToUSDA.insert(existingHashes.begin(), existingHashes.end());
+            
+            if (!existingHashes.empty()) {
+                Msg("[MaterialPipeline::ToPBR] Loaded %zu existing material hashes from USDA\n", 
+                    existingHashes.size());
+            }
+        }
+    }
+    
     m_initialized = true;
     Msg("[MaterialPipeline::ToPBR] Initialized successfully\n");
     Msg("[MaterialPipeline::ToPBR] Output directory: %s\n", m_outputDirectory.c_str());
@@ -3445,7 +3462,16 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
     {
         std::lock_guard<std::recursive_mutex> lock(m_mutex);
         if (m_processedMaterialInfo.find(textureHash) != m_processedMaterialInfo.end()) {
-            return true; // Already done
+            return true; // Already done this session
+        }
+        
+        // Also check if hash was already in USDA file from previous session
+        if (m_materialsWrittenToUSDA.find(textureHash) != m_materialsWrittenToUSDA.end()) {
+            if (m_debugOutput) {
+                Msg("[MaterialPipeline::ToPBR] Skipping hash 0x%llX - already in USDA from previous session\n", 
+                    (unsigned long long)textureHash);
+            }
+            return true; // Already done in previous session
         }
     }
     
