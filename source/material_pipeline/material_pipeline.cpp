@@ -493,7 +493,8 @@ int Pipeline::ProcessPendingMaterials() {
     // -------------------------------------------------------------------------
     // Queue all tracked materials for async background processing
     // This is non-blocking and returns immediately
-    if (m_config.autoProcessing && processed > 0) {
+    // QueueMaterialsForProcessing has fast-path early exit if nothing to process
+    if (m_config.autoProcessing) {
         int queued = ToPBR::TextureProcessor::Instance().QueueMaterialsForProcessing();
         if (queued > 0 && m_config.debugOutput) {
             Msg("[MaterialPipeline] Queued %d materials for async ToPBR processing\n", queued);
