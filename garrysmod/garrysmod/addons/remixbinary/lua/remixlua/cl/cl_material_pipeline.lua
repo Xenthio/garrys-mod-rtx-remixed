@@ -380,7 +380,7 @@ end
 
 --[[
     Queues the material for PBR texture conversion.
-    Integrates with existing RTXToPBR / LegacyTextureProcessor system.
+    Integrates with existing RTXToPBR / MaterialPipeline.ToPBR system.
 ]]--
 local function Stage3_QueueForToPBR(materialName)
     -- Check if stage is enabled
@@ -390,7 +390,7 @@ local function Stage3_QueueForToPBR(materialName)
     end
     
     -- Check what ToPBR system is available
-    local processor = LegacyTextureProcessor or VTFConverter
+    local processor = MaterialPipeline and MaterialPipeline.ToPBR
     
     if not processor then
         -- Try RTXToPBR Lua wrapper
@@ -406,7 +406,7 @@ local function Stage3_QueueForToPBR(materialName)
         return true, false
     end
     
-    -- Use C++ LegacyTextureProcessor directly
+    -- Use C++ MaterialPipeline.ToPBR directly
     if processor.QueueMaterial then
         processor.QueueMaterial(materialName)
         State.stats.queuedForToPBR = State.stats.queuedForToPBR + 1

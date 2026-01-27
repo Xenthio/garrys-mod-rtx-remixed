@@ -4798,8 +4798,18 @@ namespace MaterialPipeline {
 namespace ToPBR {
 
 void InitializeLegacyTextureProcessorLuaBindings(GarrysMod::Lua::ILuaBase* LUA) {
-    // Create LegacyTextureProcessor table
+    // Register ToPBR functions under MaterialPipeline.ToPBR table
+    // First get or create MaterialPipeline table
     LUA->PushSpecial(GarrysMod::Lua::SPECIAL_GLOB);
+    LUA->GetField(-1, "MaterialPipeline");
+    if (LUA->IsType(-1, GarrysMod::Lua::Type::Nil)) {
+        LUA->Pop(); // pop nil
+        LUA->CreateTable();
+        LUA->SetField(-2, "MaterialPipeline");
+        LUA->GetField(-1, "MaterialPipeline");
+    }
+    
+    // Create ToPBR subtable
     LUA->CreateTable();
     
     LUA->PushCFunction(LegacyTextureProcessor_Initialize);
@@ -4881,98 +4891,9 @@ void InitializeLegacyTextureProcessorLuaBindings(GarrysMod::Lua::ILuaBase* LUA) 
     LUA->PushCFunction(LegacyTextureProcessor_AppendToUSDAAsync);
     LUA->SetField(-2, "AppendToUSDAAsync");
     
-    LUA->SetField(-2, "LegacyTextureProcessor");
-    
-    // Also create an alias as VTFConverter for backwards compatibility
-    LUA->CreateTable();
-    
-    LUA->PushCFunction(LegacyTextureProcessor_Initialize);
-    LUA->SetField(-2, "Initialize");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_IsInitialized);
-    LUA->SetField(-2, "IsInitialized");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_ProcessAllMaterials);
-    LUA->SetField(-2, "ProcessAllMaterials");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_ProcessMaterialsBatch);
-    LUA->SetField(-2, "ProcessMaterialsBatch");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_ProcessSingleMaterial);
-    LUA->SetField(-2, "ProcessSingleMaterial");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_SetAutoProcessing);
-    LUA->SetField(-2, "SetAutoProcessing");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_SetDebugOutput);
-    LUA->SetField(-2, "SetDebugOutput");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_SetMetallicGeneration);
-    LUA->SetField(-2, "SetMetallicGeneration");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_IsMetallicGenerationEnabled);
-    LUA->SetField(-2, "IsMetallicGenerationEnabled");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_SetAutoDiscover);
-    LUA->SetField(-2, "SetAutoDiscover");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_IsAutoDiscoverEnabled);
-    LUA->SetField(-2, "IsAutoDiscoverEnabled");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_SetParseCommentedProperties);
-    LUA->SetField(-2, "SetParseCommentedProperties");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_IsParseCommentedPropertiesEnabled);
-    LUA->SetField(-2, "IsParseCommentedPropertiesEnabled");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_GetStats);
-    LUA->SetField(-2, "GetStats");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_ClearCache);
-    LUA->SetField(-2, "ClearCache");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_ConvertTexture);
-    LUA->SetField(-2, "ConvertTexture");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_InspectMaterial);
-    LUA->SetField(-2, "InspectMaterial");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_SetOutputDirectory);
-    LUA->SetField(-2, "SetOutputDirectory");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_GetOutputDirectory);
-    LUA->SetField(-2, "GetOutputDirectory");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_WriteUSDAIfNeeded);
-    LUA->SetField(-2, "WriteUSDAIfNeeded");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_NeedsUSDAUpdate);
-    LUA->SetField(-2, "NeedsUSDAUpdate");
-    
-    // Background processing
-    LUA->PushCFunction(LegacyTextureProcessor_QueueMaterialsForProcessing);
-    LUA->SetField(-2, "QueueMaterialsForProcessing");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_IsProcessingInBackground);
-    LUA->SetField(-2, "IsProcessingInBackground");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_GetQueuedMaterialCount);
-    LUA->SetField(-2, "GetQueuedMaterialCount");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_GetLastProcessedCount);
-    LUA->SetField(-2, "GetLastProcessedCount");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_AppendToUSDAAsync);
-    LUA->SetField(-2, "AppendToUSDAAsync");
-    
-    // Also register under ToPBR for new code
+    // Set ToPBR table under MaterialPipeline
     LUA->SetField(-2, "ToPBR");
-    
-    // Register again under VTFConverter for backwards compatibility
-    LUA->CreateTable();
-    // ... (same functions would be registered here for full compat)
-    LUA->SetField(-2, "VTFConverter");
-    LUA->Pop();
+    LUA->Pop(2); // pop MaterialPipeline and GLOB
     
     Msg("[MaterialPipeline::ToPBR] Lua bindings initialized\n");
 }

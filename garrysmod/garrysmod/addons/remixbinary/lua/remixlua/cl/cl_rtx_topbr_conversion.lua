@@ -1,7 +1,7 @@
 -- RTX Remix ToPBR Material Converter
 -- Automatically converts Source Engine material properties to PBR materials in RTX Remix.
 --
--- This module uses C++ LegacyTextureProcessor module to:
+-- This module uses MaterialPipeline.ToPBR C++ module to:
 -- - Read VTF texture files from Source Engine filesystem
 -- - Extract pixel data and convert to Remix-compatible format
 -- - Upload textures via RemixAPI CreateTexture
@@ -62,25 +62,24 @@ local function DebugPrint(...)
 end
 
 --[[
-    Initialize the LegacyTextureProcessor C++ module
+    Initialize the MaterialPipeline.ToPBR C++ module
 ]]--
 function RTXToPBR.Initialize()
     if isInitialized then
         return true
     end
     
-    -- Check if LegacyTextureProcessor is available (from C++ module)
-    -- Also check for backwards compatible VTFConverter alias
-    local processor = LegacyTextureProcessor or VTFConverter
+    -- Check if MaterialPipeline.ToPBR is available (from C++ module)
+    local processor = MaterialPipeline and MaterialPipeline.ToPBR
     if not processor then
-        MsgC(Color(255, 100, 100), "[RTX ToPBR] LegacyTextureProcessor not available - C++ module not loaded\n")
+        MsgC(Color(255, 100, 100), "[RTX ToPBR] MaterialPipeline.ToPBR not available - C++ module not loaded\n")
         return false
     end
     
     -- Check if already initialized by C++ (during RemixAPI init)
     if processor.IsInitialized and processor.IsInitialized() then
         isInitialized = true
-        MsgC(Color(100, 255, 100), "[RTX ToPBR] LegacyTextureProcessor already initialized by C++\n")
+        MsgC(Color(100, 255, 100), "[RTX ToPBR] MaterialPipeline.ToPBR already initialized by C++\n")
         -- Sync ConVars to C++
         processor.SetDebugOutput(GetConVarBoolSafe("rtx_topbr_debug", false))
         if processor.SetMetallicGeneration then
@@ -98,7 +97,7 @@ function RTXToPBR.Initialize()
     -- Initialize the C++ converter (fallback if not already done)
     local success = processor.Initialize()
     if not success then
-        MsgC(Color(255, 100, 100), "[RTX ToPBR] Failed to initialize LegacyTextureProcessor\n")
+        MsgC(Color(255, 100, 100), "[RTX ToPBR] Failed to initialize MaterialPipeline.ToPBR\n")
         return false
     end
     
@@ -119,9 +118,9 @@ function RTXToPBR.Initialize()
     return true
 end
 
--- Helper to get the processor (LegacyTextureProcessor or VTFConverter)
+-- Helper to get the processor (MaterialPipeline.ToPBR)
 local function GetProcessor()
-    return LegacyTextureProcessor or VTFConverter
+    return MaterialPipeline and MaterialPipeline.ToPBR
 end
 
 --[[
@@ -883,10 +882,10 @@ end)
 
 -- Startup message
 MsgC(Color(100, 255, 100), "[RTX ToPBR] Runtime PBR Converter loaded.\n")
-if LegacyTextureProcessor or VTFConverter then
-    MsgC(Color(200, 200, 200), "  C++ LegacyTextureProcessor module available - runtime conversion enabled.\n")
+if MaterialPipeline and MaterialPipeline.ToPBR then
+    MsgC(Color(200, 200, 200), "  C++ MaterialPipeline.ToPBR module available - runtime conversion enabled.\n")
 else
-    MsgC(Color(255, 200, 100), "  C++ LegacyTextureProcessor module not loaded - waiting for binary module.\n")
+    MsgC(Color(255, 200, 100), "  C++ MaterialPipeline.ToPBR module not loaded - waiting for binary module.\n")
 end
 MsgC(Color(200, 200, 200), "  Use 'rtx_topbr_help' for usage information.\n")
 
