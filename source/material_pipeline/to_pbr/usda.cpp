@@ -388,27 +388,50 @@ bool WriteMaterialsUSDAFile(const std::string& modDir,
     bool shouldAppend = fileExists && !existingContent.empty() && newMaterialCount > 0;
     
     if (shouldAppend) {
-        // Find the closing pattern for Looks block: "    }\n}" at end of file
-        // We look for the last occurrence of "    }" followed by whitespace/newline and "}"
-        size_t closeLooksPos = existingContent.rfind("    }");
+        // Find the closing brackets for the USDA structure.
+        // The structure ends with:
+        //     }  <-- closes "over Looks"
+        // }  <-- closes "over RootNode"
+        //
+        // We search backwards from the end to find the RootNode closing brace first,
+        // then find the Looks closing brace before it.
         
-        // Verify this is actually the Looks closing bracket by checking what follows
         bool validPosition = false;
-        if (closeLooksPos != std::string::npos) {
-            // Check that after "    }" we have newline(s) and then "}" for RootNode
-            size_t afterClose = closeLooksPos + 5; // Length of "    }"
-            while (afterClose < existingContent.length() && 
-                   (existingContent[afterClose] == '\n' || existingContent[afterClose] == '\r' || 
-                    existingContent[afterClose] == ' ')) {
-                afterClose++;
-            }
-            if (afterClose < existingContent.length() && existingContent[afterClose] == '}') {
-                validPosition = true;
+        size_t closeLooksPos = std::string::npos;
+        
+        // Find the last '}' (should be RootNode close)
+        size_t closeRootPos = existingContent.rfind('}');
+        if (closeRootPos != std::string::npos && closeRootPos > 0) {
+            // Find the second-to-last '}' (should be Looks close)
+            size_t searchFrom = closeRootPos - 1;
+            size_t closeLooksCandidate = existingContent.rfind('}', searchFrom);
+            
+            if (closeLooksCandidate != std::string::npos) {
+                // Verify the structure: between Looks close and RootNode close should only be whitespace
+                bool onlyWhitespace = true;
+                for (size_t i = closeLooksCandidate + 1; i < closeRootPos; i++) {
+                    char c = existingContent[i];
+                    if (c != ' ' && c != '\t' && c != '\n' && c != '\r') {
+                        onlyWhitespace = false;
+                        break;
+                    }
+                }
+                
+                if (onlyWhitespace) {
+                    // Find the start of the line containing the Looks close brace
+                    // This is where we'll insert new materials
+                    size_t lineStart = closeLooksCandidate;
+                    while (lineStart > 0 && existingContent[lineStart - 1] != '\n') {
+                        lineStart--;
+                    }
+                    closeLooksPos = lineStart;
+                    validPosition = true;
+                }
             }
         }
         
         if (validPosition) {
-            // Write content up to the closing Looks bracket
+            // Write content up to the closing Looks line
             materialsUsda << existingContent.substr(0, closeLooksPos);
             
             // Write new materials
@@ -428,7 +451,7 @@ bool WriteMaterialsUSDAFile(const std::string& modDir,
                 }
             }
             
-            // Write the closing brackets
+            // Write the closing brackets (from the Looks close line onwards)
             materialsUsda << existingContent.substr(closeLooksPos);
         } else {
             // Fallback: couldn't find proper structure, write fresh
