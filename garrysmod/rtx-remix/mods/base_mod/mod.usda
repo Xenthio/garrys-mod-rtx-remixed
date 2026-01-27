@@ -1,0 +1,20 @@
+#usda 1.0
+(
+    customLayerData = {
+        string lightspeed_game_name = "Garry's Mod (x64)"
+        string lightspeed_layer_type = "replacement"
+        string remix_replacement_status = "Release Ready"
+    }
+    metersPerUnit = 0.01
+    subLayers = [
+        @./water/replacements.usda@,
+        @./mirrors/replacements.usda@,
+        @./marker/marker.usda@,
+        @./breakable_glass/glass.usda@,
+        @./flashlight/flashlight.usda@,
+        @./maps/gm_construct_rtx.usda@
+    ]
+    timeCodesPerSecond = 24
+    upAxis = "Z"
+)
+

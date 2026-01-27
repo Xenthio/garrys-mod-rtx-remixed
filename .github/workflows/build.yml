@@ -1,0 +1,58 @@
+name: Build
+
+on:
+  push:
+    branches: [ main, gh-actions ]
+  pull_request:
+    branches: [ main, gh-actions ]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        platform: [Win32, x64]
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v2
+    
+    - name: Download Premake5
+      run: |
+        Invoke-WebRequest -Uri "https://github.com/premake/premake-core/releases/download/v5.0.0-beta2/premake-5.0.0-beta2-windows.zip" -OutFile "premake.zip"
+        Expand-Archive -Path "premake.zip" -DestinationPath "."
+      shell: pwsh
+    
+    - name: Generate project files
+      run: .\premake5.exe --os=windows --gmcommon=./garrysmod_common vs2022
+      shell: cmd
+    
+    - name: Build
+      run: msbuild RTXFixesBinary.sln /p:Configuration=Release /p:Platform=${{ matrix.platform }} /m
+    
+    - name: Prepare artifacts
+      run: |
+        if ("${{ matrix.platform }}" -eq "Win32") {
+          $artifactName = "gmcl_rtxfixesbinary_win32.dll"
+          $sourcePath = "x86\Release\gmcl_rtxfixesbinary_win32.dll"
+        } else {
+          $artifactName = "gmcl_rtxfixesbinary_win64.dll"
+          $sourcePath = "x86_64\Release\gmcl_rtxfixesbinary_win64.dll"
+        }
+        New-Item -ItemType Directory -Force -Path "artifacts\garrysmod\lua\bin"
+        Copy-Item $sourcePath "artifacts\garrysmod\lua\bin\$artifactName"
+        Copy-Item "garrysmod\*" "artifacts\" -Recurse -Force
+      shell: pwsh
+    
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: windows-${{ matrix.platform }}
+        path: artifacts/*
+        if-no-files-found: error
