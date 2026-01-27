@@ -656,27 +656,30 @@ IFileSystem* Pipeline::GetFileSystem() {
 }
 
 // =========================================================================
-// Lua Bindings - Using LUA_FUNCTION macro for proper ILuaBase handling
+// Lua Bindings
 // =========================================================================
 
-// Forward declarations - these are defined at global scope outside namespace
-LUA_FUNCTION(Pipeline_GetStats);
-LUA_FUNCTION(Pipeline_ProcessMaterial);
-LUA_FUNCTION(Pipeline_ProcessAllMaterials);
-LUA_FUNCTION(Pipeline_ProcessBatch);
-LUA_FUNCTION(Pipeline_ProcessPendingMaterials);
-LUA_FUNCTION(Pipeline_QueueAllMaterials);
-LUA_FUNCTION(Pipeline_ClearCache);
-LUA_FUNCTION(Pipeline_SetAutoProcessing);
-LUA_FUNCTION(Pipeline_SetDebugOutput);
-LUA_FUNCTION(Pipeline_GetTrackedMaterials);
-LUA_FUNCTION(Pipeline_IsMaterialProcessed);
-LUA_FUNCTION(Pipeline_GetTextureHash);
-LUA_FUNCTION(Pipeline_RescanCategories);
-LUA_FUNCTION(Pipeline_WriteUSDA);
-LUA_FUNCTION(Pipeline_SetCategoryFlags);
-LUA_FUNCTION(Pipeline_GetCategoryFlags);
-LUA_FUNCTION(Pipeline_FindTextures);
+// NOTE: The actual LUA_FUNCTION definitions are at global scope after the namespace
+// closing brace. They are declared here using raw C function pointers.
+
+// External declarations of the Lua functions (defined at global scope below)
+extern "C++" int Pipeline_GetStats(lua_State* L);
+extern "C++" int Pipeline_ProcessMaterial(lua_State* L);
+extern "C++" int Pipeline_ProcessAllMaterials(lua_State* L);
+extern "C++" int Pipeline_ProcessBatch(lua_State* L);
+extern "C++" int Pipeline_ProcessPendingMaterials(lua_State* L);
+extern "C++" int Pipeline_QueueAllMaterials(lua_State* L);
+extern "C++" int Pipeline_ClearCache(lua_State* L);
+extern "C++" int Pipeline_SetAutoProcessing(lua_State* L);
+extern "C++" int Pipeline_SetDebugOutput(lua_State* L);
+extern "C++" int Pipeline_GetTrackedMaterials(lua_State* L);
+extern "C++" int Pipeline_IsMaterialProcessed(lua_State* L);
+extern "C++" int Pipeline_GetTextureHash(lua_State* L);
+extern "C++" int Pipeline_RescanCategories(lua_State* L);
+extern "C++" int Pipeline_WriteUSDA(lua_State* L);
+extern "C++" int Pipeline_SetCategoryFlags(lua_State* L);
+extern "C++" int Pipeline_GetCategoryFlags(lua_State* L);
+extern "C++" int Pipeline_FindTextures(lua_State* L);
 
 void Pipeline::RegisterLuaBindings(GarrysMod::Lua::ILuaBase* LUA) {
     if (!LUA) return;
