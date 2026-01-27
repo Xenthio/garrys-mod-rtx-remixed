@@ -307,6 +307,49 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
             }
         }
 
+        // === DETAIL TEXTURE HANDLING (Stage 2+) ===
+        // Detail textures in Source Engine are typically rendered at Stage 2 or higher
+        // These should be hidden/ignored in RTX Remix to avoid visual artifacts
+        if (Stage >= 2 && pTexture && !tracker.m_currentMaterialName.empty() && tracker.m_enableAutoCategorization) {
+            D3DRESOURCETYPE resType = pTexture->GetType();
+            if (resType == D3DRTYPE_TEXTURE) {
+                IDirect3DTexture9* p2DTexture = static_cast<IDirect3DTexture9*>(pTexture);
+                
+                // Check if the current material has a $detail parameter
+                bool hasDetailTexture = false;
+                if (tracker.m_currentMaterial) {
+                    bool found = false;
+                    IMaterialVar* pDetailVar = tracker.m_currentMaterial->FindVar("$detail", &found, false);
+                    if (found && pDetailVar && pDetailVar->IsDefined()) {
+                        hasDetailTexture = true;
+                    }
+                }
+                
+                // If this is a detail texture, mark it as HIDDEN
+                if (hasDetailTexture && g_remix) {
+                    auto result = g_remix->dxvk_GetTextureHash(p2DTexture);
+                    if (result && result.value() != 0) {
+                        uint64_t hash = result.value();
+                        
+                        // Use HIDDEN category (bit 9 = 0x200) to completely hide the texture
+                        constexpr uint32_t CAT_HIDDEN = 0x200;
+                        
+                        // Skip if we've already categorized this hash with HIDDEN
+                        uint32_t existingFlags = 0;
+                        bool alreadyCategorized = tracker.GetHashCategoryFlags(hash, &existingFlags) && (existingFlags & CAT_HIDDEN);
+                        if (!alreadyCategorized) {
+                            tracker.ApplyCategoryToHash(hash, CAT_HIDDEN, tracker.m_currentMaterialName.c_str());
+                            
+                            if (tracker.m_enableDebugOutput) {
+                                Msg("[D3D9TextureTracker] DETAIL texture at Stage %d for '%s' marked as HIDDEN (hash: 0x%llX)\n",
+                                    Stage, tracker.m_currentMaterialName.c_str(), hash);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
         // For now, let's just track ALL textures at stage 0 with a generic key
         // We'll use the texture pointer itself as a way to identify it
         // ALSO track Stage 1 for displacement materials (they use multi-stage blending)
@@ -923,6 +966,7 @@ void D3D9TextureTracker::ApplyCategoryToHash(uint64_t hash, uint32_t categoryFla
     constexpr uint32_t CAT_WORLD_UI       = 0x1;       // UNUSED - do not apply
     constexpr uint32_t CAT_SKY            = 0x4;
     constexpr uint32_t CAT_IGNORE         = 0x8;
+    constexpr uint32_t CAT_HIDDEN         = 0x200;     // bit 9 - rtx.hideInstanceTextures
     constexpr uint32_t CAT_PARTICLE       = 0x400;
     constexpr uint32_t CAT_DECAL_STATIC   = 0x1000;
     constexpr uint32_t CAT_ANIMATED_WATER = 0x40000;
@@ -949,6 +993,12 @@ void D3D9TextureTracker::ApplyCategoryToHash(uint64_t hash, uint32_t categoryFla
         g_remix->AddTextureHash("rtx.ignoreTextures", hashStr);
         if (m_enableDebugOutput) {
             Msg("[D3D9] Categorized IGNORE: '%s' -> %s\n", materialName, hashStr);
+        }
+    }
+    if (categoryFlags & CAT_HIDDEN) {
+        g_remix->AddTextureHash("rtx.hideInstanceTextures", hashStr);
+        if (m_enableDebugOutput) {
+            Msg("[D3D9] Categorized HIDDEN: '%s' -> %s\n", materialName, hashStr);
         }
     }
     if (categoryFlags & CAT_PARTICLE) {
