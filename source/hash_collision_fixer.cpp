@@ -10,6 +10,8 @@
 #include <filesystem.h>
 #include <GarrysMod/Lua/Interface.h>
 
+using namespace GarrysMod::Lua;
+
 namespace HashCollisionFixer {
 
 // =========================================================================

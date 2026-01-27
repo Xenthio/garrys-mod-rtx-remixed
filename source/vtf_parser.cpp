@@ -174,8 +174,8 @@ size_t GetTotalMipmapSize(uint32_t width, uint32_t height, uint8_t mipmapCount, 
     
     for (int i = 0; i < mipmapCount; i++) {
         totalSize += GetImageDataSize(w, h, format);
-        w = (std::max)(1u, w / 2);
-        h = (std::max)(1u, h / 2);
+        w = std::max<uint32_t>(1, w / 2);
+        h = std::max<uint32_t>(1, h / 2);
     }
     
     return totalSize;
@@ -428,8 +428,8 @@ bool ExtractPixelData(const std::vector<uint8_t>& fileData,
     // Skip all smaller mipmaps and all frames except the first
     size_t smallerMipsSize = 0;
     for (int mip = mipmapCount - 1; mip >= 1; mip--) {
-        uint32_t mipW = (std::max)(1u, header.width >> mip);
-        uint32_t mipH = (std::max)(1u, header.height >> mip);
+        uint32_t mipW = std::max<uint32_t>(1, header.width >> mip);
+        uint32_t mipH = std::max<uint32_t>(1, header.height >> mip);
         smallerMipsSize += GetImageDataSize(mipW, mipH, srcFormat) * frameCount;
     }
     
@@ -442,8 +442,8 @@ bool ExtractPixelData(const std::vector<uint8_t>& fileData,
         // Try alternative: maybe single frame with no low-res image
         dataOffset = header.headerSize;
         for (int mip = mipmapCount - 1; mip >= 1; mip--) {
-            uint32_t mipW = (std::max)(1u, header.width >> mip);
-            uint32_t mipH = (std::max)(1u, header.height >> mip);
+            uint32_t mipW = std::max<uint32_t>(1, header.width >> mip);
+            uint32_t mipH = std::max<uint32_t>(1, header.height >> mip);
             dataOffset += GetImageDataSize(mipW, mipH, srcFormat);
         }
         
