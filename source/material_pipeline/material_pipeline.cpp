@@ -110,6 +110,8 @@ void Pipeline::Shutdown() {
 
 // Static OnNewMaterialDetected - called by D3D9TextureTracker
 // Routes material through the unified pipeline stages
+// NOTE: This is called from D3D9 hooks - we queue materials for later processing
+// to avoid crashes from doing complex operations inside hooks
 void Pipeline::OnNewMaterialDetected(const std::string& materialName, uint64_t textureHash, IDirect3DTexture9* pTexture) {
     Pipeline& pipeline = Instance();
     
@@ -117,12 +119,16 @@ void Pipeline::OnNewMaterialDetected(const std::string& materialName, uint64_t t
         return;
     }
     
-    // Route to instance method which handles the unified processing
-    pipeline.OnMaterialDetected(materialName, textureHash);
+    // Queue the material for processing on the main thread
+    // We do NOT process here because we're inside a D3D9 hook
+    {
+        std::lock_guard<std::mutex> lock(pipeline.m_pendingMutex);
+        pipeline.m_pendingMaterials.push_back({materialName, textureHash});
+    }
     
-    // If auto-processing is enabled, process through unified pipeline
-    if (pipeline.m_config.autoProcessing) {
-        pipeline.ProcessMaterial(materialName);
+    // Fire the detected callback (lightweight, safe to call from hook)
+    if (pipeline.m_onDetected) {
+        pipeline.m_onDetected(materialName, textureHash);
     }
 }
 
@@ -383,6 +389,45 @@ int Pipeline::ProcessBatch(int maxCount) {
     return ToPBR::TextureProcessor::Instance().ProcessTrackedMaterialsBatch(maxCount);
 }
 
+int Pipeline::ProcessPendingMaterials() {
+    if (!m_initialized) {
+        return 0;
+    }
+    
+    // Grab the pending materials under lock, then process outside the lock
+    std::vector<PendingMaterial> toProcess;
+    {
+        std::lock_guard<std::mutex> lock(m_pendingMutex);
+        toProcess = std::move(m_pendingMaterials);
+        m_pendingMaterials.clear();
+    }
+    
+    if (toProcess.empty()) {
+        return 0;
+    }
+    
+    int processed = 0;
+    for (const auto& pending : toProcess) {
+        // Call the instance method which handles tracking callbacks
+        OnMaterialDetected(pending.name, pending.hash);
+        
+        // If auto-processing is enabled, process through unified pipeline
+        if (m_config.autoProcessing) {
+            if (ProcessMaterial(pending.name)) {
+                processed++;
+            }
+        } else {
+            processed++;  // Count as "processed" even if we just tracked it
+        }
+    }
+    
+    if (m_config.debugOutput && processed > 0) {
+        Msg("[MaterialPipeline] Processed %d pending materials\n", processed);
+    }
+    
+    return processed;
+}
+
 bool Pipeline::IsProcessing() const {
     if (!m_initialized) return false;
     return ToPBR::TextureProcessor::Instance().IsProcessingInBackground();
@@ -616,6 +661,7 @@ static int MaterialPipeline_GetStats(lua_State* L);
 static int MaterialPipeline_ProcessMaterial(lua_State* L);
 static int MaterialPipeline_ProcessAllMaterials(lua_State* L);
 static int MaterialPipeline_ProcessBatch(lua_State* L);
+static int MaterialPipeline_ProcessPendingMaterials(lua_State* L);
 static int MaterialPipeline_QueueAllMaterials(lua_State* L);
 static int MaterialPipeline_ClearCache(lua_State* L);
 static int MaterialPipeline_SetAutoProcessing(lua_State* L);
@@ -650,6 +696,9 @@ void Pipeline::RegisterLuaBindings(GarrysMod::Lua::ILuaBase* LUA) {
     
     LUA->PushCFunction(MaterialPipeline_ProcessBatch);
     LUA->SetField(-2, "ProcessBatch");
+    
+    LUA->PushCFunction(MaterialPipeline_ProcessPendingMaterials);
+    LUA->SetField(-2, "ProcessPendingMaterials");
     
     LUA->PushCFunction(MaterialPipeline_QueueAllMaterials);
     LUA->SetField(-2, "QueueAllMaterials");
@@ -764,6 +813,15 @@ static int MaterialPipeline_ProcessBatch(lua_State* L) {
     }
     
     int processed = Pipeline::Instance().ProcessBatch(maxCount);
+    
+    LUA->PushNumber(processed);
+    return 1;
+}
+
+static int MaterialPipeline_ProcessPendingMaterials(lua_State* L) {
+    auto* LUA = reinterpret_cast<GarrysMod::Lua::ILuaBase*>(L);
+    
+    int processed = Pipeline::Instance().ProcessPendingMaterials();
     
     LUA->PushNumber(processed);
     return 1;

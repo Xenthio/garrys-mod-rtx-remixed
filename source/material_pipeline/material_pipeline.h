@@ -203,6 +203,11 @@ public:
     // Returns number processed
     int ProcessBatch(int maxCount = 5);
     
+    // Process materials that were queued from D3D9 hooks (call from main thread)
+    // This is the safe way to process materials detected in hooks
+    // Returns number of materials processed
+    int ProcessPendingMaterials();
+    
     // Check if background processing is active
     bool IsProcessing() const;
     
@@ -336,6 +341,14 @@ private:
     
     // Thread safety
     mutable std::mutex m_mutex;
+    
+    // Pending materials queue (for async processing from D3D9 hooks)
+    struct PendingMaterial {
+        std::string name;
+        uint64_t hash;
+    };
+    std::vector<PendingMaterial> m_pendingMaterials;
+    mutable std::mutex m_pendingMutex;
 };
 
 // =========================================================================
