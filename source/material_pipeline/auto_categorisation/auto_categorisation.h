@@ -38,27 +38,30 @@ namespace MaterialPipeline {
 namespace AutoCategorisation {
 
 // =========================================================================
-// Category Flags (matches Remix API categories)
+// Category Flags (matches Remix API categories and d3d9_texture_tracker)
 // =========================================================================
 namespace CategoryFlags {
-    constexpr uint32_t NONE = 0;
-    constexpr uint32_t WORLD_UI = (1 << 0);
-    constexpr uint32_t WORLD_MATTE = (1 << 1);
-    constexpr uint32_t SKY = (1 << 2);
-    constexpr uint32_t IGNORED = (1 << 3);  // Renamed from IGNORE to avoid Windows macro conflict
-    constexpr uint32_t PARTICLE = (1 << 10);
-    constexpr uint32_t BEAM = (1 << 11);
-    constexpr uint32_t DECAL_STATIC = (1 << 12);
-    constexpr uint32_t DECAL_DYNAMIC = (1 << 13);
-    constexpr uint32_t DECAL_SINGLE_OFFSET = (1 << 14);
-    constexpr uint32_t DECAL_NO_OFFSET = (1 << 15);
-    constexpr uint32_t ALPHA_BLEND_TO_CUTOUT = (1 << 16);
-    constexpr uint32_t TERRAIN = (1 << 17);
-    constexpr uint32_t ANIMATED_WATER = (1 << 18);
-    constexpr uint32_t THIRD_PERSON_PLAYER_MODEL = (1 << 19);
-    constexpr uint32_t THIRD_PERSON_PLAYER_BODY = (1 << 20);
-    constexpr uint32_t HIDDEN = (1 << 23);
-    constexpr uint32_t EMISSIVE = (1 << 24);
+    constexpr uint32_t NONE                      = 0x0;
+    constexpr uint32_t WORLD_UI                  = 0x1;       // WARNING: Do not apply - can cause issues
+    constexpr uint32_t WORLD_MATTE               = 0x2;
+    constexpr uint32_t SKY                       = 0x4;       // Must match tracker
+    constexpr uint32_t IGNORED                   = 0x8;       // Renamed from IGNORE to avoid Windows macro conflict
+    constexpr uint32_t TERRAIN                   = 0x10;
+    constexpr uint32_t ALPHA_BLEND_TO_CUTOUT     = 0x20;
+    constexpr uint32_t THIRD_PERSON_PLAYER_MODEL = 0x40;
+    constexpr uint32_t THIRD_PERSON_PLAYER_BODY  = 0x80;
+    constexpr uint32_t BEAM                      = 0x100;
+    constexpr uint32_t ANIMATED                  = 0x200;
+    constexpr uint32_t PARTICLE                  = 0x400;     // Must match tracker
+    constexpr uint32_t DECAL                     = 0x800;
+    constexpr uint32_t DECAL_STATIC              = 0x1000;    // Must match tracker
+    constexpr uint32_t DECAL_DYNAMIC             = 0x2000;
+    constexpr uint32_t DECAL_SINGLE_OFFSET       = 0x4000;
+    constexpr uint32_t DECAL_NO_OFFSET           = 0x8000;
+    constexpr uint32_t IGNORE_BAKED_LIGHTING     = 0x10000;
+    constexpr uint32_t HIDDEN                    = 0x20000;
+    constexpr uint32_t ANIMATED_WATER            = 0x40000;   // Must match tracker
+    constexpr uint32_t EMISSIVE                  = 0x1000000; // Must match tracker
 }
 
 // =========================================================================

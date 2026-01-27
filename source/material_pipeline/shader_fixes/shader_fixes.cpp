@@ -11,6 +11,7 @@
 #include <materialsystem/imaterial.h>
 #include <materialsystem/imaterialvar.h>
 #include <algorithm>
+#include <cctype>
 
 namespace MaterialPipeline {
 namespace ShaderFixes {
@@ -82,7 +83,8 @@ bool NeedsFix(const std::string& materialName, IMaterial* material) {
     if (!shaderName) return false;
     
     std::string shader = shaderName;
-    std::transform(shader.begin(), shader.end(), shader.begin(), ::tolower);
+    std::transform(shader.begin(), shader.end(), shader.begin(), 
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     
     // Check if this is a Refract shader (needs special handling)
     if (s_config.fixRefractShaders && shader.find("refract") != std::string::npos) {
@@ -114,7 +116,8 @@ FixResult ApplyFix(const std::string& materialName, IMaterial* material) {
     if (!shaderName) return result;
     
     std::string shader = shaderName;
-    std::transform(shader.begin(), shader.end(), shader.begin(), ::tolower);
+    std::transform(shader.begin(), shader.end(), shader.begin(), 
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     
     // Try Refract shader fix
     if (s_config.fixRefractShaders && shader.find("refract") != std::string::npos) {

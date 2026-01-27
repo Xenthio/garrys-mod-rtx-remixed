@@ -16,6 +16,7 @@
 #include <Windows.h>
 #include <remix/remix.h>
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 
 // External globals
@@ -24,12 +25,17 @@ extern IMaterialSystem* materials;
 namespace MaterialPipeline {
 namespace AutoCategorisation {
 
+// Safe tolower helper for use with std::transform
+static char SafeToLower(unsigned char c) {
+    return static_cast<char>(stdSafeToLower(c));
+}
+
 // =========================================================================
 // Internal State
 // =========================================================================
 static remix::Interface* s_remix = nullptr;
 static Config s_config;
-static std::mutex s_mutex;
+static std::recursive_mutex s_mutex;
 static std::unordered_map<uint64_t, uint32_t> s_hashToCategoryFlags;
 static std::vector<PendingCategory> s_pendingCategories;
 static std::unordered_set<std::string> s_worldTextureNames;
@@ -122,7 +128,7 @@ bool CheckVMTForSelfillum(const std::string& materialName, bool debug) {
     // Look for $selfillum followed by 1, excluding commented lines
     for (const auto& line : lines) {
         std::string lowerLine = line;
-        std::transform(lowerLine.begin(), lowerLine.end(), lowerLine.begin(), ::tolower);
+        std::transform(lowerLine.begin(), lowerLine.end(), lowerLine.begin(), SafeToLower);
         
         if (lowerLine.empty()) continue;
         
@@ -178,7 +184,7 @@ std::string GetShaderName(IMaterial* material) {
 // =========================================================================
 
 void Initialize(remix::Interface* remix) {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     if (s_initialized) return;
     
     s_remix = remix;
@@ -193,7 +199,7 @@ void Initialize(remix::Interface* remix) {
 }
 
 void Shutdown() {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     
     // Release texture references
     for (auto& pending : s_pendingCategories) {
@@ -211,7 +217,7 @@ void Shutdown() {
 }
 
 void SetConfig(const Config& config) {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     s_config = config;
 }
 
@@ -220,27 +226,27 @@ const Config& GetConfig() {
 }
 
 void SetEnabled(bool enabled) {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     s_config.enabled = enabled;
 }
 
 void SetParticleCategorisation(bool enabled) {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     s_config.particleEnabled = enabled;
 }
 
 void SetDecalCategorisation(bool enabled) {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     s_config.decalEnabled = enabled;
 }
 
 void SetEmissiveCategorisation(bool enabled) {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     s_config.emissiveEnabled = enabled;
 }
 
 void SetDebugOutput(bool enabled) {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     s_config.debugOutput = enabled;
 }
 
@@ -256,7 +262,7 @@ uint32_t DetectCategory(const std::string& materialName, IMaterial* material) {
     if (materialName.find("__") == 0) return 0;
     
     std::string lowerName = materialName;
-    std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), ::tolower);
+    std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), SafeToLower);
     
     uint32_t flags = 0;
     
@@ -306,7 +312,7 @@ uint32_t DetectCategory(const std::string& materialName, IMaterial* material) {
         // Shader-based particle detection
         if (material) {
             std::string shaderName = GetShaderName(material);
-            std::transform(shaderName.begin(), shaderName.end(), shaderName.begin(), ::tolower);
+            std::transform(shaderName.begin(), shaderName.end(), shaderName.begin(), SafeToLower);
             
             if (shaderName.find("sprite") != std::string::npos ||
                 shaderName.find("modulate") != std::string::npos ||
@@ -348,7 +354,7 @@ uint32_t DetectCategory(const std::string& materialName, IMaterial* material) {
             lowerName.find("slime") != std::string::npos) {
             if (material) {
                 std::string shaderName = GetShaderName(material);
-                std::transform(shaderName.begin(), shaderName.end(), shaderName.begin(), ::tolower);
+                std::transform(shaderName.begin(), shaderName.end(), shaderName.begin(), SafeToLower);
                 if (shaderName.find("water") != std::string::npos || 
                     shaderName.find("refract") != std::string::npos) {
                     flags = CategoryFlags::ANIMATED_WATER;
@@ -490,7 +496,7 @@ uint32_t DetectAndApply(const std::string& materialName,
 void ApplyToHash(uint64_t hash, uint32_t flags, const std::string& materialName) {
     if (!s_remix || hash == 0 || flags == 0) return;
     
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     
     // Store mapping
     s_hashToCategoryFlags[hash] = flags;
@@ -529,12 +535,12 @@ void ApplyToHash(uint64_t hash, uint32_t flags, const std::string& materialName)
 // =========================================================================
 
 void SetWorldTextureNames(const std::vector<std::string>& textureNames) {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     
     s_worldTextureNames.clear();
     for (const auto& name : textureNames) {
         std::string lower = name;
-        std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+        std::transform(lower.begin(), lower.end(), lower.begin(), SafeToLower);
         s_worldTextureNames.insert(lower);
     }
     
@@ -544,13 +550,13 @@ void SetWorldTextureNames(const std::vector<std::string>& textureNames) {
 }
 
 void ClearWorldTextureNames() {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     s_worldTextureNames.clear();
 }
 
 bool IsWorldTexture(const std::string& materialName) {
     std::string lower = materialName;
-    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+    std::transform(lower.begin(), lower.end(), lower.begin(), SafeToLower);
     return s_worldTextureNames.count(lower) > 0;
 }
 
@@ -564,7 +570,7 @@ int RecheckWorldTextures() {
 // =========================================================================
 
 void SetHashCategoryFlags(uint64_t hash, uint32_t flags) {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     s_hashToCategoryFlags[hash] = flags;
     
     // Also apply to Remix
@@ -574,17 +580,17 @@ void SetHashCategoryFlags(uint64_t hash, uint32_t flags) {
 }
 
 void RemoveHashCategoryFlags(uint64_t hash) {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     s_hashToCategoryFlags.erase(hash);
 }
 
 void ClearHashCategoryMappings() {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     s_hashToCategoryFlags.clear();
 }
 
 bool GetHashCategoryFlags(uint64_t hash, uint32_t* outFlags) {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     auto it = s_hashToCategoryFlags.find(hash);
     if (it != s_hashToCategoryFlags.end()) {
         if (outFlags) *outFlags = it->second;
@@ -600,7 +606,7 @@ bool GetHashCategoryFlags(uint64_t hash, uint32_t* outFlags) {
 void AddPendingCategory(IDirect3DTexture9* texture, 
                         const std::string& materialName,
                         uint32_t flags) {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     
     // Check if already pending
     for (const auto& pending : s_pendingCategories) {
@@ -619,7 +625,7 @@ void AddPendingCategory(IDirect3DTexture9* texture,
 int RetryPendingCategories() {
     if (!s_remix) return 0;
     
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     
     int categorized = 0;
     auto it = s_pendingCategories.begin();
@@ -669,7 +675,7 @@ int RetryPendingCategories() {
 }
 
 size_t GetPendingCount() {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     return s_pendingCategories.size();
 }
 
@@ -687,7 +693,7 @@ int RescanAllMaterials() {
 // =========================================================================
 
 Stats GetStats() {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     return s_stats;
 }
 

@@ -28,6 +28,8 @@
 #include <materialsystem/imaterialsystem.h>
 #include <materialsystem/imaterial.h>
 #include <materialsystem/imaterialvar.h>
+#include <cstdio>
+#include <cstdlib>
 
 namespace MaterialPipeline {
 
@@ -179,6 +181,12 @@ bool Pipeline::InitializeInternal(IDirect3DDevice9Ex* device, remix::Interface* 
     // Initialize HashCollisionFixer
     HashCollisionFixer::Initialize();
     
+    // Initialize ShaderFixes
+    ShaderFixes::Initialize();
+    
+    // Initialize AutoCategorisation with Remix interface
+    AutoCategorisation::Initialize(remix);
+    
     // Initialize ToPBR (texture processor)
     if (!ToPBR::TextureProcessor::Instance().Initialize(remix)) {
         Warning("[MaterialPipeline] Failed to initialize ToPBR::TextureProcessor\n");
@@ -204,8 +212,17 @@ void Pipeline::ShutdownInternal() {
     
     Msg("[MaterialPipeline] Shutting down...\n");
     
-    // Shutdown components in reverse order
+    // Clear pending materials queue
+    {
+        std::lock_guard<std::mutex> pendingLock(m_pendingMutex);
+        m_pendingMaterials.clear();
+    }
+    
+    // Shutdown components in reverse order of initialization
     ToPBR::TextureProcessor::Instance().Shutdown();
+    AutoCategorisation::Shutdown();
+    ShaderFixes::Shutdown();
+    HashCollisionFixer::Shutdown();
     D3D9TextureTracker::Instance().Shutdown();
     
     m_device = nullptr;
@@ -425,8 +442,10 @@ int Pipeline::ProcessPendingMaterials() {
     extern IMaterialSystem* materials;
     
     for (const auto& pending : toProcess) {
-        // Call the instance method which handles tracking callbacks
-        OnMaterialDetected(pending.name, pending.hash);
+        // Fire callback for material detection tracking (but don't process yet)
+        if (m_onDetected) {
+            m_onDetected(pending.name, pending.hash);
+        }
         
         // If auto-processing is enabled, run quick stages synchronously
         // ToPBR will be queued for background processing
@@ -580,13 +599,22 @@ bool Pipeline::IsWorldTexture(const std::string& materialName) const {
 
 void Pipeline::SetCategoryFlags(uint64_t hash, uint32_t flags) {
     if (!m_initialized) return;
+    
+    // Route category flags through AutoCategorisation so they are applied to Remix,
+    // while still updating the D3D9TextureTracker map for compatibility.
+    AutoCategorisation::SetHashCategoryFlags(hash, flags);
     D3D9TextureTracker::Instance().SetHashCategoryFlags(hash, flags);
 }
 
 uint32_t Pipeline::GetCategoryFlags(uint64_t hash) const {
     if (!m_initialized) return 0;
     
+    // Prefer reading flags from AutoCategorisation (the source used for Remix),
+    // and fall back to D3D9TextureTracker's stored map if needed.
     uint32_t flags = 0;
+    if (AutoCategorisation::GetHashCategoryFlags(hash, &flags) && flags != 0) {
+        return flags;
+    }
     D3D9TextureTracker::Instance().GetHashCategoryFlags(hash, &flags);
     return flags;
 }
@@ -612,8 +640,8 @@ void Pipeline::WriteUSDAIfNeeded() {
 
 bool Pipeline::WriteUSDA() {
     if (!m_initialized) return false;
-    // Force write by marking as needing update, then writing
-    ToPBR::TextureProcessor::Instance().WriteUSDAIfNeeded();
+    // Force write: unconditionally append current data to the USDA output
+    ToPBR::TextureProcessor::Instance().AppendToUSDAAsync();
     return true;
 }
 
@@ -695,15 +723,12 @@ void Pipeline::OnMaterialDetected(const std::string& materialName, uint64_t text
         m_onDetected(materialName, textureHash);
     }
     
-    // If auto-processing is enabled, process through the unified pipeline
-    // Otherwise, just forward to ToPBR for potential queuing
-    if (m_config.autoProcessing) {
-        // Process through the unified pipeline (all 4 stages)
-        ProcessMaterial(materialName);
-    } else {
-        // Forward to processor for potential queuing/later processing
-        ToPBR::TextureProcessor::Instance().OnNewMaterialDetected(materialName, textureHash);
-    }
+    // Always forward to ToPBR for asynchronous handling
+    // This avoids running heavy stages (e.g., Stage 4 ToPBR) synchronously here
+    // which would cause frame hitches.
+    // The quick stages (ShaderFixes, HashCollision, AutoCat) will be run 
+    // in ProcessPendingMaterials() which is called from the Think hook.
+    ToPBR::TextureProcessor::Instance().OnNewMaterialDetected(materialName, textureHash);
 }
 
 int Pipeline::ProcessAllMaterialsThroughPipeline() {

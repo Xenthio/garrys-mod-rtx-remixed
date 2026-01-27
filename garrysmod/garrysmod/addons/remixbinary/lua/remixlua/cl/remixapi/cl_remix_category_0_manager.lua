@@ -546,7 +546,8 @@ function RemixCategoryManager.AutoCategorizeMaterial(materialName)
     local categoryName = nil
     
     -- Wrap in pcall to catch C++ exceptions
-    local success, result = pcall(function()
+    -- pcall returns: success, result1, result2, ...
+    local success, pcallCategory, pcallCategoryName = pcall(function()
         -- Check for particles (including sprites)
         if enableParticles and RemixCategoryManager.IsMaterialParticle(materialName) then
             return RemixCategoryManager.CATEGORY.PARTICLE, "PARTICLE"
@@ -572,11 +573,9 @@ function RemixCategoryManager.AutoCategorizeMaterial(materialName)
         return false
     end
     
-    category, categoryName = result, categoryName
-    -- Unpack the results properly from pcall
-    if type(result) == "number" then
-        category = result
-    end
+    -- Use the properly captured return values from pcall
+    category = pcallCategory
+    categoryName = pcallCategoryName
     
     if category then
         -- Mark as processed
