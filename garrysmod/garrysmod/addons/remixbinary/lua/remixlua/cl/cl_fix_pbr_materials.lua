@@ -140,7 +140,7 @@ function RTXFixPBR.ProcessMaterial(matName)
         mat:SetTexture("$basetexture", fallbackTexture)
         fixed = true
         
-        if runningFromCommand or debug_mode:GetBool() then
+        if debug_mode:GetBool() then
             local formatName = isExoPBR and "ExoPBR" or "GPBR"
             MsgC(Color(100, 255, 100), string.format("[RTX FixPBR] Fixed '%s' (%s): set $basetexture to %s (from %s)\n", 
                 matName, formatName, fallbackTexture, fallbackSource))
@@ -149,14 +149,14 @@ function RTXFixPBR.ProcessMaterial(matName)
         -- Material already has basetexture, just mark it as a PBR material for logging
         fixed = true
         
-        if runningFromCommand or debug_mode:GetBool() then
+        if debug_mode:GetBool() then
             local formatName = isExoPBR and "ExoPBR" or "GPBR"
             MsgC(Color(200, 200, 100), string.format("[RTX FixPBR] '%s' (%s) already has valid $basetexture: %s\n", 
                 matName, formatName, baseTexture))
         end
     else
         -- Couldn't find a fallback texture
-        if runningFromCommand or debug_mode:GetBool() then
+        if debug_mode:GetBool() then
             local formatName = isExoPBR and "ExoPBR" or "GPBR"
             MsgC(Color(255, 200, 100), string.format("[RTX FixPBR] Warning: '%s' (%s) has no usable fallback texture\n", 
                 matName, formatName))

@@ -26,6 +26,12 @@ CreateClientConVar("rtx_auto_categorize_emissive", "0", true, false, "Auto-categ
 CreateClientConVar("rtx_require_emissive_mask", "1", true, false, "Require $selfillummask or alpha channel for emissive materials (1 = strict, 0 = allow any $selfillum)")
 CreateClientConVar("rtx_debug_categorization", "0", true, false, "Show debug messages for auto-categorization (1 = enabled, 0 = disabled)")
 
+-- Cache ConVar references at module level to avoid repeated GetConVar calls
+local cvar_auto_categorize_decals = GetConVar("rtx_auto_categorize_decals")
+local cvar_auto_categorize_emissive = GetConVar("rtx_auto_categorize_emissive")
+local cvar_auto_categorize_particles = GetConVar("rtx_auto_categorize_particles")
+local cvar_debug_categorization = GetConVar("rtx_debug_categorization")
+
 -- Remix Instance Category Flags
 RemixCategoryManager.CATEGORY = {
     WORLD_UI                  = bit.lshift(1, 0),  -- 0x1
@@ -537,10 +543,10 @@ function RemixCategoryManager.AutoCategorizeMaterial(materialName)
     end
     
     -- Check which categories are enabled
-    local enableDecals = GetConVar("rtx_auto_categorize_decals"):GetBool()
-    local enableEmissive = GetConVar("rtx_auto_categorize_emissive"):GetBool()
-    local enableParticles = GetConVar("rtx_auto_categorize_particles"):GetBool()
-    local debug = GetConVar("rtx_debug_categorization"):GetBool()
+    local enableDecals = cvar_auto_categorize_decals:GetBool()
+    local enableEmissive = cvar_auto_categorize_emissive:GetBool()
+    local enableParticles = cvar_auto_categorize_particles:GetBool()
+    local debug = cvar_debug_categorization:GetBool()
     
     local category = nil
     local categoryName = nil
