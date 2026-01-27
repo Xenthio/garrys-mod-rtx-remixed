@@ -712,25 +712,75 @@ int Pipeline::ProcessAllMaterialsThroughPipeline() {
         return 0;
     }
     
-    std::vector<std::string> materials = GetTrackedMaterials();
+    std::vector<std::string> materialList = GetTrackedMaterials();
     int processed = 0;
     
-    Msg("[MaterialPipeline] Processing %zu materials through unified pipeline...\n", materials.size());
+    Msg("[MaterialPipeline] Processing %zu materials through quick stages (ToPBR will be async)...\n", materialList.size());
     
-    for (const auto& materialName : materials) {
-        if (ProcessMaterial(materialName)) {
-            processed++;
+    extern IMaterialSystem* materials;
+    
+    for (const auto& materialName : materialList) {
+        // Get the IMaterial for stages that need it
+        IMaterial* material = nullptr;
+        if (materials) {
+            material = materials->FindMaterial(materialName.c_str(), TEXTURE_GROUP_OTHER, false);
+            if (material && material->IsErrorMaterial()) {
+                material = nullptr;
+            }
         }
+        
+        // Get texture pointer for stages that need it
+        IDirect3DTexture9* texture = D3D9TextureTracker::Instance().GetTextureForMaterial(materialName.c_str());
+        
+        // -------------------------------------------------------------------------
+        // STAGE 1: ShaderFixes (FAST - runs synchronously)
+        // -------------------------------------------------------------------------
+        if (ShaderFixes::NeedsFix(materialName, material)) {
+            auto fixResult = ShaderFixes::ApplyFix(materialName, material);
+            if (fixResult.applied && m_config.debugOutput) {
+                Msg("[MaterialPipeline] Stage 1 (ShaderFixes): %s - %s\n", 
+                    materialName.c_str(), fixResult.description.c_str());
+            }
+        }
+        
+        // -------------------------------------------------------------------------
+        // STAGE 2: HashCollisionFixer (FAST - runs synchronously)
+        // -------------------------------------------------------------------------
+        std::string baseTexturePath;
+        if (material) {
+            bool found = false;
+            IMaterialVar* pVar = material->FindVar("$basetexture", &found, false);
+            if (found && pVar) {
+                const char* texPath = pVar->GetStringValue();
+                if (texPath && texPath[0]) {
+                    baseTexturePath = texPath;
+                }
+            }
+        }
+        
+        if (!baseTexturePath.empty()) {
+            HashCollisionFixer::CheckMaterial(
+                m_fileSystem, materialName, baseTexturePath, m_config.debugOutput);
+        }
+        
+        // -------------------------------------------------------------------------
+        // STAGE 3: AutoCategorisation (FAST - runs synchronously)
+        // -------------------------------------------------------------------------
+        if (texture) {
+            AutoCategorisation::DetectAndApply(materialName, material, texture);
+        }
+        
+        // Note: ToPBR (Stage 4) will be processed asynchronously below
+        processed++;
     }
     
-    // Write USDA after processing all materials
-    // This ensures all PBR materials are written to disk for RTX Remix
-    if (processed > 0) {
-        ToPBR::TextureProcessor::Instance().WriteUSDAIfNeeded();
-        Msg("[MaterialPipeline] Processed %d materials through unified pipeline, USDA updated\n", processed);
-    } else {
-        Msg("[MaterialPipeline] Processed %d materials through unified pipeline\n", processed);
-    }
+    // -------------------------------------------------------------------------
+    // STAGE 4: ToPBR (ASYNC - queue for background processing)
+    // -------------------------------------------------------------------------
+    // This is non-blocking and returns immediately
+    int queued = ToPBR::TextureProcessor::Instance().QueueMaterialsForProcessing();
+    
+    Msg("[MaterialPipeline] Processed %d materials through quick stages, queued %d for async ToPBR\n", processed, queued);
     
     return processed;
 }
