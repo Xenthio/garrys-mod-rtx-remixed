@@ -107,7 +107,7 @@ static IFileSystem* GetFileSystemInterface() {
 // TextureProcessor Implementation
 //=============================================================================
 
-TextureProcessor& MaterialPipeline::ToPBR::TextureProcessor::Instance() {
+TextureProcessor& TextureProcessor::Instance() {
     static TextureProcessor instance;
     return instance;
 }
@@ -1647,7 +1647,7 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
     // UNLESS the user has enabled parsing of commented properties (for maps where
     // envmap/masks were disabled for vanilla Source performance but benefit RTX Remix)
     std::string contentWithoutComments;
-    if (!MaterialPipeline::ToPBR::TextureProcessor::Instance().IsParseCommentedPropertiesEnabled()) {
+    if (!TextureProcessor::Instance().IsParseCommentedPropertiesEnabled()) {
         size_t lineStart = 0;
         for (size_t i = 0; i <= content.size(); ++i) {
             if (i == content.size() || content[i] == '\n' || content[i] == '\r') {
@@ -4256,7 +4256,7 @@ void TextureProcessor::AppendToUSDAAsync() {
 
 LUA_FUNCTION(LegacyTextureProcessor_Initialize) {
     // If already initialized (by C++ during RemixAPI init), return success
-    if (MaterialPipeline::ToPBR::MaterialPipeline::ToPBR::TextureProcessor::Instance().IsInitialized()) {
+    if (MaterialPipeline::ToPBR::TextureProcessor::Instance().IsInitialized()) {
         LUA->PushBool(true);
         return 1;
     }
@@ -4267,13 +4267,13 @@ LUA_FUNCTION(LegacyTextureProcessor_Initialize) {
         return 1;
     }
     
-    bool result = MaterialPipeline::ToPBR::MaterialPipeline::ToPBR::TextureProcessor::Instance().Initialize(g_remix);
+    bool result = MaterialPipeline::ToPBR::TextureProcessor::Instance().Initialize(g_remix);
     LUA->PushBool(result);
     return 1;
 }
 
 LUA_FUNCTION(LegacyTextureProcessor_IsInitialized) {
-    LUA->PushBool(MaterialPipeline::ToPBR::MaterialPipeline::ToPBR::TextureProcessor::Instance().IsInitialized());
+    LUA->PushBool(MaterialPipeline::ToPBR::TextureProcessor::Instance().IsInitialized());
     return 1;
 }
 
@@ -4443,7 +4443,7 @@ LUA_FUNCTION(LegacyTextureProcessor_InspectMaterial) {
     
     const char* matName = LUA->GetString(1);
     
-    MaterialPBRProperties props;
+    MaterialPipeline::ToPBR::MaterialPBRProperties props;
     if (!MaterialPipeline::ToPBR::TextureProcessor::Instance().ExtractMaterialPBR(matName, props)) {
         LUA->PushNil();
         return 1;
