@@ -18,23 +18,18 @@
 if not (BRANCH == "x86-64" or BRANCH == "chromium") then return end
 
 -- ConVars for configuration
-CreateClientConVar("rtx_topbr_enabled", "1", true, false, "Enable automatic ToPBR conversion")
-CreateClientConVar("rtx_topbr_auto", "1", true, false, "Auto-process materials on map load")
+-- NOTE: Material discovery is handled by RTXMaterialPipeline. ToPBR only processes individual materials.
+CreateClientConVar("rtx_topbr_enabled", "1", true, false, "Enable ToPBR conversion stage")
 CreateClientConVar("rtx_topbr_debug", "0", true, false, "Enable debug output")
-CreateClientConVar("rtx_topbr_delay", "5", true, false, "Delay before auto-processing (seconds)")
 CreateClientConVar("rtx_topbr_metallic", "0", true, false, "Enable experimental metallic generation from base texture brightness (may cause black materials)")
 CreateClientConVar("rtx_topbr_autodiscover", "1", true, false, "Auto-discover companion textures (_normal, _mask, _spec) not explicitly referenced in VMT")
 CreateClientConVar("rtx_topbr_parse_commented_properties", "1", true, false, "Parse commented-out VMT properties (e.g., //$envmap) - useful for maps where they were disabled for vanilla Source")
-CreateClientConVar("rtx_topbr_continuous", "1", true, false, "Continuous processing interval in seconds (0 = disabled, >0 = process every N seconds)")
-CreateClientConVar("rtx_topbr_batch_size", "3", true, false, "Number of materials to process per batch (reduces stutter)")
 
 -- Module table
 RTXToPBR = RTXToPBR or {}
 
 -- Initialization state
 local isInitialized = false
-local autoProcessTimer = nil
-local continuousProcessTimer = nil
 
 --[[
     Safe ConVar access helpers
@@ -123,101 +118,9 @@ local function GetProcessor()
     return MaterialPipeline and MaterialPipeline.ToPBR
 end
 
---[[
-    Process all tracked materials for PBR conversion (BACKGROUND - non-blocking)
-    Returns the number of NEW materials queued for processing
-]]--
-function RTXToPBR.ProcessAllMaterials(silent)
-    if not GetConVarBoolSafe("rtx_topbr_enabled", true) then
-        if not silent then
-            MsgC(Color(255, 200, 100), "[RTX ToPBR] Conversion disabled (rtx_topbr_enabled = 0)\n")
-        end
-        return 0
-    end
-    
-    if not RTXToPBR.Initialize() then
-        return 0
-    end
-    
-    local processor = GetProcessor()
-    
-    -- Use background processing if available (new API)
-    if processor.QueueMaterialsForProcessing then
-        local queuedCount = processor.QueueMaterialsForProcessing()
-        
-        if queuedCount > 0 then
-            if not silent then
-                MsgC(Color(100, 255, 100), string.format("[RTX ToPBR] Queued %d new materials for background processing\n", queuedCount))
-            end
-        else
-            if not silent then
-                MsgC(Color(200, 200, 200), "[RTX ToPBR] No new materials to process\n")
-            end
-        end
-        
-        return queuedCount
-    end
-    
-    -- Fallback to old synchronous API
-    if not silent then
-        MsgC(Color(100, 200, 255), "[RTX ToPBR] Processing tracked materials...\n")
-    end
-    
-    local count = processor.ProcessAllMaterials()
-    
-    if count > 0 then
-        if not silent then
-            MsgC(Color(100, 255, 100), string.format("[RTX ToPBR] Processed %d materials with PBR properties\n", count))
-        end
-        
-        -- Write USDA if there are new changes
-        if processor.WriteUSDAIfNeeded then
-            processor.WriteUSDAIfNeeded()
-            if not silent and GetConVarBoolSafe("rtx_topbr_debug", false) then
-                MsgC(Color(150, 150, 150), "[RTX ToPBR] USDA updated with new materials\n")
-            end
-        end
-    else
-        if not silent then
-            MsgC(Color(200, 200, 200), "[RTX ToPBR] No new materials to process\n")
-        end
-    end
-    
-    return count
-end
-
---[[
-    Check if background processing is active
-]]--
-function RTXToPBR.IsProcessingInBackground()
-    local processor = GetProcessor()
-    if processor and processor.IsProcessingInBackground then
-        return processor.IsProcessingInBackground()
-    end
-    return false
-end
-
---[[
-    Get the number of materials still in the processing queue
-]]--
-function RTXToPBR.GetQueuedCount()
-    local processor = GetProcessor()
-    if processor and processor.GetQueuedMaterialCount then
-        return processor.GetQueuedMaterialCount()
-    end
-    return 0
-end
-
---[[
-    Get the number of materials processed in the last/current background run
-]]--
-function RTXToPBR.GetLastProcessedCount()
-    local processor = GetProcessor()
-    if processor and processor.GetLastProcessedCount then
-        return processor.GetLastProcessedCount()
-    end
-    return 0
-end
+-- NOTE: Material discovery and continuous processing is handled by RTXMaterialPipeline.
+-- ToPBR only provides ProcessMaterial(name) for the pipeline to call.
+-- The functions below are utilities for inspection and configuration.
 
 --[[
     Get material from what the player is looking at (trace)
@@ -564,63 +467,11 @@ function RTXToPBR.SetDebugOutput(enabled)
     end
 end
 
---[[
-    Start continuous processing
-]]--
-function RTXToPBR.StartContinuousProcessing(interval)
-    interval = interval or GetConVarFloatSafe("rtx_topbr_continuous", 0)
-    
-    if interval <= 0 then
-        MsgC(Color(255, 200, 100), "[RTX ToPBR] Invalid interval. Use a value > 0 (seconds)\n")
-        return false
-    end
-    
-    -- Stop any existing continuous timer
-    RTXToPBR.StopContinuousProcessing()
-    
-    -- Create repeating timer
-    timer.Create("RTXToPBR_Continuous", interval, 0, function()
-        if not GetConVarBoolSafe("rtx_topbr_enabled", true) then
-            return
-        end
-        
-        -- Process silently (no console spam) - uses background thread
-        local count = RTXToPBR.ProcessAllMaterials(true)
-        
-        -- Only log if debug is enabled and materials were queued
-        if count > 0 and GetConVarBoolSafe("rtx_topbr_debug", false) then
-            MsgC(Color(150, 150, 150), string.format("[RTX ToPBR] Continuous: queued %d new materials\n", count))
-        end
-    end)
-    
-    MsgC(Color(100, 255, 100), string.format("[RTX ToPBR] Continuous processing started (every %.1f seconds)\n", interval))
-    return true
-end
-
---[[
-    Stop continuous processing
-]]--
-function RTXToPBR.StopContinuousProcessing()
-    if timer.Exists("RTXToPBR_Continuous") then
-        timer.Remove("RTXToPBR_Continuous")
-        MsgC(Color(100, 200, 255), "[RTX ToPBR] Continuous processing stopped\n")
-        return true
-    end
-    return false
-end
-
---[[
-    Check if continuous processing is active
-]]--
-function RTXToPBR.IsContinuousProcessing()
-    return timer.Exists("RTXToPBR_Continuous")
-end
+-- NOTE: Continuous processing (StartContinuousProcessing, StopContinuousProcessing, IsContinuousProcessing)
+-- has been REMOVED. All material discovery and continuous processing is now handled by RTXMaterialPipeline.
+-- Use rtx_mat_continuous and rtx_mat_continuous_interval convars to control pipeline processing.
 
 -- Console Commands
-concommand.Add("rtx_topbr_process", function()
-    RTXToPBR.ProcessAllMaterials()
-end, nil, "Process all tracked materials for PBR conversion")
-
 concommand.Add("rtx_topbr_inspect", function(ply, cmd, args)
     if not args[1] or args[1] == "" then
         -- No material specified - try to get from what player is looking at
@@ -736,61 +587,23 @@ concommand.Add("rtx_topbr_parse_commented_properties", function(ply, cmd, args)
     end
 end, nil, "Enable/disable parsing of commented-out VMT properties (WARNING: may cause unexpected results)")
 
-concommand.Add("rtx_topbr_continuous", function(ply, cmd, args)
-    if not args[1] or args[1] == "" then
-        -- Show current status
-        if RTXToPBR.IsContinuousProcessing() then
-            local interval = GetConVarFloatSafe("rtx_topbr_continuous", 0)
-            MsgC(Color(100, 255, 100), string.format("[RTX ToPBR] Continuous processing is ACTIVE (%.1fs interval)\n", interval))
-        else
-            MsgC(Color(200, 200, 200), "[RTX ToPBR] Continuous processing is INACTIVE\n")
-        end
-        MsgC(Color(200, 200, 200), "Usage: rtx_topbr_continuous <interval>\n")
-        MsgC(Color(200, 200, 200), "  interval = 0: stop continuous processing\n")
-        MsgC(Color(200, 200, 200), "  interval > 0: start/restart with interval in seconds\n")
-        return
-    end
-    
-    local interval = tonumber(args[1])
-    if not interval then
-        MsgC(Color(255, 100, 100), "[RTX ToPBR] Invalid interval (must be a number)\n")
-        return
-    end
-    
-    RunConsoleCommand("rtx_topbr_continuous", tostring(interval))
-    
-    if interval <= 0 then
-        RTXToPBR.StopContinuousProcessing()
-    else
-        RTXToPBR.StartContinuousProcessing(interval)
-    end
-end, nil, "Start/stop continuous material processing. Usage: rtx_topbr_continuous <seconds> (0 = stop)")
-
 concommand.Add("rtx_topbr_help", function()
     MsgC(Color(100, 200, 255), "\n[RTX ToPBR] Runtime PBR Material Converter\n")
     MsgC(Color(100, 200, 255), string.rep("=", 70) .. "\n")
     MsgC(Color(255, 255, 255), [[
-This module automatically converts Source Engine materials to PBR
-materials in RTX Remix at runtime.
+This module converts Source Engine materials to PBR materials in RTX Remix.
 
-It uses C++ code to:
-- Read VTF textures from Source Engine filesystem
-- Convert texture data to Remix-compatible format
-- Upload textures via Remix API
-- Create PBR materials with calculated roughness/metallic
+NOTE: Material discovery and continuous processing is now handled by
+RTXMaterialPipeline (cl_material_pipeline.lua). ToPBR only processes
+individual materials when called by the pipeline.
 
-SUPPORTED PBR FORMATS:
-- ExoPBR (screenspace_general_8tex shader with ARM textures)
-- GPBR/Strata ("PBR" shader with MRAO textures)
-- PseudoPBR (BlueFlyTrap/MWB phong-based PBR encoding)
-- Standard Source Engine materials (phong, envmap, etc.)
+Use these pipeline convars for continuous processing:
+  rtx_mat_continuous          - Enable continuous discovery (default: 1)
+  rtx_mat_continuous_interval - Discovery interval in seconds (default: 5)
 
-Commands:
+ToPBR Configuration Commands:
   rtx_topbr_inspect [material] - Inspect material's PBR properties
                                  (no argument = look at what you're aiming at)
-  rtx_topbr_process           - Process all tracked materials now
-  rtx_topbr_continuous <sec>  - Start/stop continuous processing
-                                (0 = stop, >0 = process every N seconds)
   rtx_topbr_stats             - Show conversion statistics
   rtx_topbr_clear             - Clear conversion cache
   rtx_topbr_debug 1/0         - Enable/disable debug output
@@ -801,29 +614,13 @@ Commands:
   rtx_topbr_parse_commented_properties 1/0
                               - Enable/disable parsing of commented-out
                                 VMT properties (e.g., //"$envmap")
-                                Useful for maps where envmap was disabled
-                                for vanilla Source but benefits RTX
   rtx_topbr_help              - Show this help
 
-ConVars:
-  rtx_topbr_enabled    - Enable/disable conversion (default: 1)
-  rtx_topbr_auto       - Auto-process on map load (default: 1)
-  rtx_topbr_delay      - Delay before auto-processing (default: 5)
-  rtx_topbr_continuous - Continuous processing interval in seconds
-                         (default: 0 = disabled)
-  rtx_topbr_batch_size - Materials per batch, prevents stutter (default: 3)
-  rtx_topbr_debug      - Debug output (default: 0)
-  rtx_topbr_metallic   - Experimental metallic generation (default: 0)
-  rtx_topbr_autodiscover - Auto-discover companion textures (default: 1)
-
-Continuous Processing:
-  Set rtx_topbr_continuous to automatically process new materials as they
-  appear. Materials are processed in small batches (rtx_topbr_batch_size) to
-  avoid stuttering. The USDA file is only written when there are new changes.
-  Useful for multiplayer servers or maps with lots of dynamic content.
-  
-  Example: rtx_topbr_continuous 5   (process every 5 seconds)
-           rtx_topbr_batch_size 3   (3 materials per batch, reduces stutter)
+SUPPORTED PBR FORMATS:
+- ExoPBR (screenspace_general_8tex shader with ARM textures)
+- GPBR/Strata ("PBR" shader with MRAO textures)
+- PseudoPBR (BlueFlyTrap/MWB phong-based PBR encoding)
+- Standard Source Engine materials (phong, envmap, etc.)
 
 Roughness Priority (phong materials are handled first):
 1. $phongexponenttexture (best quality)
@@ -841,49 +638,15 @@ PBR metallic surfaces reflect their base color.
     MsgC(Color(100, 200, 255), string.rep("=", 60) .. "\n\n")
 end, nil, "Show ToPBR help information")
 
--- Auto-process on map load
-hook.Add("InitPostEntity", "RTXToPBR_AutoProcess", function()
-    if not GetConVarBoolSafe("rtx_topbr_enabled", true) then
-        return
-    end
-    
-    if not GetConVarBoolSafe("rtx_topbr_auto", true) then
-        return
-    end
-    
-    local delay = GetConVarFloatSafe("rtx_topbr_delay", 5)
-    
-    -- Clear any existing timer
-    if autoProcessTimer then
-        timer.Remove("RTXToPBR_AutoProcess")
-    end
-    
-    -- Schedule auto-processing
-    timer.Create("RTXToPBR_AutoProcess", delay, 1, function()
-        MsgC(Color(100, 200, 255), "[RTX ToPBR] Running auto-process...\n")
-        RTXToPBR.ProcessAllMaterials()
-        
-        -- Start continuous processing if configured
-        local continuousInterval = GetConVarFloatSafe("rtx_topbr_continuous", 0)
-        if continuousInterval > 0 then
-            RTXToPBR.StartContinuousProcessing(continuousInterval)
-        end
-    end)
-end)
-
--- Clear cache on map cleanup
-hook.Add("PostCleanupMap", "RTXToPBR_MapCleanup", function()
-    if timer.Exists("RTXToPBR_AutoProcess") then
-        timer.Remove("RTXToPBR_AutoProcess")
-    end
-    -- Stop continuous processing on map cleanup
-    RTXToPBR.StopContinuousProcessing()
-end)
+-- NOTE: Auto-processing and continuous processing hooks have been REMOVED.
+-- All material discovery and processing timing is now handled by RTXMaterialPipeline.
+-- ToPBR is called as Stage 3 of the unified pipeline.
 
 -- Startup message
 MsgC(Color(100, 255, 100), "[RTX ToPBR] Runtime PBR Converter loaded.\n")
+MsgC(Color(200, 200, 200), "  Processing controlled by RTXMaterialPipeline.\n")
 if MaterialPipeline and MaterialPipeline.ToPBR then
-    MsgC(Color(200, 200, 200), "  C++ MaterialPipeline.ToPBR module available - runtime conversion enabled.\n")
+    MsgC(Color(200, 200, 200), "  C++ MaterialPipeline.ToPBR module available.\n")
 else
     MsgC(Color(255, 200, 100), "  C++ MaterialPipeline.ToPBR module not loaded - waiting for binary module.\n")
 end
