@@ -287,11 +287,12 @@ static int Lua_GetStats(lua_State* L) {
     return 1;
 }
 
-// Lua: HashCollisionFixer.CheckSolidColor(texturePath)
+// Lua: HashCollisionFixer.CheckSolidColor(texturePath, [debugOutput])
 // Check if a VTF texture is a solid color without associating it with a material
+// debugOutput is optional, defaults to false
 static int Lua_CheckSolidColor(lua_State* L) {
     const char* texturePath = LUA->CheckString(1);
-    bool debug = LUA->GetBool(2);
+    bool debug = LUA->IsType(2, GarrysMod::Lua::Type::Bool) ? LUA->GetBool(2) : false;
     
     VTFParser::SolidColorResult result = VTFParser::CheckSolidColor(g_pFullFileSystem, texturePath, debug);
     
