@@ -87,6 +87,9 @@ bool Pipeline::Initialize(remix::Interface* remix, GarrysMod::Lua::ILuaBase* LUA
     
     // Register all Lua bindings for pipeline components
     if (LUA) {
+        // Register the main MaterialPipeline Lua table first
+        Instance().RegisterLuaBindings(LUA);
+        
         // Register HashCollisionFixer Lua bindings
         HashCollisionFixer::RegisterLuaBindings(LUA);
         
