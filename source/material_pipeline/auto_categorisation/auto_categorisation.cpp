@@ -282,7 +282,7 @@ uint32_t DetectCategory(const std::string& materialName, IMaterial* material) {
             lowerName.find("tools/toolsblocklight") != std::string::npos ||
             lowerName.find("tools/toolsareaportal") != std::string::npos ||
             lowerName.find("tools/toolsoccluder") != std::string::npos) {
-            flags = CategoryFlags::IGNORE;
+            flags = CategoryFlags::IGNORED;
             s_stats.ignoredCategorized++;
             return flags;
         }
@@ -502,7 +502,7 @@ void ApplyToHash(uint64_t hash, uint32_t flags, const std::string& materialName)
     if (flags & CategoryFlags::SKY) {
         s_remix->AddTextureHash("rtx.skyBoxTextures", hashStr.c_str());
     }
-    if (flags & CategoryFlags::IGNORE) {
+    if (flags & CategoryFlags::IGNORED) {
         s_remix->AddTextureHash("rtx.ignoreTextures", hashStr.c_str());
     }
     if (flags & CategoryFlags::PARTICLE) {

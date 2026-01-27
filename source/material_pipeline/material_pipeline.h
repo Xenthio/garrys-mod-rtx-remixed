@@ -311,7 +311,7 @@ namespace CategoryFlags {
     constexpr uint32_t ANIMATED_WATER = (1 << 10);
     constexpr uint32_t THIRD_PERSON_PLAYER_MODEL = (1 << 11);
     constexpr uint32_t THIRD_PERSON_PLAYER_BODY = (1 << 12);
-    constexpr uint32_t IGNORE = (1 << 13);
+    constexpr uint32_t IGNORED = (1 << 13);  // Renamed from IGNORE to avoid Windows macro conflict
     constexpr uint32_t IGNORE_BAKED_LIGHTING = (1 << 14);
     constexpr uint32_t HIDDEN = (1 << 15);
     constexpr uint32_t SKY = (1 << 16);

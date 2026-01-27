@@ -45,7 +45,7 @@ namespace CategoryFlags {
     constexpr uint32_t WORLD_UI = (1 << 0);
     constexpr uint32_t WORLD_MATTE = (1 << 1);
     constexpr uint32_t SKY = (1 << 2);
-    constexpr uint32_t IGNORE = (1 << 3);
+    constexpr uint32_t IGNORED = (1 << 3);  // Renamed from IGNORE to avoid Windows macro conflict
     constexpr uint32_t PARTICLE = (1 << 10);
     constexpr uint32_t BEAM = (1 << 11);
     constexpr uint32_t DECAL_STATIC = (1 << 12);
