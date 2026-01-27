@@ -656,27 +656,27 @@ IFileSystem* Pipeline::GetFileSystem() {
 }
 
 // =========================================================================
-// Lua Bindings
+// Lua Bindings - Using LUA_FUNCTION macro for proper ILuaBase handling
 // =========================================================================
 
-// Forward declaration for Lua function implementations
-static int MaterialPipeline_GetStats(lua_State* L);
-static int MaterialPipeline_ProcessMaterial(lua_State* L);
-static int MaterialPipeline_ProcessAllMaterials(lua_State* L);
-static int MaterialPipeline_ProcessBatch(lua_State* L);
-static int MaterialPipeline_ProcessPendingMaterials(lua_State* L);
-static int MaterialPipeline_QueueAllMaterials(lua_State* L);
-static int MaterialPipeline_ClearCache(lua_State* L);
-static int MaterialPipeline_SetAutoProcessing(lua_State* L);
-static int MaterialPipeline_SetDebugOutput(lua_State* L);
-static int MaterialPipeline_GetTrackedMaterials(lua_State* L);
-static int MaterialPipeline_IsMaterialProcessed(lua_State* L);
-static int MaterialPipeline_GetTextureHash(lua_State* L);
-static int MaterialPipeline_RescanCategories(lua_State* L);
-static int MaterialPipeline_WriteUSDA(lua_State* L);
-static int MaterialPipeline_SetCategoryFlags(lua_State* L);
-static int MaterialPipeline_GetCategoryFlags(lua_State* L);
-static int MaterialPipeline_FindTextures(lua_State* L);
+// Forward declarations - these are defined at global scope outside namespace
+LUA_FUNCTION(Pipeline_GetStats);
+LUA_FUNCTION(Pipeline_ProcessMaterial);
+LUA_FUNCTION(Pipeline_ProcessAllMaterials);
+LUA_FUNCTION(Pipeline_ProcessBatch);
+LUA_FUNCTION(Pipeline_ProcessPendingMaterials);
+LUA_FUNCTION(Pipeline_QueueAllMaterials);
+LUA_FUNCTION(Pipeline_ClearCache);
+LUA_FUNCTION(Pipeline_SetAutoProcessing);
+LUA_FUNCTION(Pipeline_SetDebugOutput);
+LUA_FUNCTION(Pipeline_GetTrackedMaterials);
+LUA_FUNCTION(Pipeline_IsMaterialProcessed);
+LUA_FUNCTION(Pipeline_GetTextureHash);
+LUA_FUNCTION(Pipeline_RescanCategories);
+LUA_FUNCTION(Pipeline_WriteUSDA);
+LUA_FUNCTION(Pipeline_SetCategoryFlags);
+LUA_FUNCTION(Pipeline_GetCategoryFlags);
+LUA_FUNCTION(Pipeline_FindTextures);
 
 void Pipeline::RegisterLuaBindings(GarrysMod::Lua::ILuaBase* LUA) {
     if (!LUA) return;
@@ -688,55 +688,55 @@ void Pipeline::RegisterLuaBindings(GarrysMod::Lua::ILuaBase* LUA) {
     LUA->CreateTable();
     
     // Register functions
-    LUA->PushCFunction(MaterialPipeline_GetStats);
+    LUA->PushCFunction(Pipeline_GetStats);
     LUA->SetField(-2, "GetStats");
     
-    LUA->PushCFunction(MaterialPipeline_ProcessMaterial);
+    LUA->PushCFunction(Pipeline_ProcessMaterial);
     LUA->SetField(-2, "ProcessMaterial");
     
-    LUA->PushCFunction(MaterialPipeline_ProcessAllMaterials);
+    LUA->PushCFunction(Pipeline_ProcessAllMaterials);
     LUA->SetField(-2, "ProcessAllMaterials");
     
-    LUA->PushCFunction(MaterialPipeline_ProcessBatch);
+    LUA->PushCFunction(Pipeline_ProcessBatch);
     LUA->SetField(-2, "ProcessBatch");
     
-    LUA->PushCFunction(MaterialPipeline_ProcessPendingMaterials);
+    LUA->PushCFunction(Pipeline_ProcessPendingMaterials);
     LUA->SetField(-2, "ProcessPendingMaterials");
     
-    LUA->PushCFunction(MaterialPipeline_QueueAllMaterials);
+    LUA->PushCFunction(Pipeline_QueueAllMaterials);
     LUA->SetField(-2, "QueueAllMaterials");
     
-    LUA->PushCFunction(MaterialPipeline_ClearCache);
+    LUA->PushCFunction(Pipeline_ClearCache);
     LUA->SetField(-2, "ClearCache");
     
-    LUA->PushCFunction(MaterialPipeline_SetAutoProcessing);
+    LUA->PushCFunction(Pipeline_SetAutoProcessing);
     LUA->SetField(-2, "SetAutoProcessing");
     
-    LUA->PushCFunction(MaterialPipeline_SetDebugOutput);
+    LUA->PushCFunction(Pipeline_SetDebugOutput);
     LUA->SetField(-2, "SetDebugOutput");
     
-    LUA->PushCFunction(MaterialPipeline_GetTrackedMaterials);
+    LUA->PushCFunction(Pipeline_GetTrackedMaterials);
     LUA->SetField(-2, "GetTrackedMaterials");
     
-    LUA->PushCFunction(MaterialPipeline_IsMaterialProcessed);
+    LUA->PushCFunction(Pipeline_IsMaterialProcessed);
     LUA->SetField(-2, "IsMaterialProcessed");
     
-    LUA->PushCFunction(MaterialPipeline_GetTextureHash);
+    LUA->PushCFunction(Pipeline_GetTextureHash);
     LUA->SetField(-2, "GetTextureHash");
     
-    LUA->PushCFunction(MaterialPipeline_RescanCategories);
+    LUA->PushCFunction(Pipeline_RescanCategories);
     LUA->SetField(-2, "RescanCategories");
     
-    LUA->PushCFunction(MaterialPipeline_WriteUSDA);
+    LUA->PushCFunction(Pipeline_WriteUSDA);
     LUA->SetField(-2, "WriteUSDA");
     
-    LUA->PushCFunction(MaterialPipeline_SetCategoryFlags);
+    LUA->PushCFunction(Pipeline_SetCategoryFlags);
     LUA->SetField(-2, "SetCategoryFlags");
     
-    LUA->PushCFunction(MaterialPipeline_GetCategoryFlags);
+    LUA->PushCFunction(Pipeline_GetCategoryFlags);
     LUA->SetField(-2, "GetCategoryFlags");
     
-    LUA->PushCFunction(MaterialPipeline_FindTextures);
+    LUA->PushCFunction(Pipeline_FindTextures);
     LUA->SetField(-2, "FindTextures");
     
     LUA->SetField(-2, "MaterialPipeline");
@@ -745,14 +745,14 @@ void Pipeline::RegisterLuaBindings(GarrysMod::Lua::ILuaBase* LUA) {
     Msg("[MaterialPipeline] Lua bindings registered\n");
 }
 
+} // namespace MaterialPipeline
+
 // =========================================================================
-// Lua Function Implementations
+// Lua Function Implementations - Must be at global scope for LUA_FUNCTION macro
 // =========================================================================
 
-static int MaterialPipeline_GetStats(lua_State* L) {
-    auto* LUA = reinterpret_cast<GarrysMod::Lua::ILuaBase*>(L);
-    
-    auto stats = Pipeline::Instance().GetStats();
+LUA_FUNCTION(Pipeline_GetStats) {
+    auto stats = MaterialPipeline::Pipeline::Instance().GetStats();
     
     LUA->CreateTable();
     
@@ -783,99 +783,83 @@ static int MaterialPipeline_GetStats(lua_State* L) {
     return 1;
 }
 
-static int MaterialPipeline_ProcessMaterial(lua_State* L) {
-    auto* LUA = reinterpret_cast<GarrysMod::Lua::ILuaBase*>(L);
-    
+LUA_FUNCTION(Pipeline_ProcessMaterial) {
     if (!LUA->IsType(1, GarrysMod::Lua::Type::String)) {
         LUA->ThrowError("Expected string argument for material name");
         return 0;
     }
     
     const char* materialName = LUA->GetString(1);
-    bool success = Pipeline::Instance().ProcessMaterial(materialName);
+    bool success = MaterialPipeline::Pipeline::Instance().ProcessMaterial(materialName);
     
     LUA->PushBool(success);
     return 1;
 }
 
-static int MaterialPipeline_ProcessAllMaterials(lua_State* L) {
-    auto* LUA = reinterpret_cast<GarrysMod::Lua::ILuaBase*>(L);
-    
-    int processed = Pipeline::Instance().ProcessAllMaterialsThroughPipeline();
+LUA_FUNCTION(Pipeline_ProcessAllMaterials) {
+    int processed = MaterialPipeline::Pipeline::Instance().ProcessAllMaterialsThroughPipeline();
     
     LUA->PushNumber(processed);
     return 1;
 }
 
-static int MaterialPipeline_ProcessBatch(lua_State* L) {
-    auto* LUA = reinterpret_cast<GarrysMod::Lua::ILuaBase*>(L);
-    
+LUA_FUNCTION(Pipeline_ProcessBatch) {
     int maxCount = 5;
     if (LUA->IsType(1, GarrysMod::Lua::Type::Number)) {
         maxCount = static_cast<int>(LUA->GetNumber(1));
     }
     
-    int processed = Pipeline::Instance().ProcessBatch(maxCount);
+    int processed = MaterialPipeline::Pipeline::Instance().ProcessBatch(maxCount);
     
     LUA->PushNumber(processed);
     return 1;
 }
 
-static int MaterialPipeline_ProcessPendingMaterials(lua_State* L) {
-    auto* LUA = reinterpret_cast<GarrysMod::Lua::ILuaBase*>(L);
-    
-    int processed = Pipeline::Instance().ProcessPendingMaterials();
+LUA_FUNCTION(Pipeline_ProcessPendingMaterials) {
+    int processed = MaterialPipeline::Pipeline::Instance().ProcessPendingMaterials();
     
     LUA->PushNumber(processed);
     return 1;
 }
 
-static int MaterialPipeline_QueueAllMaterials(lua_State* L) {
-    auto* LUA = reinterpret_cast<GarrysMod::Lua::ILuaBase*>(L);
-    
-    int queued = Pipeline::Instance().QueueAllMaterials();
+LUA_FUNCTION(Pipeline_QueueAllMaterials) {
+    int queued = MaterialPipeline::Pipeline::Instance().QueueAllMaterials();
     
     LUA->PushNumber(queued);
     return 1;
 }
 
-static int MaterialPipeline_ClearCache(lua_State* L) {
-    Pipeline::Instance().ClearCache();
+LUA_FUNCTION(Pipeline_ClearCache) {
+    MaterialPipeline::Pipeline::Instance().ClearCache();
     return 0;
 }
 
-static int MaterialPipeline_SetAutoProcessing(lua_State* L) {
-    auto* LUA = reinterpret_cast<GarrysMod::Lua::ILuaBase*>(L);
-    
+LUA_FUNCTION(Pipeline_SetAutoProcessing) {
     if (!LUA->IsType(1, GarrysMod::Lua::Type::Bool)) {
         LUA->ThrowError("Expected boolean argument");
         return 0;
     }
     
     bool enabled = LUA->GetBool(1);
-    Pipeline::Instance().SetAutoProcessing(enabled);
+    MaterialPipeline::Pipeline::Instance().SetAutoProcessing(enabled);
     
     return 0;
 }
 
-static int MaterialPipeline_SetDebugOutput(lua_State* L) {
-    auto* LUA = reinterpret_cast<GarrysMod::Lua::ILuaBase*>(L);
-    
+LUA_FUNCTION(Pipeline_SetDebugOutput) {
     if (!LUA->IsType(1, GarrysMod::Lua::Type::Bool)) {
         LUA->ThrowError("Expected boolean argument");
         return 0;
     }
     
     bool enabled = LUA->GetBool(1);
-    Pipeline::Instance().SetDebugOutput(enabled);
+    MaterialPipeline::Pipeline::Instance().SetDebugOutput(enabled);
     
     return 0;
 }
 
-static int MaterialPipeline_GetTrackedMaterials(lua_State* L) {
-    auto* LUA = reinterpret_cast<GarrysMod::Lua::ILuaBase*>(L);
-    
-    auto materials = Pipeline::Instance().GetTrackedMaterials();
+LUA_FUNCTION(Pipeline_GetTrackedMaterials) {
+    auto materials = MaterialPipeline::Pipeline::Instance().GetTrackedMaterials();
     
     LUA->CreateTable();
     
@@ -889,31 +873,27 @@ static int MaterialPipeline_GetTrackedMaterials(lua_State* L) {
     return 1;
 }
 
-static int MaterialPipeline_IsMaterialProcessed(lua_State* L) {
-    auto* LUA = reinterpret_cast<GarrysMod::Lua::ILuaBase*>(L);
-    
+LUA_FUNCTION(Pipeline_IsMaterialProcessed) {
     if (!LUA->IsType(1, GarrysMod::Lua::Type::String)) {
         LUA->ThrowError("Expected string argument for material name");
         return 0;
     }
     
     const char* materialName = LUA->GetString(1);
-    bool processed = Pipeline::Instance().IsMaterialProcessed(materialName);
+    bool processed = MaterialPipeline::Pipeline::Instance().IsMaterialProcessed(materialName);
     
     LUA->PushBool(processed);
     return 1;
 }
 
-static int MaterialPipeline_GetTextureHash(lua_State* L) {
-    auto* LUA = reinterpret_cast<GarrysMod::Lua::ILuaBase*>(L);
-    
+LUA_FUNCTION(Pipeline_GetTextureHash) {
     if (!LUA->IsType(1, GarrysMod::Lua::Type::String)) {
         LUA->ThrowError("Expected string argument for material name");
         return 0;
     }
     
     const char* materialName = LUA->GetString(1);
-    uint64_t hash = Pipeline::Instance().GetTextureHash(materialName);
+    uint64_t hash = MaterialPipeline::Pipeline::Instance().GetTextureHash(materialName);
     
     // Return as string for Lua (can't represent full uint64 as number)
     char hashStr[32];
@@ -923,27 +903,21 @@ static int MaterialPipeline_GetTextureHash(lua_State* L) {
     return 1;
 }
 
-static int MaterialPipeline_RescanCategories(lua_State* L) {
-    auto* LUA = reinterpret_cast<GarrysMod::Lua::ILuaBase*>(L);
-    
-    int count = Pipeline::Instance().RescanCategories();
+LUA_FUNCTION(Pipeline_RescanCategories) {
+    int count = MaterialPipeline::Pipeline::Instance().RescanCategories();
     
     LUA->PushNumber(count);
     return 1;
 }
 
-static int MaterialPipeline_WriteUSDA(lua_State* L) {
-    auto* LUA = reinterpret_cast<GarrysMod::Lua::ILuaBase*>(L);
-    
-    bool success = Pipeline::Instance().WriteUSDA();
+LUA_FUNCTION(Pipeline_WriteUSDA) {
+    bool success = MaterialPipeline::Pipeline::Instance().WriteUSDA();
     
     LUA->PushBool(success);
     return 1;
 }
 
-static int MaterialPipeline_SetCategoryFlags(lua_State* L) {
-    auto* LUA = reinterpret_cast<GarrysMod::Lua::ILuaBase*>(L);
-    
+LUA_FUNCTION(Pipeline_SetCategoryFlags) {
     if (!LUA->IsType(1, GarrysMod::Lua::Type::String) && !LUA->IsType(1, GarrysMod::Lua::Type::Number)) {
         LUA->ThrowError("Expected hash (string or number) as first argument");
         return 0;
@@ -964,14 +938,12 @@ static int MaterialPipeline_SetCategoryFlags(lua_State* L) {
     
     uint32_t flags = static_cast<uint32_t>(LUA->GetNumber(2));
     
-    Pipeline::Instance().SetCategoryFlags(hash, flags);
+    MaterialPipeline::Pipeline::Instance().SetCategoryFlags(hash, flags);
     
     return 0;
 }
 
-static int MaterialPipeline_GetCategoryFlags(lua_State* L) {
-    auto* LUA = reinterpret_cast<GarrysMod::Lua::ILuaBase*>(L);
-    
+LUA_FUNCTION(Pipeline_GetCategoryFlags) {
     if (!LUA->IsType(1, GarrysMod::Lua::Type::String) && !LUA->IsType(1, GarrysMod::Lua::Type::Number)) {
         LUA->ThrowError("Expected hash (string or number) as first argument");
         return 0;
@@ -985,22 +957,20 @@ static int MaterialPipeline_GetCategoryFlags(lua_State* L) {
         hash = static_cast<uint64_t>(LUA->GetNumber(1));
     }
     
-    uint32_t flags = Pipeline::Instance().GetCategoryFlags(hash);
+    uint32_t flags = MaterialPipeline::Pipeline::Instance().GetCategoryFlags(hash);
     
     LUA->PushNumber(flags);
     return 1;
 }
 
-static int MaterialPipeline_FindTextures(lua_State* L) {
-    auto* LUA = reinterpret_cast<GarrysMod::Lua::ILuaBase*>(L);
-    
+LUA_FUNCTION(Pipeline_FindTextures) {
     if (!LUA->IsType(1, GarrysMod::Lua::Type::String)) {
         LUA->ThrowError("Expected string argument for search term");
         return 0;
     }
     
     const char* searchTerm = LUA->GetString(1);
-    auto results = Pipeline::Instance().FindTextures(searchTerm);
+    auto results = MaterialPipeline::Pipeline::Instance().FindTextures(searchTerm);
     
     LUA->CreateTable();
     
@@ -1022,7 +992,5 @@ static int MaterialPipeline_FindTextures(lua_State* L) {
     
     return 1;
 }
-
-} // namespace MaterialPipeline
 
 #endif // _WIN64
