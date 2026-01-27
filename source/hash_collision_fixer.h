@@ -14,10 +14,10 @@
 #include <unordered_set>
 #include <unordered_map>
 #include <mutex>
+#include <GarrysMod/Lua/Interface.h>
 
 // Forward declarations
 class IFileSystem;
-struct lua_State;
 
 namespace HashCollisionFixer {
 
@@ -83,7 +83,7 @@ size_t GetPendingCount();
 // =========================================================================
 
 // Register Lua functions for hash collision fixer
-void RegisterLuaBindings(lua_State* L);
+void RegisterLuaBindings(GarrysMod::Lua::ILuaBase* LUA);
 
 } // namespace HashCollisionFixer
 

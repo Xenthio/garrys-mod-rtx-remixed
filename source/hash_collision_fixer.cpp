@@ -202,10 +202,10 @@ extern IFileSystem* g_pFullFileSystem;
 
 // Lua: HashCollisionFixer.CheckMaterial(materialName, texturePath, [debugOutput])
 // debugOutput is optional, defaults to false
-static int Lua_CheckMaterial(lua_State* L) {
+LUA_FUNCTION(Lua_CheckMaterial) {
     const char* materialName = LUA->CheckString(1);
     const char* texturePath = LUA->CheckString(2);
-    bool debug = LUA->IsType(3, GarrysMod::Lua::Type::Bool) ? LUA->GetBool(3) : false;
+    bool debug = LUA->IsType(3, Type::Bool) ? LUA->GetBool(3) : false;
     
     bool result = CheckMaterial(g_pFullFileSystem, materialName, texturePath, debug);
     LUA->PushBool(result);
@@ -213,7 +213,7 @@ static int Lua_CheckMaterial(lua_State* L) {
 }
 
 // Lua: HashCollisionFixer.GetMaterialsNeedingFix()
-static int Lua_GetMaterialsNeedingFix(lua_State* L) {
+LUA_FUNCTION(Lua_GetMaterialsNeedingFix) {
     std::vector<std::string> materials = GetMaterialsNeedingFix();
     
     LUA->CreateTable();
@@ -228,28 +228,28 @@ static int Lua_GetMaterialsNeedingFix(lua_State* L) {
 }
 
 // Lua: HashCollisionFixer.MarkMaterialFixed(materialName)
-static int Lua_MarkMaterialFixed(lua_State* L) {
+LUA_FUNCTION(Lua_MarkMaterialFixed) {
     const char* materialName = LUA->CheckString(1);
     MarkMaterialFixed(materialName);
     return 0;
 }
 
 // Lua: HashCollisionFixer.IsMaterialFixed(materialName)
-static int Lua_IsMaterialFixed(lua_State* L) {
+LUA_FUNCTION(Lua_IsMaterialFixed) {
     const char* materialName = LUA->CheckString(1);
     LUA->PushBool(IsMaterialFixed(materialName));
     return 1;
 }
 
 // Lua: HashCollisionFixer.IsSolidColorMaterial(materialName)
-static int Lua_IsSolidColorMaterial(lua_State* L) {
+LUA_FUNCTION(Lua_IsSolidColorMaterial) {
     const char* materialName = LUA->CheckString(1);
     LUA->PushBool(IsSolidColorMaterial(materialName));
     return 1;
 }
 
 // Lua: HashCollisionFixer.GetMaterialColor(materialName)
-static int Lua_GetMaterialColor(lua_State* L) {
+LUA_FUNCTION(Lua_GetMaterialColor) {
     const char* materialName = LUA->CheckString(1);
     uint8_t r, g, b, a;
     
@@ -265,13 +265,13 @@ static int Lua_GetMaterialColor(lua_State* L) {
 }
 
 // Lua: HashCollisionFixer.Reset()
-static int Lua_Reset(lua_State* L) {
+LUA_FUNCTION(Lua_Reset) {
     Reset();
     return 0;
 }
 
 // Lua: HashCollisionFixer.GetStats()
-static int Lua_GetStats(lua_State* L) {
+LUA_FUNCTION(Lua_GetStats) {
     LUA->CreateTable();
     
     LUA->PushString("totalDetected");
@@ -292,9 +292,9 @@ static int Lua_GetStats(lua_State* L) {
 // Lua: HashCollisionFixer.CheckSolidColor(texturePath, [debugOutput])
 // Check if a VTF texture is a solid color without associating it with a material
 // debugOutput is optional, defaults to false
-static int Lua_CheckSolidColor(lua_State* L) {
+LUA_FUNCTION(Lua_CheckSolidColor) {
     const char* texturePath = LUA->CheckString(1);
-    bool debug = LUA->IsType(2, GarrysMod::Lua::Type::Bool) ? LUA->GetBool(2) : false;
+    bool debug = LUA->IsType(2, Type::Bool) ? LUA->GetBool(2) : false;
     
     VTFParser::SolidColorResult result = VTFParser::CheckSolidColor(g_pFullFileSystem, texturePath, debug);
     
@@ -316,9 +316,9 @@ static int Lua_CheckSolidColor(lua_State* L) {
     return 1;
 }
 
-void RegisterLuaBindings(lua_State* L) {
+void RegisterLuaBindings(ILuaBase* LUA) {
     // Create HashCollisionFixer table
-    LUA->PushSpecial(GarrysMod::Lua::SPECIAL_GLOB);
+    LUA->PushSpecial(SPECIAL_GLOB);
     LUA->CreateTable();
     
     LUA->PushString("CheckMaterial");
