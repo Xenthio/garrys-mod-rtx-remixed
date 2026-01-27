@@ -17,7 +17,6 @@
 #include <remix/remix.h>
 #include <algorithm>
 #include <cstdio>
-#include <GarrysMod/Lua/Interface.h>
 
 using namespace GarrysMod::Lua;
 

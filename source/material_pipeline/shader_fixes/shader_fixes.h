@@ -21,16 +21,11 @@
 #include <unordered_set>
 #include <mutex>
 #include <cstdint>
+#include <GarrysMod/Lua/Interface.h>
 
 // Forward declarations
 class IMaterial;
 class IFileSystem;
-
-namespace GarrysMod {
-namespace Lua {
-class ILuaBase;
-}
-}
 
 namespace MaterialPipeline {
 namespace ShaderFixes {

@@ -4251,8 +4251,6 @@ void TextureProcessor::AppendToUSDAAsync() {
 // Lua Bindings
 //=============================================================================
 
-#include <GarrysMod/Lua/Interface.h>
-
 using namespace GarrysMod::Lua;
 
 LUA_FUNCTION(LegacyTextureProcessor_Initialize) {

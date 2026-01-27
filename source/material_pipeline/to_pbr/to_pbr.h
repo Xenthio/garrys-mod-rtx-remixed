@@ -16,16 +16,11 @@
 
 #include <remix/remix.h>
 #include <remix/remix_c.h>
+#include <GarrysMod/Lua/Interface.h>
 
 // Forward declarations
 class IMaterial;
 class IFileSystem;
-
-namespace GarrysMod {
-namespace Lua {
-class ILuaBase;
-}
-}
 
 // =========================================================================
 // Material Pipeline - ToPBR Module

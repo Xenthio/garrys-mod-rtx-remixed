@@ -28,6 +28,7 @@
 #include <atomic>
 #include <functional>
 #include <cstdint>
+#include <GarrysMod/Lua/Interface.h>
 
 // Forward declarations
 class IDirect3DDevice9Ex;
@@ -37,12 +38,6 @@ class IFileSystem;
 
 namespace remix {
 class Interface;
-}
-
-namespace GarrysMod {
-namespace Lua {
-class ILuaBase;
-}
 }
 
 namespace MaterialPipeline {

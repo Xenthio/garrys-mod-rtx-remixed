@@ -11,7 +11,6 @@
 #include <materialsystem/imaterial.h>
 #include <materialsystem/imaterialvar.h>
 #include <algorithm>
-#include <GarrysMod/Lua/Interface.h>
 
 using namespace GarrysMod::Lua;
 

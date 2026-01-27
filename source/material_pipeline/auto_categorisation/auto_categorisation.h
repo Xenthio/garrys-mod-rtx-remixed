@@ -23,6 +23,7 @@
 #include <unordered_set>
 #include <mutex>
 #include <cstdint>
+#include <GarrysMod/Lua/Interface.h>
 
 // Forward declarations
 class IMaterial;
@@ -31,12 +32,6 @@ class IDirect3DTexture9;
 
 namespace remix {
 class Interface;
-}
-
-namespace GarrysMod {
-namespace Lua {
-class ILuaBase;
-}
 }
 
 namespace MaterialPipeline {

@@ -18,15 +18,10 @@
 #include <unordered_map>
 #include <mutex>
 #include <cstdint>
+#include <GarrysMod/Lua/Interface.h>
 
 // Forward declarations
 class IFileSystem;
-
-namespace GarrysMod {
-namespace Lua {
-class ILuaBase;
-}
-}
 
 namespace MaterialPipeline {
 namespace HashCollisionFixer {
