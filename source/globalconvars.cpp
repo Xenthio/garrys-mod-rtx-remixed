@@ -15,6 +15,7 @@ ConVar* GlobalConvars::c_frustumcull;
 ConVar* GlobalConvars::r_worldnodenocull;
 ConVar* GlobalConvars::r_forcehwlight;
 ConVar* GlobalConvars::rtx_force_static_lighting;
+
 void GlobalConvars::InitialiseConVars() {
 	m_pLuaConVars = loader_lua_shared.GetInterface<GarrysMod::Lua::ILuaConVars>(GMOD_LUACONVARS_INTERFACE);
 	if (!m_pLuaConVars) {
