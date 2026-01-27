@@ -21,7 +21,7 @@
     2. AUTOCATEGORIZATION - Apply Remix category flags (decals, particles, 
        emissive) based on material properties
        
-    3. TOPBR CONVERSION - Queue for PBR texture generation and upload
+    3. TOPBR CONVERSION - Process material for PBR texture generation and USDA output
     
     DESIGN PRINCIPLES:
     ==================
@@ -85,8 +85,8 @@ CreateClientConVar("rtx_mat_pbr_enabled", "1", true, false,
 -- Pipeline settings
 CreateClientConVar("rtx_mat_debug", "0", true, false, 
     "Enable debug output for material pipeline")
-CreateClientConVar("rtx_mat_batch", "5", true, false, 
-    "Number of materials processed per tick (1-20)")
+CreateClientConVar("rtx_mat_batch", "10", true, false, 
+    "Number of materials processed per tick (1-50)")
 CreateClientConVar("rtx_mat_delay", "2", true, false, 
     "Delay in seconds before auto-processing starts")
 CreateClientConVar("rtx_mat_continuous", "1", true, false, 
@@ -381,14 +381,14 @@ local function Stage2_Autocategorize(materialName)
 end
 
 -- =============================================================================
--- STAGE 3: QUEUE FOR TOPBR
+-- STAGE 3: PROCESS WITH TOPBR
 -- =============================================================================
 
 --[[
-    Queues the material for PBR texture conversion.
-    Integrates with existing RTXToPBR / MaterialPipeline.ToPBR system.
+    Processes the material through ToPBR for PBR texture conversion.
+    Uses MaterialPipeline.ToPBR.ProcessSingleMaterial() from C++.
 ]]--
-local function Stage3_QueueForToPBR(materialName)
+local function Stage3_ProcessWithToPBR(materialName)
     -- Check if stage is enabled
     if not GetConVar("rtx_mat_pbr_enabled"):GetBool() then
         DebugPrint("Stage 3 SKIP (disabled): ", materialName)
@@ -399,36 +399,36 @@ local function Stage3_QueueForToPBR(materialName)
     local processor = MaterialPipeline and MaterialPipeline.ToPBR
     
     if not processor then
-        -- Try RTXToPBR Lua wrapper
-        if RTXToPBR and RTXToPBR.QueueMaterial then
-            RTXToPBR.QueueMaterial(materialName)
-            State.stats.queuedForToPBR = State.stats.queuedForToPBR + 1
-            DebugPrint("Stage 3 QUEUED (via RTXToPBR): ", materialName)
-            hook.Run("RTX_MaterialPipelineStageComplete", materialName, "ToPBRQueue")
-            return true, true
-        end
-        
-        DebugPrint("Stage 3 SKIP (no ToPBR system): ", materialName)
+        DebugPrint("Stage 3 SKIP (no MaterialPipeline.ToPBR): ", materialName)
         return true, false
     end
     
-    -- Use C++ MaterialPipeline.ToPBR directly
-    if processor.QueueMaterial then
-        processor.QueueMaterial(materialName)
-        State.stats.queuedForToPBR = State.stats.queuedForToPBR + 1
-        DebugPrint("Stage 3 QUEUED (via processor): ", materialName)
-        hook.Run("RTX_MaterialPipelineStageComplete", materialName, "ToPBRQueue")
-        return true, true
+    -- Make sure ToPBR is initialized
+    if processor.IsInitialized and not processor.IsInitialized() then
+        if processor.Initialize then
+            local success = processor.Initialize()
+            if not success then
+                DebugPrint("Stage 3 SKIP (ToPBR init failed): ", materialName)
+                return true, false
+            end
+        end
     end
     
-    -- Fallback: queue for batch processing
-    if processor.QueueMaterialsForProcessing then
-        -- Material will be picked up in next batch
-        State.stats.queuedForToPBR = State.stats.queuedForToPBR + 1
-        DebugPrint("Stage 3 QUEUED (batch): ", materialName)
-        return true, true
+    -- Use ProcessSingleMaterial to immediately process this material
+    if processor.ProcessSingleMaterial then
+        local success = processor.ProcessSingleMaterial(materialName)
+        if success then
+            State.stats.queuedForToPBR = State.stats.queuedForToPBR + 1
+            DebugPrint("Stage 3 PROCESSED: ", materialName)
+            hook.Run("RTX_MaterialPipelineStageComplete", materialName, "ToPBR")
+            return true, true
+        else
+            DebugPrint("Stage 3 FAILED: ", materialName)
+            return true, false
+        end
     end
     
+    DebugPrint("Stage 3 SKIP (no ProcessSingleMaterial): ", materialName)
     return true, false
 end
 
@@ -492,8 +492,8 @@ local function ProcessMaterial(materialName)
         return
     end
     
-    -- Stage 3: Queue for ToPBR
-    local s3Continue, s3Result = Stage3_QueueForToPBR(materialName)
+    -- Stage 3: Process with ToPBR
+    local s3Continue, s3Result = Stage3_ProcessWithToPBR(materialName)
     if not s3Continue then
         ErrorPrint("Stage 3 ABORT for: ", materialName)
         return
@@ -527,7 +527,8 @@ local function ProcessBatch()
     end
     
     State.processing = true
-    local batchSize = math.Clamp(GetConVar("rtx_mat_batch"):GetInt(), 1, 20)
+    -- Default batch size of 10 for faster processing (can be adjusted via convar)
+    local batchSize = math.Clamp(GetConVar("rtx_mat_batch"):GetInt(), 1, 50)
     local processed = 0
     
     while processed < batchSize and #State.queue > 0 do
@@ -536,6 +537,11 @@ local function ProcessBatch()
         
         ProcessMaterial(materialName)
         processed = processed + 1
+    end
+    
+    -- Write USDA file if we processed any materials (flushes PBR changes to disk)
+    if processed > 0 and MaterialPipeline and MaterialPipeline.ToPBR and MaterialPipeline.ToPBR.WriteUSDAIfNeeded then
+        MaterialPipeline.ToPBR.WriteUSDAIfNeeded()
     end
     
     if #State.queue == 0 then
