@@ -41,6 +41,16 @@ CreateWorkspace({name = "RTXFixesBinary", abi_compatible = false, path = ""})
 			"source/remixapi/*.h",
 			"source/remixapi/rtxlights/*.cpp",
 			"source/remixapi/rtxlights/*.h",
+			"source/material_pipeline/*.cpp",
+			"source/material_pipeline/*.h",
+			"source/material_pipeline/shader_fixes/*.cpp",
+			"source/material_pipeline/shader_fixes/*.h",
+			"source/material_pipeline/hash_collision_fixer/*.cpp",
+			"source/material_pipeline/hash_collision_fixer/*.h",
+			"source/material_pipeline/auto_categorisation/*.cpp",
+			"source/material_pipeline/auto_categorisation/*.h",
+			"source/material_pipeline/to_pbr/*.cpp",
+			"source/material_pipeline/to_pbr/*.h",
 		} 
 
 

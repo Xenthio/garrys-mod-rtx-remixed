@@ -1,15 +1,16 @@
 // =========================================================================
-// Legacy Texture Processor - Format Detection & Shared Utilities
+// formats.cpp - Format Detection & Shared Utilities
 // =========================================================================
 
 #ifdef _WIN64
 
-#include "legacy_texture_processor_formats.h"
+#include "formats.h"
 #include <tier0/dbg.h>
 #include <algorithm>
 #include <cctype>
 
-namespace LegacyTextureProcessor {
+namespace MaterialPipeline {
+namespace ToPBR {
 
 // =========================================================================
 // VMTParseResult Helper
@@ -101,6 +102,7 @@ bool ApproxEqual(float a, float b, float epsilon = 0.1f) {
     return diff < epsilon;
 }
 
-} // namespace LegacyTextureProcessor
+} // namespace ToPBR
+} // namespace MaterialPipeline
 
 #endif // _WIN64

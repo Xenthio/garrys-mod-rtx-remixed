@@ -11,7 +11,7 @@
 #include <functional>
 #include <cctype>
 #include <remix/remix.h>
-#include "remixapi/legacy_texture_processor.h"
+#include "material_pipeline/material_pipeline.h"
 
 // Global material system pointer (from module.cpp)
 extern IMaterialSystem* materials;
@@ -356,16 +356,12 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                                 Stage == 1 ? " [STAGE1]" : "", hash);
                         }
                             
-                        // Apply automatic categorization logic (Particles, Emissive)
-                        // Only for Stage 0 to avoid double-categorization
-                        if (Stage == 0) {
-                            tracker.CheckAndApplyCategories(p2DTexture);
-                            
-                            // Notify LegacyTextureProcessor of new material for auto-processing
-                            if (hash != 0) {
-                                LegacyTextureProcessor::TextureProcessor::Instance().OnNewMaterialDetected(
-                                    tracker.m_currentMaterialName, hash);
-                            }
+                        // Notify MaterialPipeline of new material for unified processing
+                        // Only for Stage 0 to avoid double-processing
+                        // The pipeline handles: ShaderFixes → HashCollisionFixer → AutoCategorisation → ToPBR
+                        if (Stage == 0 && hash != 0) {
+                            MaterialPipeline::Pipeline::OnNewMaterialDetected(
+                                tracker.m_currentMaterialName, hash, p2DTexture);
                         }
                     }
                 } else {

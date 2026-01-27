@@ -519,6 +519,117 @@ function RemixCategoryManager.CategorizeAllTrackedMaterials()
     return stats
 end
 
+--[[
+    Auto-categorize a single material (called by MaterialPipeline)
+    @param materialName string - The material name to categorize
+    @return boolean - True if the material was categorized
+]]--
+function RemixCategoryManager.AutoCategorizeMaterial(materialName)
+    if not RemixMaterial then
+        return false
+    end
+    
+    local lowerName = materialName:lower()
+    
+    -- Check if already processed
+    if processedTextures[lowerName] then
+        return false
+    end
+    
+    -- Check which categories are enabled
+    local enableDecals = GetConVar("rtx_auto_categorize_decals"):GetBool()
+    local enableEmissive = GetConVar("rtx_auto_categorize_emissive"):GetBool()
+    local enableParticles = GetConVar("rtx_auto_categorize_particles"):GetBool()
+    local debug = GetConVar("rtx_debug_categorization"):GetBool()
+    
+    local category = nil
+    local categoryName = nil
+    
+    -- Wrap in pcall to catch C++ exceptions
+    -- pcall returns: success, result1, result2, ...
+    local success, pcallCategory, pcallCategoryName = pcall(function()
+        -- Check for particles (including sprites)
+        if enableParticles and RemixCategoryManager.IsMaterialParticle(materialName) then
+            return RemixCategoryManager.CATEGORY.PARTICLE, "PARTICLE"
+        
+        -- Check for decals
+        elseif enableDecals and RemixCategoryManager.IsMaterialDecal(materialName) then
+            return RemixCategoryManager.CATEGORY.DECAL_STATIC, "DECAL"
+        
+        -- Check for emissive
+        elseif enableEmissive and RemixCategoryManager.IsMaterialEmissive(materialName) then
+            return RemixCategoryManager.PRESET.EMISSIVE, "EMISSIVE"
+        end
+        
+        return nil, nil
+    end)
+    
+    if not success then
+        -- C++ exception occurred, mark as processed to avoid retries
+        processedTextures[lowerName] = true
+        if debug then
+            MsgC(Color(255, 100, 100), string.format("[RemixCategoryManager] Exception checking material: %s\n", materialName))
+        end
+        return false
+    end
+    
+    -- Use the properly captured return values from pcall
+    category = pcallCategory
+    categoryName = pcallCategoryName
+    
+    if category then
+        -- Mark as processed
+        processedTextures[lowerName] = true
+        
+        -- Check if already categorized (with pcall protection)
+        local hashSuccess, allHashes = pcall(function()
+            if RemixMaterial.GetAllTextureHashes then
+                return RemixMaterial.GetAllTextureHashes(materialName)
+            end
+            return nil
+        end)
+        
+        if hashSuccess and allHashes and #allHashes > 0 then
+            local alreadyCategorized = false
+            for _, hashStr in ipairs(allHashes) do
+                local catSuccess, existing = pcall(function()
+                    if RemixMaterial.GetHashCategory then
+                        return RemixMaterial.GetHashCategory(hashStr)
+                    end
+                    return nil
+                end)
+                if catSuccess and existing and existing ~= 0 then
+                    alreadyCategorized = true
+                    break
+                end
+            end
+            
+            if alreadyCategorized then
+                if debug then
+                    MsgC(Color(200, 200, 200), string.format("[RemixCategoryManager] %s already categorized: %s\n", categoryName or "UNKNOWN", materialName))
+                end
+                return false
+            end
+        end
+        
+        -- Apply category (with pcall protection)
+        local setSuccess, setResult = pcall(function()
+            return RemixCategoryManager.SetMaterialCategory(materialName, category)
+        end)
+        
+        if setSuccess and setResult then
+            if debug then
+                MsgC(Color(100, 255, 100), string.format("[RemixCategoryManager] Categorized as %s: %s\n", categoryName or "UNKNOWN", materialName))
+            end
+            return true
+        end
+    end
+    
+    -- Mark as processed even if not categorized (so we don't re-check)
+    processedTextures[lowerName] = true
+    return false
+end
+
 function RemixCategoryManager.ForceTrackTexture(textureName)
     -- Create a simple material that uses this texture
     local matName = "rtx_force_track_" .. textureName:gsub("[^%w]", "_")
@@ -1942,25 +2053,12 @@ local function AutoInitFunction()
             MsgC(Color(255, 200, 100), "[RemixCategoryManager] World geometry categorization disabled (remix_auto_categorize_world = 0)\n")
         end
         
-        -- Scan for overlay decals and emissive materials (if master toggle and individual categories are enabled)
-        local scanDecals = GetConVar("rtx_auto_categorize_decals"):GetBool()
-        local scanEmissive = GetConVar("rtx_auto_categorize_emissive"):GetBool()
+        -- NOTE: Per-material decal/emissive categorization is now handled by MaterialPipeline
+        -- via RemixCategoryManager.AutoCategorizeMaterial() called from Stage2_Autocategorize
+        -- The bulk CategorizeAllTrackedMaterials() is no longer called here.
         
-        if masterEnabled and (scanDecals or scanEmissive) then
-            MsgC(Color(100, 200, 255), string.format("[RemixCategoryManager] Scanning tracked materials (decals: %s, emissive: %s)...\n", 
-                scanDecals and "enabled" or "disabled", 
-                scanEmissive and "enabled" or "disabled"))
-            RemixCategoryManager.CategorizeAllTrackedMaterials()
-        else
-            if not masterEnabled then
-                MsgC(Color(255, 200, 100), "[RemixCategoryManager] Auto-categorization disabled (remix_auto_categorize = 0)\n")
-            else
-                MsgC(Color(255, 200, 100), "[RemixCategoryManager] Decal and emissive scanning disabled\n")
-            end
-        end
-        
-        MsgC(Color(255, 200, 100), "[RemixCategoryManager] Auto-categorization complete!\n")
-        MsgC(Color(255, 200, 100), "[RemixCategoryManager] Note: New textures will be auto-categorized in real-time as they render!\n")
+        MsgC(Color(255, 200, 100), "[RemixCategoryManager] BSP world texture initialization complete!\n")
+        MsgC(Color(255, 200, 100), "[RemixCategoryManager] Per-material categorization is handled by MaterialPipeline.\n")
     end)
 end
 

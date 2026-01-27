@@ -6,8 +6,8 @@
     1. They're not standard Source Engine shaders
     2. They may not have $basetexture set
     
-    This script converts these materials to VertexLitGeneric/LightmappedGeneric
-    and ensures $basetexture is set so RTX Remix can hash and replace them.
+    This module provides ProcessMaterial() - called by the unified MaterialPipeline.
+    All material discovery is handled by RTXMaterialPipeline.
     
     ExoPBR uses:
       - screenspace_general_8tex shader
@@ -25,27 +25,16 @@
 
 if not (BRANCH == "x86-64" or BRANCH == "chromium") then return end
 
+-- Global module table
+RTXFixPBR = RTXFixPBR or {}
+
 -- ConVars for configuration
-local enable_addon = CreateConVar("rtx_fixpbr_enabled", "1", FCVAR_ARCHIVE, "Enable/disable the PBR Material Fixer addon")
+local enable_addon = CreateConVar("rtx_fixpbr_enabled", "1", FCVAR_ARCHIVE, "Enable/disable the PBR Material Fixer")
 local debug_mode = CreateConVar("rtx_fixpbr_debug", "0", FCVAR_ARCHIVE, "Enable debugging output")
 
 -- Keep track of modified materials to avoid reprocessing
 local modifiedMaterials = {}
 local materialsFixed = 0
-
--- Timer identifier
-local TIMER_NAME = "PBRMaterialFixerContinuous"
-
--- Debug print function
-local function DebugPrint(...)
-    if debug_mode:GetBool() then
-        MsgC(Color(200, 200, 255), "[RTX FixPBR] ", Color(255, 255, 255), ...)
-        MsgC(Color(255, 255, 255), "\n")
-    end
-end
-
--- Flag to track whether we're running via command
-local runningFromCommand = false
 
 -- Function to check if a texture path is valid
 local function IsValidTexturePath(path)
@@ -80,8 +69,8 @@ local function IsGPBR(mat)
     return shader == "pbr"
 end
 
--- Function to process a single material
-local function ProcessMaterial(matName)
+-- Public function to process a single material (called by MaterialPipeline)
+function RTXFixPBR.ProcessMaterial(matName)
     if not matName or matName == "" then 
         return false 
     end
@@ -182,136 +171,33 @@ local function ProcessMaterial(matName)
     return fixed
 end
 
--- Function to process all loaded entities
-local function ProcessLoadedEntities()
-    for _, ent in ipairs(ents.GetAll()) do
-        if IsValid(ent) then
-            local materials = ent:GetMaterials()
-            if materials then
-                for _, matName in ipairs(materials) do
-                    ProcessMaterial(matName)
-                end
-            end
-        end
-    end
+-- Get statistics
+function RTXFixPBR.GetStats()
+    return {
+        fixed = materialsFixed,
+        cached = table.Count(modifiedMaterials)
+    }
 end
 
--- Function to process BSP materials (if NikNaks is available)
-local function ProcessBSPMaterials()
-    if not NikNaks or not NikNaks.CurrentMap then
-        return
-    end
-    
-    local bsp = NikNaks.CurrentMap
-    
-    -- Process textures from map
-    for _, texture in ipairs(bsp:GetTextures()) do
-        if texture then
-            ProcessMaterial(texture)
-        end
-    end
-    
-    -- Process faces to get additional materials
-    for _, face in pairs(bsp:GetFaces()) do
-        local texture = face:GetTexture()
-        if texture then
-            ProcessMaterial(texture)
-        end
-    end
-end
-
--- Main function to fix PBR materials
-local function FixPBRMaterials(showOutput)
-    if not enable_addon:GetBool() then return 0 end
-    
-    local previousFixed = materialsFixed
-    
-    runningFromCommand = showOutput or false
-    
-    local startTime = SysTime()
-    
-    -- Process BSP materials
-    ProcessBSPMaterials()
-    
-    -- Process all loaded entities
-    ProcessLoadedEntities()
-    
-    runningFromCommand = false
-    
-    local endTime = SysTime()
-    local processingTime = math.Round((endTime - startTime) * 1000)
-    
-    local newFixed = materialsFixed - previousFixed
-    
-    if showOutput or (newFixed > 0 and debug_mode:GetBool()) then
-        if newFixed > 0 then
-            MsgC(Color(100, 255, 100), string.format("[RTX FixPBR] Fixed %d PBR materials (ExoPBR/GPBR) in %dms\n", newFixed, processingTime))
-        else
-            MsgC(Color(200, 200, 200), string.format("[RTX FixPBR] No new PBR materials to fix (checked in %dms)\n", processingTime))
-        end
-    end
-    
-    return newFixed
-end
-
--- Start continuous checking
-local function StartContinuousChecking()
-    if timer.Exists(TIMER_NAME) then 
-        timer.Remove(TIMER_NAME)
-    end
-    
-    -- Create a timer that runs every 2 seconds
-    timer.Create(TIMER_NAME, 2, 0, function() 
-        FixPBRMaterials(false)
-    end)
-end
-
--- Stop the continuous checking
-local function StopContinuousChecking()
-    if timer.Exists(TIMER_NAME) then
-        timer.Remove(TIMER_NAME)
-    end
-end
-
--- Function to handle when the enable cvar changes
-cvars.AddChangeCallback("rtx_fixpbr_enabled", function(_, _, new)
-    if new == "1" then
-        StartContinuousChecking()
-    else
-        StopContinuousChecking()
-    end
-end)
-
--- Initial run with delay
-hook.Add("InitPostEntity", "FixPBRMaterialsOnMapLoad", function()
-    if enable_addon:GetBool() then
-        timer.Simple(0.5, function()
-            local fixed = FixPBRMaterials(true)
-            StartContinuousChecking()
-        end)
-    end
-end)
-
--- Reset variables on map change
-hook.Add("ShutDown", "CleanupPBRMaterialFixer", function()
-    StopContinuousChecking()
+-- Clear cache (useful on map change)
+function RTXFixPBR.ClearCache()
     modifiedMaterials = {}
     materialsFixed = 0
-end)
+end
 
--- Add console command to manually trigger fixing
-concommand.Add("rtx_fixpbr_process", function()
-    local fixed = FixPBRMaterials(true)
-    notification.AddLegacy("Fixed " .. fixed .. " PBR materials", NOTIFY_GENERIC, 3)
-end, nil, "Fix ExoPBR and GPBR materials for RTX Remix")
+-- Check if enabled
+function RTXFixPBR.IsEnabled()
+    return enable_addon:GetBool()
+end
 
 -- Add command to show stats
 concommand.Add("rtx_fixpbr_stats", function()
+    local stats = RTXFixPBR.GetStats()
     MsgC(Color(100, 200, 255), "[RTX FixPBR] Statistics:\n")
-    MsgC(Color(200, 200, 200), string.format("  Materials fixed: %d\n", materialsFixed))
-    MsgC(Color(200, 200, 200), string.format("  Cached entries: %d\n", table.Count(modifiedMaterials)))
+    MsgC(Color(200, 200, 200), string.format("  Materials fixed: %d\n", stats.fixed))
+    MsgC(Color(200, 200, 200), string.format("  Cached entries: %d\n", stats.cached))
 end, nil, "Show PBR material fix statistics")
 
 -- Startup message
-MsgC(Color(100, 255, 100), "[RTX FixPBR] PBR Material Fixer loaded.\n")
-MsgC(Color(200, 200, 200), "  Will set $basetexture for ExoPBR and GPBR materials so RTX Remix can replace them.\n")
+MsgC(Color(100, 255, 100), "[RTX FixPBR] PBR Material Fixer loaded (processing module).\n")
+MsgC(Color(200, 200, 200), "  Provides RTXFixPBR.ProcessMaterial() for MaterialPipeline.\n")

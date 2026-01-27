@@ -1,5 +1,5 @@
 // =========================================================================
-// legacy_texture_processor_usda.h - USD/USDA file generation
+// usda.h - USD/USDA file generation
 // =========================================================================
 // Functions for generating RTX Remix mod.usda and materials.usda files
 // =========================================================================
@@ -15,9 +15,10 @@
 #include <ostream>
 
 // Include full header for TextureProcessor::ProcessedMaterialInfo type
-#include "legacy_texture_processor.h"
+#include "to_pbr.h"
 
-namespace LegacyTextureProcessor {
+namespace MaterialPipeline {
+namespace ToPBR {
 namespace USDA {
 
 // =========================================================================
@@ -88,6 +89,7 @@ std::string GetRelativeTexturePath(const std::string& absolutePath, const std::s
 std::string GetModDirectory(const std::string& outputDirectory);
 
 } // namespace USDA
-} // namespace LegacyTextureProcessor
+} // namespace ToPBR
+} // namespace MaterialPipeline
 
 #endif // _WIN64

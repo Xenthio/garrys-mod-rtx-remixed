@@ -16,20 +16,24 @@
 
 #include <remix/remix.h>
 #include <remix/remix_c.h>
+#include <GarrysMod/Lua/Interface.h>
 
 // Forward declarations
 class IMaterial;
 class IFileSystem;
 
-namespace GarrysMod {
-namespace Lua {
-class ILuaBase;
-}
-}
+// =========================================================================
+// Material Pipeline - ToPBR Module
+// =========================================================================
+// Handles conversion of Source Engine textures to RTX Remix PBR format.
+// This system can be extended with custom processors for different texture/material types.
+//
+// Pipeline Stage: Processing
+// This runs AFTER detection to convert materials to PBR format.
+// =========================================================================
 
-// LegacyTextureProcessor namespace - handles conversion of Source Engine textures to RTX Remix PBR format
-// This system can be extended with custom processors for different texture/material types
-namespace LegacyTextureProcessor {
+namespace MaterialPipeline {
+namespace ToPBR {
 
 // Forward declaration for modular format handlers
 struct ProcessingContext;
@@ -503,7 +507,8 @@ private:
     bool m_needsUSDAUpdate;
     
     // Statistics
-    mutable std::mutex m_mutex;
+    // NOTE: Using recursive_mutex because ProcessSingleMaterial locks, then calls CreatePBRMaterial which also locks
+    mutable std::recursive_mutex m_mutex;
     Stats m_stats;
     
     // =========================================================================
@@ -543,15 +548,10 @@ private:
     void StopWorkerThread();
 };
 
-// Lua bindings initialization
-void InitializeLegacyTextureProcessorLuaBindings(GarrysMod::Lua::ILuaBase* LUA);
+// Lua bindings initialization - registers MaterialPipeline.ToPBR table
+void InitializeToPBRLuaBindings(GarrysMod::Lua::ILuaBase* LUA);
 
-// Backwards compatibility alias
-using VTFTextureConverter = TextureProcessor;
-
-} // namespace LegacyTextureProcessor
-
-// Backwards compatibility - allow old VTFConverter namespace to still work
-namespace VTFConverter = LegacyTextureProcessor;
+} // namespace ToPBR
+} // namespace MaterialPipeline
 
 #endif // _WIN64

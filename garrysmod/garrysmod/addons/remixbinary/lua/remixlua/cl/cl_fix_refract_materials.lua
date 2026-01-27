@@ -1,22 +1,23 @@
 -- Refract Material Fixer for RTX Remix
 -- Refract shader materials often don't have $basetexture, which means RTX Remix
--- can't create a replacement material hash. This addon sets $basetexture to the
+-- can't create a replacement material hash. This module sets $basetexture to the
 -- $normalmap or $dudvmap so RTX Remix has a texture to use for material replacement.
+--
+-- This module provides ProcessMaterial() - called by the unified MaterialPipeline.
+-- All material discovery is handled by RTXMaterialPipeline.
 
 if not (BRANCH == "x86-64" or BRANCH == "chromium") then return end
 
+-- Global module table
+RTXFixRefract = RTXFixRefract or {}
+
 -- ConVars for configuration
-local enable_addon = CreateConVar("rtx_fixrefract_enabled", "1", FCVAR_ARCHIVE, "Enable/disable the Refract Material Fixer addon")
+local enable_addon = CreateConVar("rtx_fixrefract_enabled", "1", FCVAR_ARCHIVE, "Enable/disable the Refract Material Fixer")
 local debug_mode = CreateConVar("rtx_fixrefract_debug", "0", FCVAR_ARCHIVE, "Enable debugging output")
-local apply_delay = CreateConVar("rtx_fixrefract_delay", "0.5", FCVAR_ARCHIVE, "Delay before initial processing (seconds)")
 
 -- Keep track of modified materials to avoid reprocessing
 local modifiedMaterials = {}
-local materialsProcessed = 0
 local materialsFixed = 0
-
--- Timer identifier for continuous checking
-local TIMER_NAME = "RefractMaterialFixerContinuous"
 
 -- Debug print function
 local function DebugPrint(...)
@@ -25,9 +26,6 @@ local function DebugPrint(...)
         MsgC(Color(255, 255, 255), "\n")
     end
 end
-
--- Flag to track whether we're running via command (show all output) or automatically (silent)
-local runningFromCommand = false
 
 -- Function to check if a string contains a substring (case insensitive)
 local function ContainsIgnoreCase(str, substr)
@@ -44,8 +42,8 @@ local function IsValidTexturePath(path)
     return true
 end
 
--- Function to process a single material
-local function ProcessMaterial(matName)
+-- Public function to process a single material (called by MaterialPipeline)
+function RTXFixRefract.ProcessMaterial(matName)
     if not matName or matName == "" then 
         return false 
     end
@@ -137,150 +135,43 @@ local function ProcessMaterial(matName)
     -- Set the $basetexture to the fallback
     mat:SetTexture("$basetexture", fallbackTexture)
     
-    if runningFromCommand or debug_mode:GetBool() then
+    if debug_mode:GetBool() then
         MsgC(Color(100, 255, 100), string.format("[RTX FixRefract] Fixed '%s': set $basetexture to %s (from %s)\n", matName, fallbackTexture, fallbackSource))
     end
     
-    materialsProcessed = materialsProcessed + 1
     materialsFixed = materialsFixed + 1
     modifiedMaterials[matName] = true
     
     return true
 end
 
--- Function to process all loaded entities
-local function ProcessLoadedEntities()
-    -- Process entities in the world
-    for _, ent in ipairs(ents.GetAll()) do
-        if IsValid(ent) then
-            -- Process entity's materials
-            if ent:GetMaterials() then
-                for _, matName in ipairs(ent:GetMaterials()) do
-                    ProcessMaterial(matName)
-                end
-            end
-        end
-    end
+-- Get statistics
+function RTXFixRefract.GetStats()
+    return {
+        fixed = materialsFixed,
+        cached = table.Count(modifiedMaterials)
+    }
 end
 
--- Function to process BSP materials (if NikNaks is available)
-local function ProcessBSPMaterials()
-    if not NikNaks or not NikNaks.CurrentMap then
-        return
-    end
-    
-    local bsp = NikNaks.CurrentMap
-    
-    -- Process textures from map
-    for _, texture in ipairs(bsp:GetTextures()) do
-        if texture then
-            ProcessMaterial(texture)
-        end
-    end
-    
-    -- Process faces to get additional materials
-    for _, face in pairs(bsp:GetFaces()) do
-        local texture = face:GetTexture()
-        if texture then
-            ProcessMaterial(texture)
-        end
-    end
-end
-
--- Main function to fix refract materials
-local function FixRefractMaterials(showOutput)
-    if not enable_addon:GetBool() then return 0 end
-    
-    local previousFixed = materialsFixed
-    
-    runningFromCommand = showOutput or false
-    
-    local startTime = SysTime()
-    
-    -- Process BSP materials
-    ProcessBSPMaterials()
-    
-    -- Process all loaded entities
-    ProcessLoadedEntities()
-    
-    runningFromCommand = false
-    
-    local endTime = SysTime()
-    local processingTime = math.Round((endTime - startTime) * 1000)
-    
-    local newFixed = materialsFixed - previousFixed
-    
-    if showOutput or (newFixed > 0 and debug_mode:GetBool()) then
-        if newFixed > 0 then
-            MsgC(Color(100, 255, 100), string.format("[RTX FixRefract] Fixed %d Refract materials in %dms\n", newFixed, processingTime))
-        else
-            MsgC(Color(200, 200, 200), string.format("[RTX FixRefract] No new Refract materials to fix (checked in %dms)\n", processingTime))
-        end
-    end
-    
-    return newFixed
-end
-
--- Start continuous checking
-local function StartContinuousChecking()
-    if timer.Exists(TIMER_NAME) then 
-        timer.Remove(TIMER_NAME)
-    end
-    
-    -- Create a timer that runs every 2 seconds
-    timer.Create(TIMER_NAME, 2, 0, function() 
-        FixRefractMaterials(false)
-    end)
-end
-
--- Stop the continuous checking
-local function StopContinuousChecking()
-    if timer.Exists(TIMER_NAME) then
-        timer.Remove(TIMER_NAME)
-    end
-end
-
--- Function to handle when the enable cvar changes
-cvars.AddChangeCallback("rtx_fixrefract_enabled", function(_, _, new)
-    if new == "1" then
-        StartContinuousChecking()
-    else
-        StopContinuousChecking()
-    end
-end)
-
--- Initial run with delay
-hook.Add("InitPostEntity", "FixRefractMaterialsOnMapLoad", function()
-    if enable_addon:GetBool() then
-        timer.Simple(apply_delay:GetFloat(), function()
-            local fixed = FixRefractMaterials(true)
-            StartContinuousChecking()
-        end)
-    end
-end)
-
--- Reset variables on map change
-hook.Add("ShutDown", "CleanupRefractMaterialFixer", function()
-    StopContinuousChecking()
+-- Clear cache (useful on map change)
+function RTXFixRefract.ClearCache()
     modifiedMaterials = {}
-    materialsProcessed = 0
     materialsFixed = 0
-end)
+end
 
--- Add console command to manually trigger fixing
-concommand.Add("rtx_fixrefract_process", function()
-    local fixed = FixRefractMaterials(true)
-    notification.AddLegacy("Fixed " .. fixed .. " Refract materials", NOTIFY_GENERIC, 3)
-end, nil, "Fix Refract materials by setting $basetexture from $normalmap/$dudvmap")
+-- Check if enabled
+function RTXFixRefract.IsEnabled()
+    return enable_addon:GetBool()
+end
 
 -- Add command to show stats
 concommand.Add("rtx_fixrefract_stats", function()
+    local stats = RTXFixRefract.GetStats()
     MsgC(Color(100, 200, 255), "[RTX FixRefract] Statistics:\n")
-    MsgC(Color(200, 200, 200), string.format("  Materials checked: %d\n", materialsProcessed))
-    MsgC(Color(200, 200, 200), string.format("  Materials fixed: %d\n", materialsFixed))
-    MsgC(Color(200, 200, 200), string.format("  Cached entries: %d\n", table.Count(modifiedMaterials)))
+    MsgC(Color(200, 200, 200), string.format("  Materials fixed: %d\n", stats.fixed))
+    MsgC(Color(200, 200, 200), string.format("  Cached entries: %d\n", stats.cached))
 end, nil, "Show Refract material fix statistics")
 
 -- Startup message
-MsgC(Color(100, 255, 100), "[RTX FixRefract] Refract Material Fixer loaded.\n")
-MsgC(Color(200, 200, 200), "  Will set $basetexture for Refract materials from $refracttinttexture/$normalmap/$dudvmap.\n")
+MsgC(Color(100, 255, 100), "[RTX FixRefract] Refract Material Fixer loaded (processing module).\n")
+MsgC(Color(200, 200, 200), "  Provides RTXFixRefract.ProcessMaterial() for MaterialPipeline.\n")

@@ -1,18 +1,18 @@
 // =========================================================================
 // hash_collision_fixer.cpp - Fix RTX Remix hash collisions for solid-color textures
 // =========================================================================
+// Part of the Material Pipeline - Pre-processing stage
+// =========================================================================
 
 #ifdef _WIN64
 
 #include <Windows.h>
 #include "hash_collision_fixer.h"
-#include "vtf_parser.h"
+#include "../../vtf_parser.h"
 #include <tier0/dbg.h>
 #include <filesystem.h>
-#include <GarrysMod/Lua/Interface.h>
 
-using namespace GarrysMod::Lua;
-
+namespace MaterialPipeline {
 namespace HashCollisionFixer {
 
 // =========================================================================
@@ -41,7 +41,7 @@ void Initialize() {
     s_totalFixed = 0;
     s_initialized = true;
     
-    Msg("[HashCollisionFixer] Initialized\n");
+    Msg("[MaterialPipeline::HashCollisionFixer] Initialized\n");
 }
 
 void Shutdown() {
@@ -51,7 +51,7 @@ void Shutdown() {
     s_checkedMaterials.clear();
     s_initialized = false;
     
-    Msg("[HashCollisionFixer] Shutdown\n");
+    Msg("[MaterialPipeline::HashCollisionFixer] Shutdown\n");
 }
 
 bool CheckMaterial(IFileSystem* fileSystem,
@@ -77,7 +77,7 @@ bool CheckMaterial(IFileSystem* fileSystem,
     
     if (result.error) {
         if (debugOutput) {
-            Msg("[HashCollisionFixer] Error checking %s: %s\n", 
+            Msg("[MaterialPipeline::HashCollisionFixer] Error checking %s: %s\n", 
                 materialName.c_str(), result.errorMessage.c_str());
         }
         return false;
@@ -97,7 +97,7 @@ bool CheckMaterial(IFileSystem* fileSystem,
         s_totalDetected++;
         
         if (debugOutput) {
-            Msg("[HashCollisionFixer] Detected solid-color material: %s (RGBA: %d,%d,%d,%d)\n",
+            Msg("[MaterialPipeline::HashCollisionFixer] Detected solid-color material: %s (RGBA: %d,%d,%d,%d)\n",
                 materialName.c_str(), result.r, result.g, result.b, result.a);
         }
         
@@ -168,7 +168,7 @@ void Reset() {
     s_checkedMaterials.clear();
     // Keep totals for statistics
     
-    Msg("[HashCollisionFixer] Reset (total detected: %zu, total fixed: %zu)\n",
+    Msg("[MaterialPipeline::HashCollisionFixer] Reset (total detected: %zu, total fixed: %zu)\n",
         s_totalDetected, s_totalFixed);
 }
 
@@ -223,27 +223,33 @@ static IFileSystem* GetFileSystem() {
     return s_pFileSystem;
 }
 
+} // namespace HashCollisionFixer
+} // namespace MaterialPipeline
+
+// =========================================================================
+// Lua Bindings - Must be at global scope
+// =========================================================================
+
 // Lua: HashCollisionFixer.CheckMaterial(materialName, texturePath, [debugOutput])
-// debugOutput is optional, defaults to false
-LUA_FUNCTION(Lua_CheckMaterial) {
+LUA_FUNCTION(HashFixer_CheckMaterial) {
     const char* materialName = LUA->CheckString(1);
     const char* texturePath = LUA->CheckString(2);
-    bool debug = LUA->IsType(3, Type::Bool) ? LUA->GetBool(3) : false;
+    bool debug = LUA->IsType(3, GarrysMod::Lua::Type::Bool) ? LUA->GetBool(3) : false;
     
-    IFileSystem* fs = GetFileSystem();
+    IFileSystem* fs = MaterialPipeline::HashCollisionFixer::GetFileSystem();
     if (!fs) {
         LUA->PushBool(false);
         return 1;
     }
     
-    bool result = CheckMaterial(fs, materialName, texturePath, debug);
+    bool result = MaterialPipeline::HashCollisionFixer::CheckMaterial(fs, materialName, texturePath, debug);
     LUA->PushBool(result);
     return 1;
 }
 
 // Lua: HashCollisionFixer.GetMaterialsNeedingFix()
-LUA_FUNCTION(Lua_GetMaterialsNeedingFix) {
-    std::vector<std::string> materials = GetMaterialsNeedingFix();
+LUA_FUNCTION(HashFixer_GetMaterialsNeedingFix) {
+    std::vector<std::string> materials = MaterialPipeline::HashCollisionFixer::GetMaterialsNeedingFix();
     
     LUA->CreateTable();
     int i = 1;
@@ -257,32 +263,32 @@ LUA_FUNCTION(Lua_GetMaterialsNeedingFix) {
 }
 
 // Lua: HashCollisionFixer.MarkMaterialFixed(materialName)
-LUA_FUNCTION(Lua_MarkMaterialFixed) {
+LUA_FUNCTION(HashFixer_MarkMaterialFixed) {
     const char* materialName = LUA->CheckString(1);
-    MarkMaterialFixed(materialName);
+    MaterialPipeline::HashCollisionFixer::MarkMaterialFixed(materialName);
     return 0;
 }
 
 // Lua: HashCollisionFixer.IsMaterialFixed(materialName)
-LUA_FUNCTION(Lua_IsMaterialFixed) {
+LUA_FUNCTION(HashFixer_IsMaterialFixed) {
     const char* materialName = LUA->CheckString(1);
-    LUA->PushBool(IsMaterialFixed(materialName));
+    LUA->PushBool(MaterialPipeline::HashCollisionFixer::IsMaterialFixed(materialName));
     return 1;
 }
 
 // Lua: HashCollisionFixer.IsSolidColorMaterial(materialName)
-LUA_FUNCTION(Lua_IsSolidColorMaterial) {
+LUA_FUNCTION(HashFixer_IsSolidColorMaterial) {
     const char* materialName = LUA->CheckString(1);
-    LUA->PushBool(IsSolidColorMaterial(materialName));
+    LUA->PushBool(MaterialPipeline::HashCollisionFixer::IsSolidColorMaterial(materialName));
     return 1;
 }
 
 // Lua: HashCollisionFixer.GetMaterialColor(materialName)
-LUA_FUNCTION(Lua_GetMaterialColor) {
+LUA_FUNCTION(HashFixer_GetMaterialColor) {
     const char* materialName = LUA->CheckString(1);
     uint8_t r, g, b, a;
     
-    if (GetMaterialColor(materialName, r, g, b, a)) {
+    if (MaterialPipeline::HashCollisionFixer::GetMaterialColor(materialName, r, g, b, a)) {
         LUA->PushNumber(r);
         LUA->PushNumber(g);
         LUA->PushNumber(b);
@@ -294,38 +300,36 @@ LUA_FUNCTION(Lua_GetMaterialColor) {
 }
 
 // Lua: HashCollisionFixer.Reset()
-LUA_FUNCTION(Lua_Reset) {
-    Reset();
+LUA_FUNCTION(HashFixer_Reset) {
+    MaterialPipeline::HashCollisionFixer::Reset();
     return 0;
 }
 
 // Lua: HashCollisionFixer.GetStats()
-LUA_FUNCTION(Lua_GetStats) {
+LUA_FUNCTION(HashFixer_GetStats) {
     LUA->CreateTable();
     
     LUA->PushString("totalDetected");
-    LUA->PushNumber(static_cast<double>(GetTotalDetected()));
+    LUA->PushNumber(static_cast<double>(MaterialPipeline::HashCollisionFixer::GetTotalDetected()));
     LUA->SetTable(-3);
     
     LUA->PushString("totalFixed");
-    LUA->PushNumber(static_cast<double>(GetTotalFixed()));
+    LUA->PushNumber(static_cast<double>(MaterialPipeline::HashCollisionFixer::GetTotalFixed()));
     LUA->SetTable(-3);
     
     LUA->PushString("pending");
-    LUA->PushNumber(static_cast<double>(GetPendingCount()));
+    LUA->PushNumber(static_cast<double>(MaterialPipeline::HashCollisionFixer::GetPendingCount()));
     LUA->SetTable(-3);
     
     return 1;
 }
 
 // Lua: HashCollisionFixer.CheckSolidColor(texturePath, [debugOutput])
-// Check if a VTF texture is a solid color without associating it with a material
-// debugOutput is optional, defaults to false
-LUA_FUNCTION(Lua_CheckSolidColor) {
+LUA_FUNCTION(HashFixer_CheckSolidColor) {
     const char* texturePath = LUA->CheckString(1);
-    bool debug = LUA->IsType(2, Type::Bool) ? LUA->GetBool(2) : false;
+    bool debug = LUA->IsType(2, GarrysMod::Lua::Type::Bool) ? LUA->GetBool(2) : false;
     
-    IFileSystem* fs = GetFileSystem();
+    IFileSystem* fs = MaterialPipeline::HashCollisionFixer::GetFileSystem();
     if (!fs) {
         LUA->PushBool(false);
         LUA->PushString("Could not get filesystem interface");
@@ -352,53 +356,57 @@ LUA_FUNCTION(Lua_CheckSolidColor) {
     return 1;
 }
 
-void RegisterLuaBindings(ILuaBase* LUA) {
+namespace MaterialPipeline {
+namespace HashCollisionFixer {
+
+void RegisterLuaBindings(GarrysMod::Lua::ILuaBase* LUA) {
     // Create HashCollisionFixer table
-    LUA->PushSpecial(SPECIAL_GLOB);
+    LUA->PushSpecial(GarrysMod::Lua::SPECIAL_GLOB);
     LUA->CreateTable();
     
     LUA->PushString("CheckMaterial");
-    LUA->PushCFunction(Lua_CheckMaterial);
+    LUA->PushCFunction(HashFixer_CheckMaterial);
     LUA->SetTable(-3);
     
     LUA->PushString("GetMaterialsNeedingFix");
-    LUA->PushCFunction(Lua_GetMaterialsNeedingFix);
+    LUA->PushCFunction(HashFixer_GetMaterialsNeedingFix);
     LUA->SetTable(-3);
     
     LUA->PushString("MarkMaterialFixed");
-    LUA->PushCFunction(Lua_MarkMaterialFixed);
+    LUA->PushCFunction(HashFixer_MarkMaterialFixed);
     LUA->SetTable(-3);
     
     LUA->PushString("IsMaterialFixed");
-    LUA->PushCFunction(Lua_IsMaterialFixed);
+    LUA->PushCFunction(HashFixer_IsMaterialFixed);
     LUA->SetTable(-3);
     
     LUA->PushString("IsSolidColorMaterial");
-    LUA->PushCFunction(Lua_IsSolidColorMaterial);
+    LUA->PushCFunction(HashFixer_IsSolidColorMaterial);
     LUA->SetTable(-3);
     
     LUA->PushString("GetMaterialColor");
-    LUA->PushCFunction(Lua_GetMaterialColor);
+    LUA->PushCFunction(HashFixer_GetMaterialColor);
     LUA->SetTable(-3);
     
     LUA->PushString("Reset");
-    LUA->PushCFunction(Lua_Reset);
+    LUA->PushCFunction(HashFixer_Reset);
     LUA->SetTable(-3);
     
     LUA->PushString("GetStats");
-    LUA->PushCFunction(Lua_GetStats);
+    LUA->PushCFunction(HashFixer_GetStats);
     LUA->SetTable(-3);
     
     LUA->PushString("CheckSolidColor");
-    LUA->PushCFunction(Lua_CheckSolidColor);
+    LUA->PushCFunction(HashFixer_CheckSolidColor);
     LUA->SetTable(-3);
     
     LUA->SetField(-2, "HashCollisionFixer");
     LUA->Pop();
     
-    Msg("[HashCollisionFixer] Lua bindings registered\n");
+    Msg("[MaterialPipeline::HashCollisionFixer] Lua bindings registered\n");
 }
 
 } // namespace HashCollisionFixer
+} // namespace MaterialPipeline
 
 #endif // _WIN64
