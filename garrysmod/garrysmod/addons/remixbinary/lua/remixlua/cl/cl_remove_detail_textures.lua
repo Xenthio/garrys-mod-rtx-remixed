@@ -61,6 +61,28 @@ local function ProcessMaterial(matName)
         modified = true
     end
     
+    -- Check for $envmapmask
+    local envmapmask = mat:GetString("$envmapmask")
+    if envmapmask and envmapmask ~= "" then
+        if runningFromCommand or debug_mode:GetBool() then
+        end
+        
+        -- Replace the envmapmask with our error texture
+        mat:SetTexture("$envmapmask", replacementTexture)
+        modified = true
+    end
+    
+    -- Check for $envmap
+    local envmap = mat:GetString("$envmap")
+    if envmap and envmap ~= "" then
+        if runningFromCommand or debug_mode:GetBool() then
+        end
+        
+        -- Replace the envmap with our error texture
+        mat:SetTexture("$envmap", replacementTexture)
+        modified = true
+    end
+    
     -- Check for $detailscale
     local detailscale = mat:GetVector("$detailscale")
     if detailscale then
@@ -264,6 +286,18 @@ local function ForceReapply()
             if mat and not mat:IsError() then
                 -- Reapply our replacements
                 mat:SetTexture("$detail", replacementTexture)
+                
+                -- Check for $envmapmask
+                local envmapmask = mat:GetString("$envmapmask")
+                if envmapmask and envmapmask ~= "" then
+                    mat:SetTexture("$envmapmask", replacementTexture)
+                end
+                
+                -- Check for $envmap
+                local envmap = mat:GetString("$envmap")
+                if envmap and envmap ~= "" then
+                    mat:SetTexture("$envmap", replacementTexture)
+                end
                 
                 -- Check for $detailscale
                 local detailscale = mat:GetVector("$detailscale")
