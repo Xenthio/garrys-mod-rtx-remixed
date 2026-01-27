@@ -15,12 +15,13 @@
 
 #ifdef _WIN64
 
-#include "legacy_texture_processor_formats.h"
+#include "formats.h"
 #include <tier0/dbg.h>
 #include <algorithm>
 #include <cstdlib>
 
-namespace LegacyTextureProcessor {
+namespace MaterialPipeline {
+namespace ToPBR {
 namespace GPBR {
 
 // =========================================================================
@@ -291,6 +292,7 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
 }
 
 } // namespace GPBR
-} // namespace LegacyTextureProcessor
+} // namespace ToPBR
+} // namespace MaterialPipeline
 
 #endif // _WIN64

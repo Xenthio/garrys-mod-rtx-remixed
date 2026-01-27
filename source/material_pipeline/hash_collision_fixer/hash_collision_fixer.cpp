@@ -1,18 +1,21 @@
 // =========================================================================
 // hash_collision_fixer.cpp - Fix RTX Remix hash collisions for solid-color textures
 // =========================================================================
+// Part of the Material Pipeline - Pre-processing stage
+// =========================================================================
 
 #ifdef _WIN64
 
 #include <Windows.h>
 #include "hash_collision_fixer.h"
-#include "vtf_parser.h"
+#include "../../vtf_parser.h"
 #include <tier0/dbg.h>
 #include <filesystem.h>
 #include <GarrysMod/Lua/Interface.h>
 
 using namespace GarrysMod::Lua;
 
+namespace MaterialPipeline {
 namespace HashCollisionFixer {
 
 // =========================================================================
@@ -41,7 +44,7 @@ void Initialize() {
     s_totalFixed = 0;
     s_initialized = true;
     
-    Msg("[HashCollisionFixer] Initialized\n");
+    Msg("[MaterialPipeline::HashCollisionFixer] Initialized\n");
 }
 
 void Shutdown() {
@@ -51,7 +54,7 @@ void Shutdown() {
     s_checkedMaterials.clear();
     s_initialized = false;
     
-    Msg("[HashCollisionFixer] Shutdown\n");
+    Msg("[MaterialPipeline::HashCollisionFixer] Shutdown\n");
 }
 
 bool CheckMaterial(IFileSystem* fileSystem,
@@ -77,7 +80,7 @@ bool CheckMaterial(IFileSystem* fileSystem,
     
     if (result.error) {
         if (debugOutput) {
-            Msg("[HashCollisionFixer] Error checking %s: %s\n", 
+            Msg("[MaterialPipeline::HashCollisionFixer] Error checking %s: %s\n", 
                 materialName.c_str(), result.errorMessage.c_str());
         }
         return false;
@@ -97,7 +100,7 @@ bool CheckMaterial(IFileSystem* fileSystem,
         s_totalDetected++;
         
         if (debugOutput) {
-            Msg("[HashCollisionFixer] Detected solid-color material: %s (RGBA: %d,%d,%d,%d)\n",
+            Msg("[MaterialPipeline::HashCollisionFixer] Detected solid-color material: %s (RGBA: %d,%d,%d,%d)\n",
                 materialName.c_str(), result.r, result.g, result.b, result.a);
         }
         
@@ -168,7 +171,7 @@ void Reset() {
     s_checkedMaterials.clear();
     // Keep totals for statistics
     
-    Msg("[HashCollisionFixer] Reset (total detected: %zu, total fixed: %zu)\n",
+    Msg("[MaterialPipeline::HashCollisionFixer] Reset (total detected: %zu, total fixed: %zu)\n",
         s_totalDetected, s_totalFixed);
 }
 
@@ -224,7 +227,6 @@ static IFileSystem* GetFileSystem() {
 }
 
 // Lua: HashCollisionFixer.CheckMaterial(materialName, texturePath, [debugOutput])
-// debugOutput is optional, defaults to false
 LUA_FUNCTION(Lua_CheckMaterial) {
     const char* materialName = LUA->CheckString(1);
     const char* texturePath = LUA->CheckString(2);
@@ -319,8 +321,6 @@ LUA_FUNCTION(Lua_GetStats) {
 }
 
 // Lua: HashCollisionFixer.CheckSolidColor(texturePath, [debugOutput])
-// Check if a VTF texture is a solid color without associating it with a material
-// debugOutput is optional, defaults to false
 LUA_FUNCTION(Lua_CheckSolidColor) {
     const char* texturePath = LUA->CheckString(1);
     bool debug = LUA->IsType(2, Type::Bool) ? LUA->GetBool(2) : false;
@@ -352,7 +352,7 @@ LUA_FUNCTION(Lua_CheckSolidColor) {
     return 1;
 }
 
-void RegisterLuaBindings(ILuaBase* LUA) {
+void RegisterLuaBindings(GarrysMod::Lua::ILuaBase* LUA) {
     // Create HashCollisionFixer table
     LUA->PushSpecial(SPECIAL_GLOB);
     LUA->CreateTable();
@@ -396,9 +396,10 @@ void RegisterLuaBindings(ILuaBase* LUA) {
     LUA->SetField(-2, "HashCollisionFixer");
     LUA->Pop();
     
-    Msg("[HashCollisionFixer] Lua bindings registered\n");
+    Msg("[MaterialPipeline::HashCollisionFixer] Lua bindings registered\n");
 }
 
 } // namespace HashCollisionFixer
+} // namespace MaterialPipeline
 
 #endif // _WIN64

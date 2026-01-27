@@ -6,13 +6,14 @@
 
 #ifdef _WIN64
 
-#include "legacy_texture_processor_usda.h"
-#include "legacy_texture_processor.h"
+#include "usda.h"
+#include "to_pbr.h"
 #include <tier0/dbg.h>
 #include <fstream>
 #include <sstream>
 
-namespace LegacyTextureProcessor {
+namespace MaterialPipeline {
+namespace ToPBR {
 namespace USDA {
 
 // =========================================================================
@@ -310,6 +311,7 @@ bool WriteMaterialsUSDAFile(const std::string& modDir,
 }
 
 } // namespace USDA
-} // namespace LegacyTextureProcessor
+} // namespace ToPBR
+} // namespace MaterialPipeline
 
 #endif // _WIN64

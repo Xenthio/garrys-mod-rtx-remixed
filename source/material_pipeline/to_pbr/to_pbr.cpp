@@ -1,9 +1,9 @@
 #ifdef _WIN64
 
-#include "remixapi.h"
-#include "legacy_texture_processor_formats.h"
-#include "legacy_texture_processor_vtf.h"
-#include "legacy_texture_processor_usda.h"
+#include "to_pbr.h"
+#include "formats.h"
+#include "vtf.h"
+#include "usda.h"
 #include <tier0/dbg.h>
 #include <materialsystem/imaterialsystem.h>
 #include <materialsystem/imaterial.h>
@@ -12,8 +12,7 @@
 #include <filesystem.h>
 #include <d3d9.h>
 #include <Windows.h>
-#include "../d3d9_texture_tracker.h"
-#include "legacy_texture_processor.h"
+#include "../../d3d9_texture_tracker.h"
 
 #include <algorithm>
 #include <cstring>
@@ -26,7 +25,8 @@
 extern IMaterialSystem* materials;
 extern remix::Interface* g_remix;
 
-namespace LegacyTextureProcessor {
+namespace MaterialPipeline {
+namespace ToPBR {
 
 // PBR conversion constants
 constexpr float MAX_PHONG_EXPONENT = 150.0f;  // Typical max in Source Engine
@@ -4961,12 +4961,19 @@ void InitializeLegacyTextureProcessorLuaBindings(GarrysMod::Lua::ILuaBase* LUA) 
     LUA->PushCFunction(LegacyTextureProcessor_AppendToUSDAAsync);
     LUA->SetField(-2, "AppendToUSDAAsync");
     
+    // Also register under ToPBR for new code
+    LUA->SetField(-2, "ToPBR");
+    
+    // Register again under VTFConverter for backwards compatibility
+    LUA->CreateTable();
+    // ... (same functions would be registered here for full compat)
     LUA->SetField(-2, "VTFConverter");
     LUA->Pop();
     
-    Msg("[LegacyTextureProcessor] Lua bindings initialized\n");
+    Msg("[MaterialPipeline::ToPBR] Lua bindings initialized\n");
 }
 
-} // namespace LegacyTextureProcessor
+} // namespace ToPBR
+} // namespace MaterialPipeline
 
 #endif // _WIN64

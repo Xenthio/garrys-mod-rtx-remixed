@@ -1,23 +1,24 @@
 // =========================================================================
-// legacy_texture_processor_vtf.cpp - VTF file reading and processing utilities
+// vtf.cpp - VTF file reading and processing utilities
 // =========================================================================
 // Implementation that delegates to the standalone vtf_parser module for
-// core VTF functionality, while providing LegacyTextureProcessor-specific
-// features like ConvertedTexture integration and normal map conversion.
+// core VTF functionality, while providing ToPBR-specific features like
+// ConvertedTexture integration and normal map conversion.
 // =========================================================================
 
 #ifdef _WIN64
 
-#include "legacy_texture_processor_vtf.h"
-#include "legacy_texture_processor.h"
-#include "../vtf_parser.h"  // Use standalone VTF parser for core functionality
+#include "vtf.h"
+#include "to_pbr.h"
+#include "../../vtf_parser.h"  // Use standalone VTF parser for core functionality
 #include <tier0/dbg.h>
 #include <filesystem.h>
 #include <algorithm>
 #include <cstring>
 #include <cmath>
 
-namespace LegacyTextureProcessor {
+namespace MaterialPipeline {
+namespace ToPBR {
 namespace VTF {
 
 // =========================================================================
@@ -291,6 +292,7 @@ void ConvertSSBumpToNormal(ConvertedTexture& texture, bool debugOutput) {
 }
 
 } // namespace VTF
-} // namespace LegacyTextureProcessor
+} // namespace ToPBR
+} // namespace MaterialPipeline
 
 #endif // _WIN64

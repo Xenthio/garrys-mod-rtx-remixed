@@ -2,7 +2,7 @@
 // material_pipeline.cpp - Unified Material Processing Pipeline Implementation
 // =========================================================================
 // This implementation wraps the existing components (D3D9TextureTracker,
-// LegacyTextureProcessor) into a unified pipeline interface.
+// ToPBR) into a unified pipeline interface.
 //
 // The design philosophy:
 // - Pipeline is the ONLY public interface for material processing
@@ -15,7 +15,10 @@
 
 #include "material_pipeline.h"
 #include "../d3d9_texture_tracker.h"
-#include "../remixapi/legacy_texture_processor.h"
+#include "to_pbr/to_pbr.h"
+#include "hash_collision_fixer/hash_collision_fixer.h"
+#include "auto_categorisation/auto_categorisation.h"
+#include "shader_fixes/shader_fixes.h"
 
 #include <tier0/dbg.h>
 #include <filesystem.h>
@@ -100,7 +103,7 @@ bool Pipeline::Initialize(IDirect3DDevice9Ex* device, remix::Interface* remix) {
     }
     
     // Initialize LegacyTextureProcessor
-    if (!LegacyTextureProcessor::TextureProcessor::Instance().Initialize(remix)) {
+    if (!ToPBR::TextureProcessor::Instance().Initialize(remix)) {
         Warning("[MaterialPipeline] Failed to initialize LegacyTextureProcessor\n");
         D3D9TextureTracker::Instance().Shutdown();
         return false;
@@ -125,7 +128,7 @@ void Pipeline::Shutdown() {
     Msg("[MaterialPipeline] Shutting down...\n");
     
     // Shutdown components in reverse order
-    LegacyTextureProcessor::TextureProcessor::Instance().Shutdown();
+    ToPBR::TextureProcessor::Instance().Shutdown();
     D3D9TextureTracker::Instance().Shutdown();
     
     m_device = nullptr;
@@ -148,7 +151,7 @@ void Pipeline::SetConfig(const PipelineConfig& config) {
 
 void Pipeline::ApplyConfig() {
     auto& tracker = D3D9TextureTracker::Instance();
-    auto& processor = LegacyTextureProcessor::TextureProcessor::Instance();
+    auto& processor = ToPBR::TextureProcessor::Instance();
     
     // Apply to tracker
     tracker.SetAutoCategorization(m_config.particleCategorization || 
@@ -174,20 +177,20 @@ void Pipeline::ApplyConfig() {
 void Pipeline::SetAutoProcessing(bool enabled) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_config.autoProcessing = enabled;
-    LegacyTextureProcessor::TextureProcessor::Instance().SetAutoProcessing(enabled);
+    ToPBR::TextureProcessor::Instance().SetAutoProcessing(enabled);
 }
 
 void Pipeline::SetDebugOutput(bool enabled) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_config.debugOutput = enabled;
     D3D9TextureTracker::Instance().SetDebugOutput(enabled);
-    LegacyTextureProcessor::TextureProcessor::Instance().SetDebugOutput(enabled);
+    ToPBR::TextureProcessor::Instance().SetDebugOutput(enabled);
 }
 
 void Pipeline::SetOutputDirectory(const std::string& path) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_config.outputDirectory = path;
-    LegacyTextureProcessor::TextureProcessor::Instance().SetOutputDirectory(path);
+    ToPBR::TextureProcessor::Instance().SetOutputDirectory(path);
 }
 
 // =========================================================================
@@ -199,7 +202,7 @@ int Pipeline::QueueAllMaterials() {
         Warning("[MaterialPipeline] Not initialized\n");
         return 0;
     }
-    return LegacyTextureProcessor::TextureProcessor::Instance().QueueMaterialsForProcessing();
+    return ToPBR::TextureProcessor::Instance().QueueMaterialsForProcessing();
 }
 
 bool Pipeline::ProcessMaterial(const std::string& materialName) {
@@ -208,7 +211,7 @@ bool Pipeline::ProcessMaterial(const std::string& materialName) {
         return false;
     }
     
-    bool result = LegacyTextureProcessor::TextureProcessor::Instance().ProcessSingleMaterial(materialName);
+    bool result = ToPBR::TextureProcessor::Instance().ProcessSingleMaterial(materialName);
     
     if (m_onProcessed) {
         m_onProcessed(materialName, result);
@@ -221,17 +224,17 @@ int Pipeline::ProcessBatch(int maxCount) {
     if (!m_initialized) {
         return 0;
     }
-    return LegacyTextureProcessor::TextureProcessor::Instance().ProcessTrackedMaterialsBatch(maxCount);
+    return ToPBR::TextureProcessor::Instance().ProcessTrackedMaterialsBatch(maxCount);
 }
 
 bool Pipeline::IsProcessing() const {
     if (!m_initialized) return false;
-    return LegacyTextureProcessor::TextureProcessor::Instance().IsProcessingInBackground();
+    return ToPBR::TextureProcessor::Instance().IsProcessingInBackground();
 }
 
 size_t Pipeline::GetQueueSize() const {
     if (!m_initialized) return 0;
-    return LegacyTextureProcessor::TextureProcessor::Instance().GetQueuedMaterialCount();
+    return ToPBR::TextureProcessor::Instance().GetQueuedMaterialCount();
 }
 
 // =========================================================================
@@ -263,7 +266,7 @@ void Pipeline::ClearCache() {
     if (!m_initialized) return;
     
     D3D9TextureTracker::Instance().ClearCache();
-    LegacyTextureProcessor::TextureProcessor::Instance().ClearCache();
+    ToPBR::TextureProcessor::Instance().ClearCache();
     
     Msg("[MaterialPipeline] Cache cleared\n");
 }
@@ -320,19 +323,19 @@ int Pipeline::RetryPendingCategories() {
 
 void Pipeline::WriteUSDAIfNeeded() {
     if (!m_initialized) return;
-    LegacyTextureProcessor::TextureProcessor::Instance().WriteUSDAIfNeeded();
+    ToPBR::TextureProcessor::Instance().WriteUSDAIfNeeded();
 }
 
 bool Pipeline::WriteUSDA() {
     if (!m_initialized) return false;
     // Force write by marking as needing update, then writing
-    LegacyTextureProcessor::TextureProcessor::Instance().WriteUSDAIfNeeded();
+    ToPBR::TextureProcessor::Instance().WriteUSDAIfNeeded();
     return true;
 }
 
 bool Pipeline::AppendToUSDA() {
     if (!m_initialized) return false;
-    LegacyTextureProcessor::TextureProcessor::Instance().AppendToUSDAAsync();
+    ToPBR::TextureProcessor::Instance().AppendToUSDAAsync();
     return true;
 }
 
@@ -350,7 +353,7 @@ PipelineStats Pipeline::GetStats() const {
     stats.pendingCategories = static_cast<int>(D3D9TextureTracker::Instance().GetPendingCount());
     
     // Get processor stats
-    auto procStats = LegacyTextureProcessor::TextureProcessor::Instance().GetStats();
+    auto procStats = ToPBR::TextureProcessor::Instance().GetStats();
     stats.materialsProcessed = procStats.materialsProcessed;
     stats.texturesConverted = procStats.texturesUploaded;
     stats.materialsWithNormals = procStats.materialsWithNormals;
@@ -365,7 +368,7 @@ PipelineStats Pipeline::GetStats() const {
 
 bool Pipeline::IsMaterialProcessed(const std::string& materialName) const {
     if (!m_initialized) return false;
-    return LegacyTextureProcessor::TextureProcessor::Instance().IsMaterialProcessed(materialName);
+    return ToPBR::TextureProcessor::Instance().IsMaterialProcessed(materialName);
 }
 
 MaterialInfo Pipeline::GetMaterialInfo(const std::string& materialName) const {
@@ -408,7 +411,7 @@ void Pipeline::OnMaterialDetected(const std::string& materialName, uint64_t text
     }
     
     // Forward to processor for potential auto-processing
-    LegacyTextureProcessor::TextureProcessor::Instance().OnNewMaterialDetected(materialName, textureHash);
+    ToPBR::TextureProcessor::Instance().OnNewMaterialDetected(materialName, textureHash);
 }
 
 // =========================================================================
