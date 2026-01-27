@@ -4,6 +4,7 @@
 
 #ifdef _WIN64
 
+#include <Windows.h>
 #include "hash_collision_fixer.h"
 #include "vtf_parser.h"
 #include <tier0/dbg.h>
