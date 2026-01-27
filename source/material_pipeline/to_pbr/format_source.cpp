@@ -1,5 +1,5 @@
 // =========================================================================
-// Legacy Texture Processor - Standard Source Engine Format Handler
+// format_source.cpp - Standard Source Engine Format Handler
 // =========================================================================
 // Handles standard Source Engine materials using traditional phong/envmap:
 //   - VertexLitGeneric

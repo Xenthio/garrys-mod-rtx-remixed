@@ -1,5 +1,5 @@
 // =========================================================================
-// legacy_texture_processor_usda.cpp - USD/USDA file generation
+// usda.cpp - USD/USDA file generation implementation
 // =========================================================================
 // Implementation of USD file generation for RTX Remix mods
 // =========================================================================

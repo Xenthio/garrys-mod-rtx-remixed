@@ -1,5 +1,5 @@
 // =========================================================================
-// Legacy Texture Processor - MWB PBR Gen Format Handler
+// format_mwbpbr.cpp - MWB PBR Gen Format Handler
 // =========================================================================
 // MWB PBR Gen (Modern Warfare Blender PBR Generator) is a tool that converts
 // PBR textures to Source Engine's phong workflow.

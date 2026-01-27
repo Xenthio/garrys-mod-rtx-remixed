@@ -1,5 +1,5 @@
 // =========================================================================
-// ToPBR - Format Handler Interface
+// formats.h - Format Handler Interface
 // =========================================================================
 // This header defines the interface and shared types for format-specific
 // texture processors. Each format (ExoPBR, GPBR, BFT, Source) implements

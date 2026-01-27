@@ -1,5 +1,5 @@
 // =========================================================================
-// Legacy Texture Processor - Format Detection & Shared Utilities
+// formats.cpp - Format Detection & Shared Utilities
 // =========================================================================
 
 #ifdef _WIN64

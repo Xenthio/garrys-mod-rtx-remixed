@@ -1,5 +1,5 @@
 // =========================================================================
-// legacy_texture_processor_vtf.h - VTF file reading and processing utilities
+// vtf.h - VTF file reading and processing utilities
 // =========================================================================
 // Low-level VTF (Valve Texture Format) file operations including:
 // - VTF file reading from Source Engine filesystem

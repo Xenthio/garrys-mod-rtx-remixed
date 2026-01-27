@@ -1,5 +1,5 @@
 // =========================================================================
-// Legacy Texture Processor - GPBR (Strata Source) Format Handler
+// format_gpbr.cpp - GPBR (Strata Source) Format Handler
 // =========================================================================
 // GPBR is a community PBR format used by Strata Source engine mods.
 // Uses the "PBR" shader with:

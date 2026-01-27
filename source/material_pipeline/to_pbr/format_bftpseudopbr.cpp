@@ -1,5 +1,5 @@
 // =========================================================================
-// Legacy Texture Processor - BlueFlyTrap PseudoPBR Format Handler
+// format_bftpseudopbr.cpp - BlueFlyTrap PseudoPBR Format Handler
 // =========================================================================
 // BlueFlyTrap PseudoPBR is a technique that encodes PBR properties into
 // Source Engine's standard phong workflow. Developed by BlueFlytrap/Galaxyi.

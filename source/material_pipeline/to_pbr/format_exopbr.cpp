@@ -1,5 +1,5 @@
 // =========================================================================
-// Legacy Texture Processor - ExoPBR Format Handler
+// format_exopbr.cpp - ExoPBR Format Handler
 // =========================================================================
 // ExoPBR is a community PBR format using screenspace_general_8tex shader
 // with an ExoPBR proxy marker. Provides direct PBR textures:

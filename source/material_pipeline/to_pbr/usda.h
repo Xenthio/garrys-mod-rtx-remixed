@@ -1,5 +1,5 @@
 // =========================================================================
-// legacy_texture_processor_usda.h - USD/USDA file generation
+// usda.h - USD/USDA file generation
 // =========================================================================
 // Functions for generating RTX Remix mod.usda and materials.usda files
 // =========================================================================
