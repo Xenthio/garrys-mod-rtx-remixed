@@ -685,8 +685,21 @@ end
 -- HOOKS & TIMERS
 -- =============================================================================
 
--- Batch processing on Think
+-- Batch processing on Think (for Lua queue)
 hook.Add("Think", "RTXMaterialPipeline_Process", ProcessBatch)
+
+-- Process pending materials from C++ queue (every tick)
+-- This processes materials that were detected in D3D9 hooks and queued for safe main-thread processing
+hook.Add("Think", "RTXMaterialPipeline_ProcessCppQueue", function()
+    if not GetConVar("rtx_mat_enabled"):GetBool() then return end
+    
+    -- Check if C++ MaterialPipeline is available
+    if MaterialPipeline and MaterialPipeline.ProcessPendingMaterials then
+        -- Process any materials queued from D3D9 hooks
+        -- This is thread-safe: D3D9 hooks add to queue, we process here on main thread
+        MaterialPipeline.ProcessPendingMaterials()
+    end
+end)
 
 -- Initialize on map load
 hook.Add("InitPostEntity", "RTXMaterialPipeline_Init", function()
