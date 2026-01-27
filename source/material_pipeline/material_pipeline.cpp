@@ -660,26 +660,30 @@ IFileSystem* Pipeline::GetFileSystem() {
 // =========================================================================
 
 // NOTE: The actual LUA_FUNCTION definitions are at global scope after the namespace
-// closing brace. They are declared here using raw C function pointers.
+// closing brace. We declare them in global scope too and reference with :: prefix.
 
-// External declarations of the Lua functions (defined at global scope below)
-extern "C++" int Pipeline_GetStats(lua_State* L);
-extern "C++" int Pipeline_ProcessMaterial(lua_State* L);
-extern "C++" int Pipeline_ProcessAllMaterials(lua_State* L);
-extern "C++" int Pipeline_ProcessBatch(lua_State* L);
-extern "C++" int Pipeline_ProcessPendingMaterials(lua_State* L);
-extern "C++" int Pipeline_QueueAllMaterials(lua_State* L);
-extern "C++" int Pipeline_ClearCache(lua_State* L);
-extern "C++" int Pipeline_SetAutoProcessing(lua_State* L);
-extern "C++" int Pipeline_SetDebugOutput(lua_State* L);
-extern "C++" int Pipeline_GetTrackedMaterials(lua_State* L);
-extern "C++" int Pipeline_IsMaterialProcessed(lua_State* L);
-extern "C++" int Pipeline_GetTextureHash(lua_State* L);
-extern "C++" int Pipeline_RescanCategories(lua_State* L);
-extern "C++" int Pipeline_WriteUSDA(lua_State* L);
-extern "C++" int Pipeline_SetCategoryFlags(lua_State* L);
-extern "C++" int Pipeline_GetCategoryFlags(lua_State* L);
-extern "C++" int Pipeline_FindTextures(lua_State* L);
+} // namespace MaterialPipeline
+
+// Forward declarations of Lua functions at global scope
+int Pipeline_GetStats(lua_State* L);
+int Pipeline_ProcessMaterial(lua_State* L);
+int Pipeline_ProcessAllMaterials(lua_State* L);
+int Pipeline_ProcessBatch(lua_State* L);
+int Pipeline_ProcessPendingMaterials(lua_State* L);
+int Pipeline_QueueAllMaterials(lua_State* L);
+int Pipeline_ClearCache(lua_State* L);
+int Pipeline_SetAutoProcessing(lua_State* L);
+int Pipeline_SetDebugOutput(lua_State* L);
+int Pipeline_GetTrackedMaterials(lua_State* L);
+int Pipeline_IsMaterialProcessed(lua_State* L);
+int Pipeline_GetTextureHash(lua_State* L);
+int Pipeline_RescanCategories(lua_State* L);
+int Pipeline_WriteUSDA(lua_State* L);
+int Pipeline_SetCategoryFlags(lua_State* L);
+int Pipeline_GetCategoryFlags(lua_State* L);
+int Pipeline_FindTextures(lua_State* L);
+
+namespace MaterialPipeline {
 
 void Pipeline::RegisterLuaBindings(GarrysMod::Lua::ILuaBase* LUA) {
     if (!LUA) return;
@@ -690,56 +694,56 @@ void Pipeline::RegisterLuaBindings(GarrysMod::Lua::ILuaBase* LUA) {
     LUA->PushSpecial(GarrysMod::Lua::SPECIAL_GLOB);
     LUA->CreateTable();
     
-    // Register functions
-    LUA->PushCFunction(Pipeline_GetStats);
+    // Register functions - use :: to reference global scope functions
+    LUA->PushCFunction(::Pipeline_GetStats);
     LUA->SetField(-2, "GetStats");
     
-    LUA->PushCFunction(Pipeline_ProcessMaterial);
+    LUA->PushCFunction(::Pipeline_ProcessMaterial);
     LUA->SetField(-2, "ProcessMaterial");
     
-    LUA->PushCFunction(Pipeline_ProcessAllMaterials);
+    LUA->PushCFunction(::Pipeline_ProcessAllMaterials);
     LUA->SetField(-2, "ProcessAllMaterials");
     
-    LUA->PushCFunction(Pipeline_ProcessBatch);
+    LUA->PushCFunction(::Pipeline_ProcessBatch);
     LUA->SetField(-2, "ProcessBatch");
     
-    LUA->PushCFunction(Pipeline_ProcessPendingMaterials);
+    LUA->PushCFunction(::Pipeline_ProcessPendingMaterials);
     LUA->SetField(-2, "ProcessPendingMaterials");
     
-    LUA->PushCFunction(Pipeline_QueueAllMaterials);
+    LUA->PushCFunction(::Pipeline_QueueAllMaterials);
     LUA->SetField(-2, "QueueAllMaterials");
     
-    LUA->PushCFunction(Pipeline_ClearCache);
+    LUA->PushCFunction(::Pipeline_ClearCache);
     LUA->SetField(-2, "ClearCache");
     
-    LUA->PushCFunction(Pipeline_SetAutoProcessing);
+    LUA->PushCFunction(::Pipeline_SetAutoProcessing);
     LUA->SetField(-2, "SetAutoProcessing");
     
-    LUA->PushCFunction(Pipeline_SetDebugOutput);
+    LUA->PushCFunction(::Pipeline_SetDebugOutput);
     LUA->SetField(-2, "SetDebugOutput");
     
-    LUA->PushCFunction(Pipeline_GetTrackedMaterials);
+    LUA->PushCFunction(::Pipeline_GetTrackedMaterials);
     LUA->SetField(-2, "GetTrackedMaterials");
     
-    LUA->PushCFunction(Pipeline_IsMaterialProcessed);
+    LUA->PushCFunction(::Pipeline_IsMaterialProcessed);
     LUA->SetField(-2, "IsMaterialProcessed");
     
-    LUA->PushCFunction(Pipeline_GetTextureHash);
+    LUA->PushCFunction(::Pipeline_GetTextureHash);
     LUA->SetField(-2, "GetTextureHash");
     
-    LUA->PushCFunction(Pipeline_RescanCategories);
+    LUA->PushCFunction(::Pipeline_RescanCategories);
     LUA->SetField(-2, "RescanCategories");
     
-    LUA->PushCFunction(Pipeline_WriteUSDA);
+    LUA->PushCFunction(::Pipeline_WriteUSDA);
     LUA->SetField(-2, "WriteUSDA");
     
-    LUA->PushCFunction(Pipeline_SetCategoryFlags);
+    LUA->PushCFunction(::Pipeline_SetCategoryFlags);
     LUA->SetField(-2, "SetCategoryFlags");
     
-    LUA->PushCFunction(Pipeline_GetCategoryFlags);
+    LUA->PushCFunction(::Pipeline_GetCategoryFlags);
     LUA->SetField(-2, "GetCategoryFlags");
     
-    LUA->PushCFunction(Pipeline_FindTextures);
+    LUA->PushCFunction(::Pipeline_FindTextures);
     LUA->SetField(-2, "FindTextures");
     
     LUA->SetField(-2, "MaterialPipeline");
