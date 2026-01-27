@@ -54,6 +54,9 @@ public:
 
     // Get cache statistics
     size_t GetCacheSize() const { return m_textureCache.size(); }
+    
+    // Check if initialized
+    bool IsInitialized() const { return m_bInitialized; }
 
     // Get all cached materials
     std::vector<std::string> GetCachedMaterials() const {

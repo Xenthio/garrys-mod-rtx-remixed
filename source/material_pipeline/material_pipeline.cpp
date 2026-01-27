@@ -157,10 +157,14 @@ bool Pipeline::InitializeInternal(IDirect3DDevice9Ex* device, remix::Interface* 
         return false;
     }
     
-    // Initialize D3D9TextureTracker
-    if (!D3D9TextureTracker::Instance().Initialize(device)) {
-        Warning("[MaterialPipeline] Failed to initialize D3D9TextureTracker\n");
-        return false;
+    // Initialize D3D9TextureTracker (or check if already initialized by module.cpp)
+    if (!D3D9TextureTracker::Instance().IsInitialized()) {
+        if (!D3D9TextureTracker::Instance().Initialize(device)) {
+            Warning("[MaterialPipeline] Failed to initialize D3D9TextureTracker\n");
+            return false;
+        }
+    } else {
+        Msg("[MaterialPipeline] D3D9TextureTracker already initialized\n");
     }
     
     // Initialize HashCollisionFixer
