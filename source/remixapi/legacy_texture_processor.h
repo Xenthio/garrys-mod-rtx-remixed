@@ -499,9 +499,6 @@ private:
     // Track which materials have been written to USDA (to support append-only)
     std::unordered_set<uint64_t> m_materialsWrittenToUSDA;
     
-    // Track which material name first processed each hash (for collision detection)
-    std::unordered_map<uint64_t, std::string> m_hashToMaterialName;
-    
     // Flag to indicate USDA needs to be rewritten
     bool m_needsUSDAUpdate;
     
