@@ -188,7 +188,40 @@ local function CheckMaterialForSolidColor(matName)
     return false
 end
 
--- Scan materials for solid colors
+-- Scan all materials for solid colors
+local scanIndex = 0
+local materialsToScan = {}
+
+local function BuildMaterialList()
+    materialsToScan = {}
+    
+    -- Get all materials from the game  
+    local allMaterials = game.GetWorld():GetMaterials()
+    for _, matName in ipairs(allMaterials) do
+        if not checkedMaterials[matName] then
+            table.insert(materialsToScan, matName)
+        end
+    end
+    
+    -- Also scan all entities for materials
+    for _, ent in ipairs(ents.GetAll()) do
+        if IsValid(ent) then
+            local entMats = ent:GetMaterials()
+            for _, matName in ipairs(entMats) do
+                if not checkedMaterials[matName] then
+                    table.insert(materialsToScan, matName)
+                end
+            end
+        end
+    end
+    
+    DebugPrint("Built material list with ", #materialsToScan, " materials to scan")
+    scanIndex = 0
+end
+
+-- Scan a batch of materials per tick
+local BATCH_SIZE = 10 -- Process 10 materials per tick
+
 local function ScanMaterials()
     if not enable_addon:GetBool() then return end
     
@@ -215,22 +248,68 @@ local function ScanMaterials()
             end
         end
     end
+    
+    -- Process a batch of materials from our scan list
+    if #materialsToScan > 0 then
+        local processed = 0
+        while scanIndex < #materialsToScan and processed < BATCH_SIZE do
+            scanIndex = scanIndex + 1
+            processed = processed + 1
+            
+            local matName = materialsToScan[scanIndex]
+            if matName and not checkedMaterials[matName] then
+                CheckMaterialForSolidColor(matName)
+            end
+        end
+        
+        -- If we've finished the list, clear it
+        if scanIndex >= #materialsToScan then
+            if debug_mode:GetBool() and #materialsToScan > 0 then
+                MsgC(Color(100, 200, 255), "[RTX SolidFix] Finished scanning ", #materialsToScan, " materials. Fixed: ", fixCount, "\n")
+            end
+            materialsToScan = {}
+            scanIndex = 0
+        end
+    end
+end
+
+-- Rebuild material list periodically to catch new materials
+local function RefreshMaterialList()
+    if not enable_addon:GetBool() then return end
+    if #materialsToScan > 0 then return end -- Still processing
+    
+    BuildMaterialList()
 end
 
 -- Start the processing timer
+local REFRESH_TIMER_NAME = "RTX_SolidColorRefresh"
+local REFRESH_INTERVAL = 5.0 -- Refresh material list every 5 seconds
+
 local function StartProcessing()
     if timer.Exists(TIMER_NAME) then
         timer.Remove(TIMER_NAME)
     end
+    if timer.Exists(REFRESH_TIMER_NAME) then
+        timer.Remove(REFRESH_TIMER_NAME)
+    end
     
-    -- Process periodically
+    -- Build initial material list
+    BuildMaterialList()
+    
+    -- Process periodically (fast, for batch processing)
     timer.Create(TIMER_NAME, SCAN_INTERVAL, 0, ScanMaterials)
+    
+    -- Refresh material list periodically (slower, to catch new materials)
+    timer.Create(REFRESH_TIMER_NAME, REFRESH_INTERVAL, 0, RefreshMaterialList)
 end
 
 -- Stop the processing timer
 local function StopProcessing()
     if timer.Exists(TIMER_NAME) then
         timer.Remove(TIMER_NAME)
+    end
+    if timer.Exists(REFRESH_TIMER_NAME) then
+        timer.Remove(REFRESH_TIMER_NAME)
     end
 end
 
@@ -268,8 +347,10 @@ end)
 
 -- Console commands
 concommand.Add("rtx_fix_hash_collisions_process", function()
+    BuildMaterialList()
     ScanMaterials()
-    notification.AddLegacy("Processed solid-color textures", NOTIFY_GENERIC, 3)
+    MsgC(Color(100, 200, 255), "[RTX SolidFix] Started processing ", #materialsToScan, " materials...\n")
+    notification.AddLegacy("Started processing solid-color textures", NOTIFY_GENERIC, 3)
 end, nil, "Manually trigger solid-color texture processing")
 
 concommand.Add("rtx_fix_hash_collisions_stats", function()
@@ -277,6 +358,7 @@ concommand.Add("rtx_fix_hash_collisions_stats", function()
     MsgC(Color(200, 200, 200), "  Total fixed (Lua): ", fixCount, "\n")
     MsgC(Color(200, 200, 200), "  Unique textures created: ", table.Count(uniqueTextures), "\n")
     MsgC(Color(200, 200, 200), "  Materials checked: ", table.Count(checkedMaterials), "\n")
+    MsgC(Color(200, 200, 200), "  Scan queue: ", #materialsToScan, " (index: ", scanIndex, ")\n")
     
     -- Show C++ stats if available
     if HashCollisionFixer and HashCollisionFixer.GetStats then
