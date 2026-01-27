@@ -237,15 +237,8 @@ bool Pipeline::ProcessMaterial(const std::string& materialName) {
         }
     }
     
-    // Get texture pointer and hash for stages that need it
+    // Get texture pointer for stages that need it
     IDirect3DTexture9* texture = D3D9TextureTracker::Instance().GetTextureForMaterial(materialName.c_str());
-    uint64_t textureHash = 0;
-    if (texture && m_remix) {
-        auto result = m_remix->dxvk_GetTextureHash(texture);
-        if (result) {
-            textureHash = result.value();
-        }
-    }
     
     // -------------------------------------------------------------------------
     // STAGE 1: ShaderFixes
