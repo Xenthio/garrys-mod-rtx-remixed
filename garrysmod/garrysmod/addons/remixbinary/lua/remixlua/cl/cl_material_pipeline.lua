@@ -525,6 +525,36 @@ local function Initialize()
         if GetConVar("rtx_mat_debug"):GetBool() then
             RTXMaterialPipeline.SetDebug(true)
         end
+        
+        -- Sync ToPBR settings from convars
+        local processor = MaterialPipeline and MaterialPipeline.ToPBR
+        if processor then
+            if processor.SetMetallicGeneration then
+                local metallic = GetConVar("rtx_topbr_metallic")
+                if metallic then
+                    processor.SetMetallicGeneration(metallic:GetBool())
+                end
+            end
+            if processor.SetAutoDiscover then
+                local autodiscover = GetConVar("rtx_topbr_autodiscover")
+                if autodiscover then
+                    processor.SetAutoDiscover(autodiscover:GetBool())
+                end
+            end
+            if processor.SetParseCommentedProperties then
+                local parseCommented = GetConVar("rtx_topbr_parse_commented_properties")
+                if parseCommented then
+                    processor.SetParseCommentedProperties(parseCommented:GetBool())
+                end
+            end
+            if processor.SetDebugOutput then
+                local debug = GetConVar("rtx_topbr_debug")
+                if debug then
+                    processor.SetDebugOutput(debug:GetBool())
+                end
+            end
+            DebugPrint("ToPBR settings synced from convars")
+        end
     else
         InfoPrint("Waiting for C++ MaterialPipeline binary module...")
     end

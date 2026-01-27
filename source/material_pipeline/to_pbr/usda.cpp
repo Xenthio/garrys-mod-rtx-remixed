@@ -102,6 +102,47 @@ bool CheckExistingMaterials(const std::string& materialsUsdaPath,
     return true;
 }
 
+bool LoadExistingHashes(const std::string& materialsUsdaPath,
+                        std::unordered_set<uint64_t>& existingHashes,
+                        bool debugOutput) {
+    existingHashes.clear();
+    
+    // Read existing materials.usda to find which hashes are already defined
+    std::ifstream existingFile(materialsUsdaPath);
+    if (!existingFile.is_open()) {
+        // File doesn't exist - that's OK, just means no existing hashes
+        if (debugOutput) {
+            Msg("[USDA] No existing materials.usda found at %s\n", materialsUsdaPath.c_str());
+        }
+        return true;
+    }
+    
+    std::string line;
+    while (std::getline(existingFile, line)) {
+        // Look for lines like: over "mat_HASH"
+        size_t matPos = line.find("over \"mat_");
+        if (matPos != std::string::npos) {
+            size_t hashStart = matPos + 10; // Length of 'over "mat_'
+            size_t hashEnd = line.find("\"", hashStart);
+            if (hashEnd != std::string::npos) {
+                std::string hashStr = line.substr(hashStart, hashEnd - hashStart);
+                uint64_t hash = 0;
+                if (sscanf(hashStr.c_str(), "%llX", (unsigned long long*)&hash) == 1) {
+                    existingHashes.insert(hash);
+                }
+            }
+        }
+    }
+    existingFile.close();
+    
+    if (debugOutput) {
+        Msg("[USDA] Loaded %zu existing material hashes from %s\n", 
+            existingHashes.size(), materialsUsdaPath.c_str());
+    }
+    
+    return true;
+}
+
 bool WriteModUSDAFile(const std::string& modDir) {
     std::string modUsdaPath = modDir + "/mod.usda";
     std::ofstream modUsda(modUsdaPath);
