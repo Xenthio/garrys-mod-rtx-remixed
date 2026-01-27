@@ -324,6 +324,10 @@ extern "C" {
     const remixapi_MeshInfo*  info,
     remixapi_MeshHandle*      out_handle);
 
+  typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_CreateMeshBatched)(
+    const remixapi_MeshInfo*  info,
+    remixapi_MeshHandle*      out_handle);
+
   typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_DestroyMesh)(
     remixapi_MeshHandle       handle);
 
@@ -771,6 +775,7 @@ extern "C" {
     PFN_remixapi_CreateMaterial     CreateMaterial;
     PFN_remixapi_DestroyMaterial    DestroyMaterial;
     PFN_remixapi_CreateMesh         CreateMesh;
+    PFN_remixapi_CreateMeshBatched  CreateMeshBatched;
     PFN_remixapi_DestroyMesh        DestroyMesh;
     PFN_remixapi_SetupCamera        SetupCamera;
     PFN_remixapi_DrawInstance       DrawInstance;
