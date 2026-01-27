@@ -25,6 +25,9 @@
 #include <d3d9.h>
 #include <Windows.h>
 #include <remix/remix.h>
+#include <materialsystem/imaterialsystem.h>
+#include <materialsystem/imaterial.h>
+#include <materialsystem/imaterialvar.h>
 
 namespace MaterialPipeline {
 
@@ -211,7 +214,102 @@ bool Pipeline::ProcessMaterial(const std::string& materialName) {
         return false;
     }
     
+    // =========================================================================
+    // UNIFIED PIPELINE: Process material through all stages in order
+    // =========================================================================
+    // Stage 1: ShaderFixes   - Handle special shaders (Refract, proxies, etc.)
+    // Stage 2: HashCollision - Detect solid-color texture hash collisions
+    // Stage 3: AutoCategory  - Classify material (particle, decal, emissive, etc.)
+    // Stage 4: ToPBR         - Convert VTF→DDS and generate PBR materials
+    // =========================================================================
+    
+    if (m_config.debugOutput) {
+        Msg("[MaterialPipeline] Processing material through pipeline: %s\n", materialName.c_str());
+    }
+    
+    // Get the IMaterial for stages that need it
+    IMaterial* material = nullptr;
+    extern IMaterialSystem* materials;
+    if (materials) {
+        material = materials->FindMaterial(materialName.c_str(), TEXTURE_GROUP_OTHER, false);
+        if (material && material->IsErrorMaterial()) {
+            material = nullptr;
+        }
+    }
+    
+    // Get texture pointer and hash for stages that need it
+    IDirect3DTexture9* texture = D3D9TextureTracker::Instance().GetTextureForMaterial(materialName.c_str());
+    uint64_t textureHash = 0;
+    if (texture && m_remix) {
+        auto result = m_remix->dxvk_GetTextureHash(texture);
+        if (result) {
+            textureHash = result.value();
+        }
+    }
+    
+    // -------------------------------------------------------------------------
+    // STAGE 1: ShaderFixes
+    // -------------------------------------------------------------------------
+    // Handle Refract shaders, material proxies, parameter normalization
+    if (ShaderFixes::NeedsFix(materialName, material)) {
+        auto fixResult = ShaderFixes::ApplyFix(materialName, material);
+        if (fixResult.applied && m_config.debugOutput) {
+            Msg("[MaterialPipeline] Stage 1 (ShaderFixes): %s - %s\n", 
+                materialName.c_str(), fixResult.description.c_str());
+        }
+    }
+    
+    // -------------------------------------------------------------------------
+    // STAGE 2: HashCollisionFixer
+    // -------------------------------------------------------------------------
+    // Detect solid-color textures that would cause hash collisions in Remix
+    // Extract $basetexture path from material for solid color checking
+    std::string baseTexturePath;
+    if (material) {
+        bool found = false;
+        IMaterialVar* pVar = material->FindVar("$basetexture", &found, false);
+        if (found && pVar) {
+            const char* texPath = pVar->GetStringValue();
+            if (texPath && texPath[0]) {
+                baseTexturePath = texPath;
+            }
+        }
+    }
+    
+    if (!baseTexturePath.empty()) {
+        bool needsFix = HashCollisionFixer::CheckMaterial(
+            m_fileSystem, materialName, baseTexturePath, m_config.debugOutput);
+        if (needsFix && m_config.debugOutput) {
+            Msg("[MaterialPipeline] Stage 2 (HashCollisionFixer): %s - solid color detected\n", 
+                materialName.c_str());
+        }
+    }
+    
+    // -------------------------------------------------------------------------
+    // STAGE 3: AutoCategorisation
+    // -------------------------------------------------------------------------
+    // Classify material as particle, decal, emissive, sky, water, etc.
+    if (texture) {
+        uint32_t categoryFlags = AutoCategorisation::DetectAndApply(materialName, material, texture);
+        if (categoryFlags != 0 && m_config.debugOutput) {
+            Msg("[MaterialPipeline] Stage 3 (AutoCategorisation): %s - flags 0x%X\n", 
+                materialName.c_str(), categoryFlags);
+        }
+    }
+    
+    // -------------------------------------------------------------------------
+    // STAGE 4: ToPBR
+    // -------------------------------------------------------------------------
+    // Convert VTF textures to DDS, extract PBR properties, generate USDA
     bool result = ToPBR::TextureProcessor::Instance().ProcessSingleMaterial(materialName);
+    if (m_config.debugOutput) {
+        Msg("[MaterialPipeline] Stage 4 (ToPBR): %s - %s\n", 
+            materialName.c_str(), result ? "success" : "failed/skipped");
+    }
+    
+    // =========================================================================
+    // Pipeline Complete
+    // =========================================================================
     
     if (m_onProcessed) {
         m_onProcessed(materialName, result);
@@ -406,12 +504,41 @@ void Pipeline::SetOnMaterialProcessed(MaterialProcessedCallback callback) {
 }
 
 void Pipeline::OnMaterialDetected(const std::string& materialName, uint64_t textureHash) {
+    // Fire callback
     if (m_onDetected) {
         m_onDetected(materialName, textureHash);
     }
     
-    // Forward to processor for potential auto-processing
-    ToPBR::TextureProcessor::Instance().OnNewMaterialDetected(materialName, textureHash);
+    // If auto-processing is enabled, process through the unified pipeline
+    // Otherwise, just forward to ToPBR for potential queuing
+    if (m_config.autoProcessing) {
+        // Process through the unified pipeline (all 4 stages)
+        ProcessMaterial(materialName);
+    } else {
+        // Forward to processor for potential queuing/later processing
+        ToPBR::TextureProcessor::Instance().OnNewMaterialDetected(materialName, textureHash);
+    }
+}
+
+int Pipeline::ProcessAllMaterialsThroughPipeline() {
+    if (!m_initialized) {
+        Warning("[MaterialPipeline] Not initialized\n");
+        return 0;
+    }
+    
+    std::vector<std::string> materials = GetTrackedMaterials();
+    int processed = 0;
+    
+    Msg("[MaterialPipeline] Processing %zu materials through unified pipeline...\n", materials.size());
+    
+    for (const auto& materialName : materials) {
+        if (ProcessMaterial(materialName)) {
+            processed++;
+        }
+    }
+    
+    Msg("[MaterialPipeline] Processed %d materials through unified pipeline\n", processed);
+    return processed;
 }
 
 // =========================================================================
@@ -429,6 +556,7 @@ IFileSystem* Pipeline::GetFileSystem() {
 // Forward declaration for Lua function implementations
 static int MaterialPipeline_GetStats(lua_State* L);
 static int MaterialPipeline_ProcessMaterial(lua_State* L);
+static int MaterialPipeline_ProcessAllMaterials(lua_State* L);
 static int MaterialPipeline_ProcessBatch(lua_State* L);
 static int MaterialPipeline_QueueAllMaterials(lua_State* L);
 static int MaterialPipeline_ClearCache(lua_State* L);
@@ -458,6 +586,9 @@ void Pipeline::RegisterLuaBindings(GarrysMod::Lua::ILuaBase* LUA) {
     
     LUA->PushCFunction(MaterialPipeline_ProcessMaterial);
     LUA->SetField(-2, "ProcessMaterial");
+    
+    LUA->PushCFunction(MaterialPipeline_ProcessAllMaterials);
+    LUA->SetField(-2, "ProcessAllMaterials");
     
     LUA->PushCFunction(MaterialPipeline_ProcessBatch);
     LUA->SetField(-2, "ProcessBatch");
@@ -554,6 +685,15 @@ static int MaterialPipeline_ProcessMaterial(lua_State* L) {
     bool success = Pipeline::Instance().ProcessMaterial(materialName);
     
     LUA->PushBool(success);
+    return 1;
+}
+
+static int MaterialPipeline_ProcessAllMaterials(lua_State* L) {
+    auto* LUA = reinterpret_cast<GarrysMod::Lua::ILuaBase*>(L);
+    
+    int processed = Pipeline::Instance().ProcessAllMaterialsThroughPipeline();
+    
+    LUA->PushNumber(processed);
     return 1;
 }
 

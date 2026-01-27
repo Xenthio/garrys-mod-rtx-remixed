@@ -5,12 +5,37 @@
 // the RTX Remix integration. It orchestrates the flow from material
 // detection through to PBR output.
 //
-// Pipeline Stages:
-//   1. Detection   - D3D9 hooks detect materials as they render
-//   2. Tracking    - Material names and texture hashes are cached
-//   3. Extraction  - VMT files are parsed for properties
-//   4. Processing  - VTF textures are converted to DDS
-//   5. Output      - USDA files and PBR materials are generated
+// =========================================================================
+// UNIFIED PIPELINE STAGES (executed in order for each material):
+// =========================================================================
+//
+//   1. ShaderFixes (shader_fixes/)
+//      - Handle Refract shader materials (glass, water distortion)
+//      - Fix material proxies that cause issues with RTX
+//      - Normalize shader parameters to expected ranges
+//
+//   2. HashCollisionFixer (hash_collision_fixer/)
+//      - Detect solid-color VTF textures that would have hash collisions
+//      - Report materials needing $basetexture replacement to Lua
+//
+//   3. AutoCategorisation (auto_categorisation/)
+//      - Classify materials: particles, decals, emissive, sky, water, etc.
+//      - Apply Remix category flags to texture hashes
+//      - Handle pending categorizations for textures without hashes yet
+//
+//   4. ToPBR (to_pbr/)
+//      - Extract PBR properties from VMT files
+//      - Convert VTF textures to DDS format
+//      - Generate normal, roughness, metallic maps
+//      - Output USDA material definitions
+//
+// =========================================================================
+// Usage:
+//   Pipeline::Instance().Initialize(device, remix);
+//   Pipeline::Instance().ProcessMaterial("materials/metal/metal001");
+//   // or for all materials:
+//   Pipeline::Instance().ProcessAllMaterialsThroughPipeline();
+// =========================================================================
 //
 // This header provides the unified interface. Internal components are
 // implementation details that can be refactored without breaking the API.
@@ -151,8 +176,13 @@ public:
     // Returns number of materials queued
     int QueueAllMaterials();
     
-    // Process a single material immediately (blocking)
+    // Process a single material through the unified pipeline (blocking)
+    // Pipeline stages: ShaderFixes → HashCollisionFixer → AutoCategorisation → ToPBR
     bool ProcessMaterial(const std::string& materialName);
+    
+    // Process ALL tracked materials through the unified pipeline
+    // Returns number of materials processed
+    int ProcessAllMaterialsThroughPipeline();
     
     // Process a batch of materials (for frame-distributed processing)
     // Returns number processed
