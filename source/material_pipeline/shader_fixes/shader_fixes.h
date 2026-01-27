@@ -75,6 +75,7 @@ void Shutdown();
 // Configure the system
 void SetConfig(const Config& config);
 const Config& GetConfig();
+void SetEnabled(bool enabled);
 
 // =========================================================================
 // Material Fixing

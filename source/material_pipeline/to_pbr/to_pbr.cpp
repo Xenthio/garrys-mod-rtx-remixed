@@ -107,7 +107,7 @@ static IFileSystem* GetFileSystemInterface() {
 // TextureProcessor Implementation
 //=============================================================================
 
-TextureProcessor& TextureProcessor::Instance() {
+TextureProcessor& MaterialPipeline::ToPBR::TextureProcessor::Instance() {
     static TextureProcessor instance;
     return instance;
 }
@@ -1647,7 +1647,7 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
     // UNLESS the user has enabled parsing of commented properties (for maps where
     // envmap/masks were disabled for vanilla Source performance but benefit RTX Remix)
     std::string contentWithoutComments;
-    if (!TextureProcessor::Instance().IsParseCommentedPropertiesEnabled()) {
+    if (!MaterialPipeline::ToPBR::TextureProcessor::Instance().IsParseCommentedPropertiesEnabled()) {
         size_t lineStart = 0;
         for (size_t i = 0; i <= content.size(); ++i) {
             if (i == content.size() || content[i] == '\n' || content[i] == '\r') {
@@ -4247,13 +4247,16 @@ void TextureProcessor::AppendToUSDAAsync() {
     AppendMaterialsToUSDA();
 }
 
+} // namespace ToPBR
+} // namespace MaterialPipeline
+
 //=============================================================================
-// Lua Bindings
+// Lua Bindings - Must be at global scope
 //=============================================================================
 
 LUA_FUNCTION(LegacyTextureProcessor_Initialize) {
     // If already initialized (by C++ during RemixAPI init), return success
-    if (TextureProcessor::Instance().IsInitialized()) {
+    if (MaterialPipeline::ToPBR::MaterialPipeline::ToPBR::TextureProcessor::Instance().IsInitialized()) {
         LUA->PushBool(true);
         return 1;
     }
@@ -4264,18 +4267,18 @@ LUA_FUNCTION(LegacyTextureProcessor_Initialize) {
         return 1;
     }
     
-    bool result = TextureProcessor::Instance().Initialize(g_remix);
+    bool result = MaterialPipeline::ToPBR::MaterialPipeline::ToPBR::TextureProcessor::Instance().Initialize(g_remix);
     LUA->PushBool(result);
     return 1;
 }
 
 LUA_FUNCTION(LegacyTextureProcessor_IsInitialized) {
-    LUA->PushBool(TextureProcessor::Instance().IsInitialized());
+    LUA->PushBool(MaterialPipeline::ToPBR::MaterialPipeline::ToPBR::TextureProcessor::Instance().IsInitialized());
     return 1;
 }
 
 LUA_FUNCTION(LegacyTextureProcessor_ProcessAllMaterials) {
-    int count = TextureProcessor::Instance().ProcessAllTrackedMaterials();
+    int count = MaterialPipeline::ToPBR::TextureProcessor::Instance().ProcessAllTrackedMaterials();
     LUA->PushNumber(count);
     return 1;
 }
@@ -4286,7 +4289,7 @@ LUA_FUNCTION(LegacyTextureProcessor_ProcessMaterialsBatch) {
         maxBatch = (int)LUA->GetNumber(1);
     }
     
-    int count = TextureProcessor::Instance().ProcessTrackedMaterialsBatch(maxBatch);
+    int count = MaterialPipeline::ToPBR::TextureProcessor::Instance().ProcessTrackedMaterialsBatch(maxBatch);
     LUA->PushNumber(count);
     return 1;
 }
@@ -4297,7 +4300,7 @@ LUA_FUNCTION(LegacyTextureProcessor_SetAutoProcessing) {
         return 0;
     }
     
-    TextureProcessor::Instance().SetAutoProcessing(LUA->GetBool(1));
+    MaterialPipeline::ToPBR::TextureProcessor::Instance().SetAutoProcessing(LUA->GetBool(1));
     return 0;
 }
 
@@ -4307,7 +4310,7 @@ LUA_FUNCTION(LegacyTextureProcessor_SetDebugOutput) {
         return 0;
     }
     
-    TextureProcessor::Instance().SetDebugOutput(LUA->GetBool(1));
+    MaterialPipeline::ToPBR::TextureProcessor::Instance().SetDebugOutput(LUA->GetBool(1));
     return 0;
 }
 
@@ -4318,7 +4321,7 @@ LUA_FUNCTION(LegacyTextureProcessor_SetMetallicGeneration) {
     }
     
     bool enabled = LUA->GetBool(1);
-    TextureProcessor::Instance().SetMetallicGeneration(enabled);
+    MaterialPipeline::ToPBR::TextureProcessor::Instance().SetMetallicGeneration(enabled);
     
     if (enabled) {
         Msg("[LegacyTextureProcessor] Experimental metallic generation ENABLED\n");
@@ -4332,7 +4335,7 @@ LUA_FUNCTION(LegacyTextureProcessor_SetMetallicGeneration) {
 }
 
 LUA_FUNCTION(LegacyTextureProcessor_IsMetallicGenerationEnabled) {
-    LUA->PushBool(TextureProcessor::Instance().IsMetallicGenerationEnabled());
+    LUA->PushBool(MaterialPipeline::ToPBR::TextureProcessor::Instance().IsMetallicGenerationEnabled());
     return 1;
 }
 
@@ -4343,7 +4346,7 @@ LUA_FUNCTION(LegacyTextureProcessor_SetAutoDiscover) {
     }
     
     bool enabled = LUA->GetBool(1);
-    TextureProcessor::Instance().SetAutoDiscover(enabled);
+    MaterialPipeline::ToPBR::TextureProcessor::Instance().SetAutoDiscover(enabled);
     
     if (enabled) {
         Msg("[LegacyTextureProcessor] Texture auto-discovery ENABLED (default)\n");
@@ -4356,7 +4359,7 @@ LUA_FUNCTION(LegacyTextureProcessor_SetAutoDiscover) {
 }
 
 LUA_FUNCTION(LegacyTextureProcessor_IsAutoDiscoverEnabled) {
-    LUA->PushBool(TextureProcessor::Instance().IsAutoDiscoverEnabled());
+    LUA->PushBool(MaterialPipeline::ToPBR::TextureProcessor::Instance().IsAutoDiscoverEnabled());
     return 1;
 }
 
@@ -4367,7 +4370,7 @@ LUA_FUNCTION(LegacyTextureProcessor_SetParseCommentedProperties) {
     }
     
     bool enabled = LUA->GetBool(1);
-    TextureProcessor::Instance().SetParseCommentedProperties(enabled);
+    MaterialPipeline::ToPBR::TextureProcessor::Instance().SetParseCommentedProperties(enabled);
     
     if (enabled) {
         Msg("[LegacyTextureProcessor] Parsing commented-out VMT properties ENABLED\n");
@@ -4381,12 +4384,12 @@ LUA_FUNCTION(LegacyTextureProcessor_SetParseCommentedProperties) {
 }
 
 LUA_FUNCTION(LegacyTextureProcessor_IsParseCommentedPropertiesEnabled) {
-    LUA->PushBool(TextureProcessor::Instance().IsParseCommentedPropertiesEnabled());
+    LUA->PushBool(MaterialPipeline::ToPBR::TextureProcessor::Instance().IsParseCommentedPropertiesEnabled());
     return 1;
 }
 
 LUA_FUNCTION(LegacyTextureProcessor_GetStats) {
-    auto stats = TextureProcessor::Instance().GetStats();
+    auto stats = MaterialPipeline::ToPBR::TextureProcessor::Instance().GetStats();
     
     LUA->CreateTable();
     
@@ -4409,7 +4412,7 @@ LUA_FUNCTION(LegacyTextureProcessor_GetStats) {
 }
 
 LUA_FUNCTION(LegacyTextureProcessor_ClearCache) {
-    TextureProcessor::Instance().ClearCache();
+    MaterialPipeline::ToPBR::TextureProcessor::Instance().ClearCache();
     return 0;
 }
 
@@ -4422,7 +4425,7 @@ LUA_FUNCTION(LegacyTextureProcessor_ConvertTexture) {
     const char* path = LUA->GetString(1);
     bool isNormalMap = LUA->IsType(2, GarrysMod::Lua::Type::Bool) ? LUA->GetBool(2) : false;
     
-    uint64_t hash = TextureProcessor::Instance().ConvertAndUploadTexture(path, isNormalMap);
+    uint64_t hash = MaterialPipeline::ToPBR::TextureProcessor::Instance().ConvertAndUploadTexture(path, isNormalMap);
     
     // Return hash as string to preserve precision
     char hashStr[32];
@@ -4441,7 +4444,7 @@ LUA_FUNCTION(LegacyTextureProcessor_InspectMaterial) {
     const char* matName = LUA->GetString(1);
     
     MaterialPBRProperties props;
-    if (!TextureProcessor::Instance().ExtractMaterialPBR(matName, props)) {
+    if (!MaterialPipeline::ToPBR::TextureProcessor::Instance().ExtractMaterialPBR(matName, props)) {
         LUA->PushNil();
         return 1;
     }
@@ -4730,12 +4733,12 @@ LUA_FUNCTION(LegacyTextureProcessor_SetOutputDirectory) {
     }
     
     const char* path = LUA->GetString(1);
-    TextureProcessor::Instance().SetOutputDirectory(path);
+    MaterialPipeline::ToPBR::TextureProcessor::Instance().SetOutputDirectory(path);
     return 0;
 }
 
 LUA_FUNCTION(LegacyTextureProcessor_GetOutputDirectory) {
-    LUA->PushString(TextureProcessor::Instance().GetOutputDirectory().c_str());
+    LUA->PushString(MaterialPipeline::ToPBR::TextureProcessor::Instance().GetOutputDirectory().c_str());
     return 1;
 }
 
@@ -4746,18 +4749,18 @@ LUA_FUNCTION(LegacyTextureProcessor_ProcessSingleMaterial) {
     }
     
     const char* matName = LUA->GetString(1);
-    bool result = TextureProcessor::Instance().ProcessSingleMaterial(matName);
+    bool result = MaterialPipeline::ToPBR::TextureProcessor::Instance().ProcessSingleMaterial(matName);
     LUA->PushBool(result);
     return 1;
 }
 
 LUA_FUNCTION(LegacyTextureProcessor_WriteUSDAIfNeeded) {
-    TextureProcessor::Instance().WriteUSDAIfNeeded();
+    MaterialPipeline::ToPBR::TextureProcessor::Instance().WriteUSDAIfNeeded();
     return 0;
 }
 
 LUA_FUNCTION(LegacyTextureProcessor_NeedsUSDAUpdate) {
-    LUA->PushBool(TextureProcessor::Instance().NeedsUSDAUpdate());
+    LUA->PushBool(MaterialPipeline::ToPBR::TextureProcessor::Instance().NeedsUSDAUpdate());
     return 1;
 }
 
@@ -4766,30 +4769,33 @@ LUA_FUNCTION(LegacyTextureProcessor_NeedsUSDAUpdate) {
 // =========================================================================
 
 LUA_FUNCTION(LegacyTextureProcessor_QueueMaterialsForProcessing) {
-    int count = TextureProcessor::Instance().QueueMaterialsForProcessing();
+    int count = MaterialPipeline::ToPBR::TextureProcessor::Instance().QueueMaterialsForProcessing();
     LUA->PushNumber(count);
     return 1;
 }
 
 LUA_FUNCTION(LegacyTextureProcessor_IsProcessingInBackground) {
-    LUA->PushBool(TextureProcessor::Instance().IsProcessingInBackground());
+    LUA->PushBool(MaterialPipeline::ToPBR::TextureProcessor::Instance().IsProcessingInBackground());
     return 1;
 }
 
 LUA_FUNCTION(LegacyTextureProcessor_GetQueuedMaterialCount) {
-    LUA->PushNumber(static_cast<double>(TextureProcessor::Instance().GetQueuedMaterialCount()));
+    LUA->PushNumber(static_cast<double>(MaterialPipeline::ToPBR::TextureProcessor::Instance().GetQueuedMaterialCount()));
     return 1;
 }
 
 LUA_FUNCTION(LegacyTextureProcessor_GetLastProcessedCount) {
-    LUA->PushNumber(TextureProcessor::Instance().GetLastProcessedCount());
+    LUA->PushNumber(MaterialPipeline::ToPBR::TextureProcessor::Instance().GetLastProcessedCount());
     return 1;
 }
 
 LUA_FUNCTION(LegacyTextureProcessor_AppendToUSDAAsync) {
-    TextureProcessor::Instance().AppendToUSDAAsync();
+    MaterialPipeline::ToPBR::TextureProcessor::Instance().AppendToUSDAAsync();
     return 0;
 }
+
+namespace MaterialPipeline {
+namespace ToPBR {
 
 void InitializeLegacyTextureProcessorLuaBindings(GarrysMod::Lua::ILuaBase* LUA) {
     // Create LegacyTextureProcessor table

@@ -691,31 +691,34 @@ Stats GetStats() {
     return s_stats;
 }
 
+} // namespace AutoCategorisation
+} // namespace MaterialPipeline
+
 // =========================================================================
-// Lua Bindings
+// Lua Bindings - Must be at global scope
 // =========================================================================
 
 LUA_FUNCTION(AutoCat_SetEnabled) {
     bool enabled = LUA->GetBool(1);
-    SetEnabled(enabled);
+    MaterialPipeline::AutoCategorisation::SetEnabled(enabled);
     return 0;
 }
 
 LUA_FUNCTION(AutoCat_SetParticleCategorisation) {
     bool enabled = LUA->GetBool(1);
-    SetParticleCategorisation(enabled);
+    MaterialPipeline::AutoCategorisation::SetParticleCategorisation(enabled);
     return 0;
 }
 
 LUA_FUNCTION(AutoCat_SetDecalCategorisation) {
     bool enabled = LUA->GetBool(1);
-    SetDecalCategorisation(enabled);
+    MaterialPipeline::AutoCategorisation::SetDecalCategorisation(enabled);
     return 0;
 }
 
 LUA_FUNCTION(AutoCat_SetEmissiveCategorisation) {
     bool enabled = LUA->GetBool(1);
-    SetEmissiveCategorisation(enabled);
+    MaterialPipeline::AutoCategorisation::SetEmissiveCategorisation(enabled);
     return 0;
 }
 
@@ -729,7 +732,7 @@ LUA_FUNCTION(AutoCat_SetCategoryFlags) {
     }
     
     uint32_t flags = static_cast<uint32_t>(LUA->GetNumber(2));
-    SetHashCategoryFlags(hash, flags);
+    MaterialPipeline::AutoCategorisation::SetHashCategoryFlags(hash, flags);
     return 0;
 }
 
@@ -743,19 +746,19 @@ LUA_FUNCTION(AutoCat_GetCategoryFlags) {
     }
     
     uint32_t flags = 0;
-    GetHashCategoryFlags(hash, &flags);
+    MaterialPipeline::AutoCategorisation::GetHashCategoryFlags(hash, &flags);
     LUA->PushNumber(flags);
     return 1;
 }
 
 LUA_FUNCTION(AutoCat_RetryPending) {
-    int count = RetryPendingCategories();
+    int count = MaterialPipeline::AutoCategorisation::RetryPendingCategories();
     LUA->PushNumber(count);
     return 1;
 }
 
 LUA_FUNCTION(AutoCat_GetStats) {
-    Stats stats = GetStats();
+    MaterialPipeline::AutoCategorisation::Stats stats = MaterialPipeline::AutoCategorisation::GetStats();
     
     LUA->CreateTable();
     
@@ -776,6 +779,9 @@ LUA_FUNCTION(AutoCat_GetStats) {
     
     return 1;
 }
+
+namespace MaterialPipeline {
+namespace AutoCategorisation {
 
 void RegisterLuaBindings(GarrysMod::Lua::ILuaBase* LUA) {
     LUA->PushSpecial(GarrysMod::Lua::SPECIAL_GLOB);

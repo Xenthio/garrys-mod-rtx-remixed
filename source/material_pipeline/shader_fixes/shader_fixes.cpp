@@ -58,6 +58,10 @@ const Config& GetConfig() {
     return s_config;
 }
 
+void SetEnabled(bool enabled) {
+    s_config.enabled = enabled;
+}
+
 // =========================================================================
 // Material Fixing
 // =========================================================================
@@ -236,23 +240,26 @@ void Reset() {
     Msg("[MaterialPipeline::ShaderFixes] Reset\n");
 }
 
+} // namespace ShaderFixes
+} // namespace MaterialPipeline
+
 // =========================================================================
-// Lua Bindings
+// Lua Bindings - Must be at global scope
 // =========================================================================
 
 LUA_FUNCTION(ShaderFixes_SetEnabled) {
-    s_config.enabled = LUA->GetBool(1);
+    MaterialPipeline::ShaderFixes::SetEnabled(LUA->GetBool(1));
     return 0;
 }
 
 LUA_FUNCTION(ShaderFixes_IsFixed) {
     const char* materialName = LUA->CheckString(1);
-    LUA->PushBool(IsFixed(materialName));
+    LUA->PushBool(MaterialPipeline::ShaderFixes::IsFixed(materialName));
     return 1;
 }
 
 LUA_FUNCTION(ShaderFixes_GetFixedMaterials) {
-    auto materials = GetFixedMaterials();
+    auto materials = MaterialPipeline::ShaderFixes::GetFixedMaterials();
     
     LUA->CreateTable();
     int i = 1;
@@ -266,14 +273,17 @@ LUA_FUNCTION(ShaderFixes_GetFixedMaterials) {
 }
 
 LUA_FUNCTION(ShaderFixes_GetTotalFixCount) {
-    LUA->PushNumber(GetTotalFixCount());
+    LUA->PushNumber(MaterialPipeline::ShaderFixes::GetTotalFixCount());
     return 1;
 }
 
 LUA_FUNCTION(ShaderFixes_Reset) {
-    Reset();
+    MaterialPipeline::ShaderFixes::Reset();
     return 0;
 }
+
+namespace MaterialPipeline {
+namespace ShaderFixes {
 
 void RegisterLuaBindings(GarrysMod::Lua::ILuaBase* LUA) {
     LUA->PushSpecial(GarrysMod::Lua::SPECIAL_GLOB);
