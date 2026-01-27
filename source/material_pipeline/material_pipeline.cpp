@@ -108,6 +108,24 @@ void Pipeline::Shutdown() {
     Instance().ShutdownInternal();
 }
 
+// Static OnNewMaterialDetected - called by D3D9TextureTracker
+// Routes material through the unified pipeline stages
+void Pipeline::OnNewMaterialDetected(const std::string& materialName, uint64_t textureHash, IDirect3DTexture9* pTexture) {
+    Pipeline& pipeline = Instance();
+    
+    if (!pipeline.IsInitialized()) {
+        return;
+    }
+    
+    // Route to instance method which handles the unified processing
+    pipeline.OnMaterialDetected(materialName, textureHash);
+    
+    // If auto-processing is enabled, process through unified pipeline
+    if (pipeline.m_config.autoProcessing) {
+        pipeline.ProcessMaterial(materialName);
+    }
+}
+
 // =========================================================================
 // Instance lifecycle methods
 // =========================================================================

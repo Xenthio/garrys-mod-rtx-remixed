@@ -356,16 +356,12 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                                 Stage == 1 ? " [STAGE1]" : "", hash);
                         }
                             
-                        // Apply automatic categorization logic (Particles, Emissive)
-                        // Only for Stage 0 to avoid double-categorization
-                        if (Stage == 0) {
-                            tracker.CheckAndApplyCategories(p2DTexture);
-                            
-                            // Notify MaterialPipeline of new material for auto-processing
-                            if (hash != 0) {
-                                MaterialPipeline::Pipeline::OnNewMaterialDetected(
-                                    tracker.m_currentMaterialName, hash);
-                            }
+                        // Notify MaterialPipeline of new material for unified processing
+                        // Only for Stage 0 to avoid double-processing
+                        // The pipeline handles: ShaderFixes → HashCollisionFixer → AutoCategorisation → ToPBR
+                        if (Stage == 0 && hash != 0) {
+                            MaterialPipeline::Pipeline::OnNewMaterialDetected(
+                                tracker.m_currentMaterialName, hash, p2DTexture);
                         }
                     }
                 } else {

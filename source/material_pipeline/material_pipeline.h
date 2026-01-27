@@ -152,6 +152,10 @@ public:
     // Shutdown the unified pipeline (static wrapper)
     static void Shutdown();
     
+    // Called by D3D9TextureTracker when a new material is detected (static wrapper)
+    // This routes to the unified pipeline for processing through all stages
+    static void OnNewMaterialDetected(const std::string& materialName, uint64_t textureHash, IDirect3DTexture9* pTexture = nullptr);
+    
     // =====================================================================
     // Lifecycle (instance methods)
     // =====================================================================
