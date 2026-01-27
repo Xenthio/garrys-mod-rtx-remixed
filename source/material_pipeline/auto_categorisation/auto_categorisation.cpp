@@ -314,9 +314,21 @@ uint32_t DetectCategory(const std::string& materialName, IMaterial* material) {
             std::string shaderName = GetShaderName(material);
             std::transform(shaderName.begin(), shaderName.end(), shaderName.begin(), SafeToLower);
             
-            if (shaderName.find("sprite") != std::string::npos ||
-                shaderName.find("modulate") != std::string::npos ||
-                shaderName == "cable") {
+            // Check for particle shaders
+            // NOTE: Use prefix matching (== 0) to handle DX version suffixes (e.g., Sprite_dx6, Cable_dx6)
+            bool isParticleShader = (shaderName.find("sprite") == 0 ||
+                                     shaderName.find("cable") == 0);
+            
+            // Check for Modulate shader but exclude DecalModulate
+            // Modulate is a particle/effect shader, but DecalModulate is a decal shader
+            if (!isParticleShader && shaderName.find("modulate") != std::string::npos) {
+                // Only classify as particle if "decal" is NOT in the shader name
+                if (shaderName.find("decal") == std::string::npos) {
+                    isParticleShader = true;
+                }
+            }
+            
+            if (isParticleShader) {
                 flags = CategoryFlags::PARTICLE;
                 s_stats.particlesCategorized++;
                 return flags;
@@ -384,7 +396,21 @@ uint32_t DetectCategory(const std::string& materialName, IMaterial* material) {
             }
         }
         
-        // Method 2: Path-based detection (exclude light materials)
+        // Method 2: Shader-based detection (Decal, DecalModulate shaders)
+        // Note: Runtime shaders have DX version suffixes (e.g., DecalModulate_dx6)
+        if (!isDecal && material) {
+            std::string shaderName = GetShaderName(material);
+            std::transform(shaderName.begin(), shaderName.end(), shaderName.begin(), SafeToLower);
+            // Check for decal shaders using prefix match to handle DX suffixes
+            // - DecalModulate, DecalModulate_dx6, etc.
+            // - Decal, Decal_dx6, etc. (but not DecalModulate which starts with "decal" too)
+            if (shaderName.find("decalmodulate") == 0 ||
+                (shaderName.find("decal") == 0 && shaderName.find("modulate") == std::string::npos)) {
+                isDecal = true;
+            }
+        }
+        
+        // Method 3: Path-based detection (exclude light materials)
         if (!isDecal &&
             ((lowerName.find("decals/") == 0 ||
               lowerName.find("/decals/") != std::string::npos ||
@@ -400,7 +426,7 @@ uint32_t DetectCategory(const std::string& materialName, IMaterial* material) {
             isDecal = true;
         }
         
-        // Method 3: Check if in world texture list from BSP
+        // Method 4: Check if in world texture list from BSP
         if (!isDecal && IsWorldTexture(materialName)) {
             isDecal = true;
         }
