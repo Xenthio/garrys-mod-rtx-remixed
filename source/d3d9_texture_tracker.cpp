@@ -11,7 +11,7 @@
 #include <functional>
 #include <cctype>
 #include <remix/remix.h>
-#include "remixapi/legacy_texture_processor.h"
+#include "material_pipeline/material_pipeline.h"
 
 // Global material system pointer (from module.cpp)
 extern IMaterialSystem* materials;
@@ -361,9 +361,9 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                         if (Stage == 0) {
                             tracker.CheckAndApplyCategories(p2DTexture);
                             
-                            // Notify LegacyTextureProcessor of new material for auto-processing
+                            // Notify MaterialPipeline of new material for auto-processing
                             if (hash != 0) {
-                                LegacyTextureProcessor::TextureProcessor::Instance().OnNewMaterialDetected(
+                                MaterialPipeline::Pipeline::OnNewMaterialDetected(
                                     tracker.m_currentMaterialName, hash);
                             }
                         }

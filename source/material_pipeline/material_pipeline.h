@@ -142,15 +142,26 @@ public:
     static Pipeline& Instance();
     
     // =====================================================================
-    // Lifecycle
+    // Static convenience functions for initialization
+    // =====================================================================
+    
+    // Initialize the unified pipeline and register all Lua bindings
+    // This is the primary entry point - call this from RemixAPI initialization
+    static bool Initialize(remix::Interface* remix, GarrysMod::Lua::ILuaBase* LUA);
+    
+    // Shutdown the unified pipeline (static wrapper)
+    static void Shutdown();
+    
+    // =====================================================================
+    // Lifecycle (instance methods)
     // =====================================================================
     
     // Initialize the pipeline with D3D9 device and Remix interface
     // This sets up all internal components
-    bool Initialize(IDirect3DDevice9Ex* device, remix::Interface* remix);
+    bool InitializeInternal(IDirect3DDevice9Ex* device, remix::Interface* remix);
     
     // Shutdown and cleanup all resources
-    void Shutdown();
+    void ShutdownInternal();
     
     // Check if pipeline is ready
     bool IsInitialized() const { return m_initialized; }

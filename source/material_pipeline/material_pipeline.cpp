@@ -69,10 +69,50 @@ Pipeline& Pipeline::Instance() {
 
 Pipeline::Pipeline() = default;
 Pipeline::~Pipeline() {
-    Shutdown();
+    ShutdownInternal();
 }
 
-bool Pipeline::Initialize(IDirect3DDevice9Ex* device, remix::Interface* remix) {
+// =========================================================================
+// Static convenience functions
+// =========================================================================
+
+// Static Initialize - main entry point from RemixAPI
+bool Pipeline::Initialize(remix::Interface* remix, GarrysMod::Lua::ILuaBase* LUA) {
+    // Get D3D device from global (set up by module.cpp)
+    extern IDirect3DDevice9Ex* g_d3dDevice;
+    
+    if (!Instance().InitializeInternal(g_d3dDevice, remix)) {
+        return false;
+    }
+    
+    // Register all Lua bindings for pipeline components
+    if (LUA) {
+        // Register HashCollisionFixer Lua bindings
+        HashCollisionFixer::RegisterLuaBindings(LUA);
+        
+        // Register ToPBR (LegacyTextureProcessor) Lua bindings
+        ToPBR::InitializeLegacyTextureProcessorLuaBindings(LUA);
+        
+        // Register AutoCategorisation Lua bindings
+        AutoCategorisation::RegisterLuaBindings(LUA);
+        
+        // Register ShaderFixes Lua bindings
+        ShaderFixes::RegisterLuaBindings(LUA);
+    }
+    
+    return true;
+}
+
+// Static Shutdown - convenience wrapper
+void Pipeline::Shutdown() {
+    Instance().ShutdownInternal();
+}
+
+// =========================================================================
+// Instance lifecycle methods
+// =========================================================================
+
+bool Pipeline::InitializeInternal(IDirect3DDevice9Ex* device, remix::Interface* remix) {
     std::lock_guard<std::mutex> lock(m_mutex);
     
     if (m_initialized) {
@@ -105,6 +145,9 @@ bool Pipeline::Initialize(IDirect3DDevice9Ex* device, remix::Interface* remix) {
         return false;
     }
     
+    // Initialize HashCollisionFixer
+    HashCollisionFixer::Initialize();
+    
     // Initialize LegacyTextureProcessor
     if (!ToPBR::TextureProcessor::Instance().Initialize(remix)) {
         Warning("[MaterialPipeline] Failed to initialize LegacyTextureProcessor\n");
@@ -121,7 +164,7 @@ bool Pipeline::Initialize(IDirect3DDevice9Ex* device, remix::Interface* remix) {
     return true;
 }
 
-void Pipeline::Shutdown() {
+void Pipeline::ShutdownInternal() {
     std::lock_guard<std::mutex> lock(m_mutex);
     
     if (!m_initialized) {
