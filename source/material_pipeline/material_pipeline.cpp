@@ -432,7 +432,11 @@ int Pipeline::ProcessPendingMaterials() {
     }
     
     if (toProcess.empty()) {
-        // Even if no new materials, check if ToPBR background processing finished
+        // Even if no new materials, retry pending categorizations for textures 
+        // that didn't have hashes ready on first try
+        AutoCategorisation::RetryPendingCategories();
+        
+        // Also check if ToPBR background processing finished
         // and needs USDA written
         ToPBR::TextureProcessor::Instance().WriteUSDAIfNeeded();
         return 0;
@@ -519,6 +523,9 @@ int Pipeline::ProcessPendingMaterials() {
             Msg("[MaterialPipeline] Queued %d materials for async ToPBR processing\n", queued);
         }
     }
+    
+    // Retry pending categorizations for textures that didn't have hashes ready
+    AutoCategorisation::RetryPendingCategories();
     
     // Write USDA if background processing has completed some materials
     ToPBR::TextureProcessor::Instance().WriteUSDAIfNeeded();

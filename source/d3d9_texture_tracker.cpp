@@ -359,7 +359,8 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                         // Notify MaterialPipeline of new material for unified processing
                         // Only for Stage 0 to avoid double-processing
                         // The pipeline handles: ShaderFixes → HashCollisionFixer → AutoCategorisation → ToPBR
-                        if (Stage == 0 && hash != 0) {
+                        // NOTE: We notify even if hash is 0 - the pipeline will handle retry
+                        if (Stage == 0) {
                             MaterialPipeline::Pipeline::OnNewMaterialDetected(
                                 tracker.m_currentMaterialName, hash, p2DTexture);
                         }
