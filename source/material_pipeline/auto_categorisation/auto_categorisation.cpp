@@ -16,6 +16,7 @@
 #include <Windows.h>
 #include <remix/remix.h>
 #include <algorithm>
+#include <cstdio>
 #include <GarrysMod/Lua/Interface.h>
 
 using namespace GarrysMod::Lua;
@@ -40,6 +41,13 @@ static bool s_initialized = false;
 
 // Filesystem access
 static IFileSystem* s_pFileSystem = nullptr;
+
+// Helper function to convert hash to string format for Remix API
+static std::string HashToString(uint64_t hash) {
+    char buffer[32];
+    snprintf(buffer, sizeof(buffer), "0x%llX", (unsigned long long)hash);
+    return std::string(buffer);
+}
 
 static IFileSystem* GetFileSystem() {
     if (s_pFileSystem) return s_pFileSystem;
@@ -491,27 +499,26 @@ void ApplyToHash(uint64_t hash, uint32_t flags, const std::string& materialName)
     s_hashToCategoryFlags[hash] = flags;
     
     // Convert hash to string format for Remix API
-    char hashStr[32];
-    sprintf_s(hashStr, "0x%llX", hash);
+    std::string hashStr = HashToString(hash);
     
     // Apply to Remix API
     if (flags & CategoryFlags::SKY) {
-        s_remix->AddTextureHash("rtx.skyBoxTextures", hashStr);
+        s_remix->AddTextureHash("rtx.skyBoxTextures", hashStr.c_str());
     }
     if (flags & CategoryFlags::IGNORE) {
-        s_remix->AddTextureHash("rtx.ignoreTextures", hashStr);
+        s_remix->AddTextureHash("rtx.ignoreTextures", hashStr.c_str());
     }
     if (flags & CategoryFlags::PARTICLE) {
-        s_remix->AddTextureHash("rtx.particleTextures", hashStr);
+        s_remix->AddTextureHash("rtx.particleTextures", hashStr.c_str());
     }
     if (flags & CategoryFlags::DECAL_STATIC) {
-        s_remix->AddTextureHash("rtx.decalTextures", hashStr);
+        s_remix->AddTextureHash("rtx.decalTextures", hashStr.c_str());
     }
     if (flags & CategoryFlags::ANIMATED_WATER) {
-        s_remix->AddTextureHash("rtx.animatedWaterTextures", hashStr);
+        s_remix->AddTextureHash("rtx.animatedWaterTextures", hashStr.c_str());
     }
     if (flags & CategoryFlags::EMISSIVE) {
-        s_remix->AddTextureHash("rtx.legacyEmissiveTextures", hashStr);
+        s_remix->AddTextureHash("rtx.legacyEmissiveTextures", hashStr.c_str());
     }
     
     if (s_config.debugOutput) {
@@ -630,21 +637,20 @@ int RetryPendingCategories() {
             s_hashToCategoryFlags[hash] = it->categoryFlags;
             
             // Convert hash to string format for Remix API
-            char hashStr[32];
-            sprintf_s(hashStr, "0x%llX", hash);
+            std::string hashStr = HashToString(hash);
             
             // Apply to Remix API
             if (it->categoryFlags & CategoryFlags::SKY) {
-                s_remix->AddTextureHash("rtx.skyBoxTextures", hashStr);
+                s_remix->AddTextureHash("rtx.skyBoxTextures", hashStr.c_str());
             }
             if (it->categoryFlags & CategoryFlags::PARTICLE) {
-                s_remix->AddTextureHash("rtx.particleTextures", hashStr);
+                s_remix->AddTextureHash("rtx.particleTextures", hashStr.c_str());
             }
             if (it->categoryFlags & CategoryFlags::DECAL_STATIC) {
-                s_remix->AddTextureHash("rtx.decalTextures", hashStr);
+                s_remix->AddTextureHash("rtx.decalTextures", hashStr.c_str());
             }
             if (it->categoryFlags & CategoryFlags::EMISSIVE) {
-                s_remix->AddTextureHash("rtx.legacyEmissiveTextures", hashStr);
+                s_remix->AddTextureHash("rtx.legacyEmissiveTextures", hashStr.c_str());
             }
             
             if (s_config.debugOutput) {
