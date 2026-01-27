@@ -970,7 +970,7 @@ bool TextureProcessor::UploadTextureToRemix(const ConvertedTexture& texture,
 }
 
 uint64_t TextureProcessor::ConvertAndUploadTexture(const std::string& vtfPath, bool isNormalMap) {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     
     // Check cache
     auto it = m_uploadedTextures.find(vtfPath);
@@ -3443,7 +3443,7 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
     
     // Check if we've already created a material for this hash (thread-safe)
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         if (m_processedMaterialInfo.find(textureHash) != m_processedMaterialInfo.end()) {
             return true; // Already done
         }
@@ -3479,7 +3479,7 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
         ProcessedMaterial result = ExoPBR::ProcessTextures(props, textureHash, ctx);
         if (result.success) {
             CopyProcessedMaterial(result, matInfo);
-            std::lock_guard<std::mutex> lock(m_mutex);
+            std::lock_guard<std::recursive_mutex> lock(m_mutex);
             m_processedMaterialInfo[textureHash] = matInfo;
             m_stats.materialsProcessed++;
             return true;
@@ -3491,7 +3491,7 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
         ProcessedMaterial result = GPBR::ProcessTextures(props, textureHash, ctx);
         if (result.success) {
             CopyProcessedMaterial(result, matInfo);
-            std::lock_guard<std::mutex> lock(m_mutex);
+            std::lock_guard<std::recursive_mutex> lock(m_mutex);
             m_processedMaterialInfo[textureHash] = matInfo;
             m_stats.materialsProcessed++;
             return true;
@@ -3503,7 +3503,7 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
         ProcessedMaterial result = MWBPBR::ProcessTextures(props, textureHash, ctx);
         if (result.success) {
             CopyProcessedMaterial(result, matInfo);
-            std::lock_guard<std::mutex> lock(m_mutex);
+            std::lock_guard<std::recursive_mutex> lock(m_mutex);
             m_processedMaterialInfo[textureHash] = matInfo;
             m_stats.materialsProcessed++;
             return true;
@@ -3515,7 +3515,7 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
         ProcessedMaterial result = BFTPseudoPBR::ProcessTextures(props, textureHash, ctx);
         if (result.success) {
             CopyProcessedMaterial(result, matInfo);
-            std::lock_guard<std::mutex> lock(m_mutex);
+            std::lock_guard<std::recursive_mutex> lock(m_mutex);
             m_processedMaterialInfo[textureHash] = matInfo;
             m_stats.materialsProcessed++;
             return true;
@@ -3532,7 +3532,7 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
         
         // Store for USDA generation (thread-safe)
         {
-            std::lock_guard<std::mutex> lock(m_mutex);
+            std::lock_guard<std::recursive_mutex> lock(m_mutex);
             m_processedMaterialInfo[textureHash] = matInfo;
             m_stats.materialsProcessed++;
         }
@@ -3566,7 +3566,7 @@ int TextureProcessor::ProcessTrackedMaterialsBatch(int maxBatch) {
     
     auto startTime = std::chrono::high_resolution_clock::now();
     
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     
     if (!m_initialized) {
         Warning("[MaterialPipeline::ToPBR] Not initialized\n");
@@ -3706,17 +3706,17 @@ int TextureProcessor::ProcessTrackedMaterialsBatch(int maxBatch) {
 }
 
 bool TextureProcessor::IsMaterialProcessed(const std::string& materialName) const {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     return m_processedMaterials.find(materialName) != m_processedMaterials.end();
 }
 
 TextureProcessor::Stats TextureProcessor::GetStats() const {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     return m_stats;
 }
 
 void TextureProcessor::ClearCache() {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     
     // Clear all tracking data for reprocessing.
     // Note: USDA files remain on disk and need game restart to reload.
@@ -3730,7 +3730,7 @@ void TextureProcessor::ClearCache() {
 }
 
 bool TextureProcessor::ProcessSingleMaterial(const std::string& materialName) {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     
     if (!m_initialized) {
         return false;
@@ -3807,7 +3807,7 @@ void TextureProcessor::OnNewMaterialDetected(const std::string& materialName, ui
     
     // Skip already processed
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         if (m_processedMaterials.find(materialName) != m_processedMaterials.end()) {
             return;
         }
@@ -3832,7 +3832,7 @@ void TextureProcessor::OnNewMaterialDetected(const std::string& materialName, ui
 }
 
 void TextureProcessor::WriteUSDAIfNeeded() {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     
     if (!m_needsUSDAUpdate || m_processedMaterialInfo.empty()) {
         return;
@@ -4000,7 +4000,7 @@ void TextureProcessor::WorkerThreadFunc() {
 bool TextureProcessor::ProcessMaterialOnWorker(const std::string& materialName) {
     // Check if already processed (lock-free check first, then verify under lock)
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         if (m_processedMaterials.find(materialName) != m_processedMaterials.end()) {
             return false; // Already processed
         }
@@ -4008,7 +4008,7 @@ bool TextureProcessor::ProcessMaterialOnWorker(const std::string& materialName) 
     
     // Skip internal materials
     if (materialName.find("__") == 0 || materialName.find("vgui") == 0) {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         m_processedMaterials.insert(materialName);
         return false;
     }
@@ -4016,7 +4016,7 @@ bool TextureProcessor::ProcessMaterialOnWorker(const std::string& materialName) 
     // Extract PBR properties (this reads from Source Engine - thread safe for reading)
     MaterialPBRProperties props;
     if (!ExtractMaterialPBR(materialName, props)) {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         m_processedMaterials.insert(materialName);
         return false;
     }
@@ -4026,7 +4026,7 @@ bool TextureProcessor::ProcessMaterialOnWorker(const std::string& materialName) 
         !props.normalMapAlphaEnvMapMask && !props.hasPhongExponentTexture &&
         !props.hasBaseMapAlphaPhongMask && !props.hasBaseAlphaEnvMapMask &&
         !props.hasEnvMap && !props.hasEnvMapTint && !props.isGlass) {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         m_processedMaterials.insert(materialName);
         return false;
     }
@@ -4036,7 +4036,7 @@ bool TextureProcessor::ProcessMaterialOnWorker(const std::string& materialName) 
         D3D9TextureTracker::Instance().GetTextureVariantsForMaterial(materialName.c_str());
     
     if (!variants || variants->empty()) {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         m_processedMaterials.insert(materialName);
         return false;
     }
@@ -4053,7 +4053,7 @@ bool TextureProcessor::ProcessMaterialOnWorker(const std::string& materialName) 
     }
     
     if (textureHash == 0) {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         m_processedMaterials.insert(materialName);
         return false;
     }
@@ -4065,7 +4065,7 @@ bool TextureProcessor::ProcessMaterialOnWorker(const std::string& materialName) 
     
     // Mark as processed
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         m_processedMaterials.insert(materialName);
         
         if (success) {
@@ -4105,7 +4105,7 @@ int TextureProcessor::QueueMaterialsForProcessing() {
     // Quick check which materials need processing
     std::vector<std::string> materialsToQueue;
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         for (const std::string& matName : cachedMaterials) {
             // Skip already processed
             if (m_processedMaterials.find(matName) != m_processedMaterials.end()) {
@@ -4153,7 +4153,7 @@ bool TextureProcessor::AppendMaterialsToUSDA() {
     size_t totalProcessed = 0;
     size_t alreadyWritten = 0;
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         totalProcessed = m_processedMaterialInfo.size();
         alreadyWritten = m_materialsWrittenToUSDA.size();
         
@@ -4192,7 +4192,7 @@ bool TextureProcessor::AppendMaterialsToUSDA() {
         }
         
         // Write full materials.usda with all materials
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         if (!USDA::WriteMaterialsUSDAFile(modDir, m_outputDirectory, m_processedMaterialInfo, m_debugOutput)) {
             Warning("[MaterialPipeline::ToPBR] Failed to write materials.usda\n");
             return false;
@@ -4217,7 +4217,7 @@ bool TextureProcessor::AppendMaterialsToUSDA() {
     
     // Write full materials.usda with all materials (existing + pending)
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         if (!USDA::WriteMaterialsUSDAFile(modDir, m_outputDirectory, m_processedMaterialInfo, m_debugOutput)) {
             Warning("[MaterialPipeline::ToPBR] Failed to write materials.usda\n");
             return false;

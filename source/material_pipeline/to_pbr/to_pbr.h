@@ -507,7 +507,8 @@ private:
     bool m_needsUSDAUpdate;
     
     // Statistics
-    mutable std::mutex m_mutex;
+    // NOTE: Using recursive_mutex because ProcessSingleMaterial locks, then calls CreatePBRMaterial which also locks
+    mutable std::recursive_mutex m_mutex;
     Stats m_stats;
     
     // =========================================================================
