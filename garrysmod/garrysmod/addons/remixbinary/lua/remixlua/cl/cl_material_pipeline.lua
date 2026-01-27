@@ -511,7 +511,6 @@ local function ProcessMaterial(materialName)
         " Cat:", s2Result and "Y" or "N",
         " ToPBR:", s3Result and "Y" or "N", ")")
 end
-end
 
 --[[
     Process a batch of materials from the queue.
