@@ -3978,14 +3978,21 @@ void TextureProcessor::WorkerThreadFunc() {
         
         // Check if queue is empty - if so, write pending USDA materials
         bool queueEmpty = false;
+        size_t queueSize = 0;
         {
             std::lock_guard<std::mutex> lock(m_queueMutex);
             queueEmpty = m_materialQueue.empty();
+            queueSize = m_materialQueue.size();
         }
         
-        if (queueEmpty) {
+        // Write USDA if queue is empty OR after every 10 materials processed
+        // This ensures USDA is written periodically even during continuous spawning
+        int processedSinceLastWrite = m_lastProcessedCount.load(std::memory_order_relaxed);
+        if (queueEmpty || (processedSinceLastWrite > 0 && processedSinceLastWrite % 10 == 0)) {
             AppendMaterialsToUSDA();
-            m_backgroundProcessing.store(false, std::memory_order_relaxed);
+            if (queueEmpty) {
+                m_backgroundProcessing.store(false, std::memory_order_relaxed);
+            }
         }
     }
     
@@ -4073,8 +4080,11 @@ bool TextureProcessor::ProcessMaterialOnWorker(const std::string& materialName) 
         }
     }
     
-    if (success && m_debugOutput) {
-        Msg("[MaterialPipeline::ToPBR] [BG] Processed: %s (hash 0x%llX)\n", 
+    // Always log when a material is processed (not just in debug mode) so user knows it's working
+    if (success) {
+        Msg("[MaterialPipeline::ToPBR] Converted: %s\n", materialName.c_str());
+    } else if (m_debugOutput) {
+        Msg("[MaterialPipeline::ToPBR] [BG] Skipped: %s (hash 0x%llX)\n", 
             materialName.c_str(), textureHash);
     }
     
