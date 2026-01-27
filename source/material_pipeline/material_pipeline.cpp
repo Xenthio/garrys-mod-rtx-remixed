@@ -299,38 +299,16 @@ int Pipeline::QueueAllMaterials() {
     return ToPBR::TextureProcessor::Instance().QueueMaterialsForProcessing();
 }
 
-bool Pipeline::ProcessMaterial(const std::string& materialName) {
-    if (!m_initialized) {
-        Warning("[MaterialPipeline] Not initialized\n");
-        return false;
-    }
-    
-    // =========================================================================
-    // UNIFIED PIPELINE: Process material through all stages in order
-    // =========================================================================
-    // Stage 1: ShaderFixes   - Handle special shaders (Refract, proxies, etc.)
-    // Stage 2: HashCollision - Detect solid-color texture hash collisions
-    // Stage 3: AutoCategory  - Classify material (particle, decal, emissive, etc.)
-    // Stage 4: ToPBR         - Convert VTF→DDS and generate PBR materials
-    // =========================================================================
-    
-    if (m_config.debugOutput) {
-        Msg("[MaterialPipeline] Processing material through pipeline: %s\n", materialName.c_str());
-    }
-    
-    // Get the IMaterial for stages that need it
-    IMaterial* material = nullptr;
-    extern IMaterialSystem* materials;
-    if (materials) {
-        material = materials->FindMaterial(materialName.c_str(), TEXTURE_GROUP_OTHER, false);
-        if (material && material->IsErrorMaterial()) {
-            material = nullptr;
-        }
-    }
-    
-    // Get texture pointer for stages that need it
-    IDirect3DTexture9* texture = D3D9TextureTracker::Instance().GetTextureForMaterial(materialName.c_str());
-    
+// =========================================================================
+// Internal Helper: Process Stages 1-3 for a single material
+// =========================================================================
+// This is the core processing logic shared by ProcessMaterial() and 
+// ProcessPendingMaterials(). Stage 4 (ToPBR) is handled separately since
+// it can be run synchronously or queued for async processing.
+// =========================================================================
+void Pipeline::ProcessMaterialStages(const std::string& materialName, 
+                                      IMaterial* material, 
+                                      IDirect3DTexture9* texture) {
     // -------------------------------------------------------------------------
     // STAGE 1: ShaderFixes
     // -------------------------------------------------------------------------
@@ -347,7 +325,6 @@ bool Pipeline::ProcessMaterial(const std::string& materialName) {
     // STAGE 2: HashCollisionFixer
     // -------------------------------------------------------------------------
     // Detect solid-color textures that would cause hash collisions in Remix
-    // Extract $basetexture path from material for solid color checking
     std::string baseTexturePath;
     if (material) {
         bool found = false;
@@ -380,9 +357,47 @@ bool Pipeline::ProcessMaterial(const std::string& materialName) {
                 materialName.c_str(), categoryFlags);
         }
     }
+}
+
+bool Pipeline::ProcessMaterial(const std::string& materialName) {
+    if (!m_initialized) {
+        Warning("[MaterialPipeline] Not initialized\n");
+        return false;
+    }
+    
+    // =========================================================================
+    // UNIFIED PIPELINE: Process material through all stages in order (BLOCKING)
+    // =========================================================================
+    // Stage 1: ShaderFixes   - Handle special shaders (Refract, proxies, etc.)
+    // Stage 2: HashCollision - Detect solid-color texture hash collisions
+    // Stage 3: AutoCategory  - Classify material (particle, decal, emissive, etc.)
+    // Stage 4: ToPBR         - Convert VTF→DDS and generate PBR materials
+    // =========================================================================
+    
+    if (m_config.debugOutput) {
+        Msg("[MaterialPipeline] Processing material through pipeline (blocking): %s\n", materialName.c_str());
+    }
+    
+    // Get the IMaterial for stages that need it
+    IMaterial* material = nullptr;
+    extern IMaterialSystem* materials;
+    if (materials) {
+        material = materials->FindMaterial(materialName.c_str(), TEXTURE_GROUP_OTHER, false);
+        if (material && material->IsErrorMaterial()) {
+            material = nullptr;
+        }
+    }
+    
+    // Get texture pointer for stages that need it
+    IDirect3DTexture9* texture = D3D9TextureTracker::Instance().GetTextureForMaterial(materialName.c_str());
     
     // -------------------------------------------------------------------------
-    // STAGE 4: ToPBR
+    // STAGES 1-3: ShaderFixes, HashCollision, AutoCategorisation
+    // -------------------------------------------------------------------------
+    ProcessMaterialStages(materialName, material, texture);
+    
+    // -------------------------------------------------------------------------
+    // STAGE 4: ToPBR (BLOCKING - runs synchronously)
     // -------------------------------------------------------------------------
     // Convert VTF textures to DDS, extract PBR properties, generate USDA
     bool result = false;
@@ -446,7 +461,7 @@ int Pipeline::ProcessPendingMaterials() {
     extern IMaterialSystem* materials;
     
     for (const auto& pending : toProcess) {
-        // Fire callback for material detection tracking (but don't process yet)
+        // Fire callback for material detection tracking
         if (m_onDetected) {
             m_onDetected(pending.name, pending.hash);
         }
@@ -467,42 +482,9 @@ int Pipeline::ProcessPendingMaterials() {
             IDirect3DTexture9* texture = D3D9TextureTracker::Instance().GetTextureForMaterial(pending.name.c_str());
             
             // -------------------------------------------------------------------------
-            // STAGE 1: ShaderFixes (FAST - runs synchronously)
+            // STAGES 1-3: ShaderFixes, HashCollision, AutoCategorisation (FAST)
             // -------------------------------------------------------------------------
-            if (ShaderFixes::NeedsFix(pending.name, material)) {
-                auto fixResult = ShaderFixes::ApplyFix(pending.name, material);
-                if (fixResult.applied && m_config.debugOutput) {
-                    Msg("[MaterialPipeline] Stage 1 (ShaderFixes): %s - %s\n", 
-                        pending.name.c_str(), fixResult.description.c_str());
-                }
-            }
-            
-            // -------------------------------------------------------------------------
-            // STAGE 2: HashCollisionFixer (FAST - runs synchronously)
-            // -------------------------------------------------------------------------
-            std::string baseTexturePath;
-            if (material) {
-                bool found = false;
-                IMaterialVar* pVar = material->FindVar("$basetexture", &found, false);
-                if (found && pVar) {
-                    const char* texPath = pVar->GetStringValue();
-                    if (texPath && texPath[0]) {
-                        baseTexturePath = texPath;
-                    }
-                }
-            }
-            
-            if (!baseTexturePath.empty()) {
-                HashCollisionFixer::CheckMaterial(
-                    m_fileSystem, pending.name, baseTexturePath, m_config.debugOutput);
-            }
-            
-            // -------------------------------------------------------------------------
-            // STAGE 3: AutoCategorisation (FAST - runs synchronously)
-            // -------------------------------------------------------------------------
-            if (texture) {
-                AutoCategorisation::DetectAndApply(pending.name, material, texture);
-            }
+            ProcessMaterialStages(pending.name, material, texture);
             
             // Note: Stage 4 (ToPBR) will be processed asynchronously below
             processed++;

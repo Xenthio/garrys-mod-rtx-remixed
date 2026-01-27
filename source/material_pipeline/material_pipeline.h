@@ -326,6 +326,14 @@ private:
     // Apply current config to internal components
     void ApplyConfig();
     
+    // -------------------------------------------------------------------------
+    // Internal processing helper
+    // -------------------------------------------------------------------------
+    // Process stages 1-3 (ShaderFixes, HashCollision, AutoCategorisation) for a material.
+    // This is the core logic shared by ProcessMaterial() and ProcessPendingMaterials().
+    // Stage 4 (ToPBR) is handled separately since it can be sync or async.
+    void ProcessMaterialStages(const std::string& materialName, IMaterial* material, IDirect3DTexture9* texture);
+    
     // Internal state
     bool m_initialized = false;
     PipelineConfig m_config;
