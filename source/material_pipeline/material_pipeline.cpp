@@ -368,10 +368,19 @@ bool Pipeline::ProcessMaterial(const std::string& materialName) {
     // STAGE 4: ToPBR
     // -------------------------------------------------------------------------
     // Convert VTF textures to DDS, extract PBR properties, generate USDA
-    bool result = ToPBR::TextureProcessor::Instance().ProcessSingleMaterial(materialName);
-    if (m_config.debugOutput) {
-        Msg("[MaterialPipeline] Stage 4 (ToPBR): %s - %s\n", 
-            materialName.c_str(), result ? "success" : "failed/skipped");
+    bool result = false;
+    try {
+        result = ToPBR::TextureProcessor::Instance().ProcessSingleMaterial(materialName);
+        if (m_config.debugOutput) {
+            Msg("[MaterialPipeline] Stage 4 (ToPBR): %s - %s\n", 
+                materialName.c_str(), result ? "success" : "failed/skipped");
+        }
+    } catch (const std::exception& e) {
+        Warning("[MaterialPipeline] Stage 4 (ToPBR) exception for %s: %s\n", 
+            materialName.c_str(), e.what());
+    } catch (...) {
+        Warning("[MaterialPipeline] Stage 4 (ToPBR) unknown exception for %s\n", 
+            materialName.c_str());
     }
     
     // =========================================================================
@@ -424,8 +433,14 @@ int Pipeline::ProcessPendingMaterials() {
         }
     }
     
-    if (m_config.debugOutput && processed > 0) {
-        Msg("[MaterialPipeline] Processed %d pending materials\n", processed);
+    // Write USDA after processing batch of materials
+    // This ensures PBR materials are written to disk for RTX Remix
+    if (processed > 0) {
+        ToPBR::TextureProcessor::Instance().WriteUSDAIfNeeded();
+        
+        if (m_config.debugOutput) {
+            Msg("[MaterialPipeline] Processed %d pending materials, USDA updated\n", processed);
+        }
     }
     
     return processed;
@@ -643,7 +658,15 @@ int Pipeline::ProcessAllMaterialsThroughPipeline() {
         }
     }
     
-    Msg("[MaterialPipeline] Processed %d materials through unified pipeline\n", processed);
+    // Write USDA after processing all materials
+    // This ensures all PBR materials are written to disk for RTX Remix
+    if (processed > 0) {
+        ToPBR::TextureProcessor::Instance().WriteUSDAIfNeeded();
+        Msg("[MaterialPipeline] Processed %d materials through unified pipeline, USDA updated\n", processed);
+    } else {
+        Msg("[MaterialPipeline] Processed %d materials through unified pipeline\n", processed);
+    }
+    
     return processed;
 }
 
