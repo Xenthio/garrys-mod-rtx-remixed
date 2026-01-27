@@ -1165,183 +1165,63 @@ LUA_FUNCTION(RemixMaterial_SetDebugOutput) {
     return 1;
 }
 
-// Lua function: RemixMaterial.GetHashCollisions()
-// Returns a table of hash collisions: { ["0xHASH"] = {"material1", "material2", ...}, ... }
-// Only returns hashes that have multiple materials (actual collisions)
+// NOTE: Hash collision and solid-color detection functions have been moved to the HashCollisionFixer module.
+// The functions below are deprecated stubs for backwards compatibility.
+// Use HashCollisionFixer.CheckMaterial(), HashCollisionFixer.GetMaterialsNeedingFix() etc. instead.
+
+// Lua function: RemixMaterial.GetHashCollisions() - DEPRECATED, returns empty table
 LUA_FUNCTION(RemixMaterial_GetHashCollisions) {
-    auto collisions = D3D9TextureTracker::Instance().GetHashCollisions();
-    
-    // Create result table
+    // Deprecated - use HashCollisionFixer module instead
     LUA->CreateTable();
-    
-    for (const auto& pair : collisions) {
-        // Create hash string key
-        char hashStr[32];
-        sprintf_s(hashStr, "0x%llX", pair.first);
-        
-        // Create array of material names
-        LUA->CreateTable();
-        int idx = 1;
-        for (const auto& materialName : pair.second) {
-            LUA->PushNumber(idx);
-            LUA->PushString(materialName.c_str());
-            LUA->SetTable(-3);
-            idx++;
-        }
-        
-        // Set the array as the value for this hash key
-        LUA->SetField(-2, hashStr);
-    }
-    
     return 1;
 }
 
-// Lua function: RemixMaterial.GetMaterialCollisions(materialName)
-// Returns a table of material names that have the same texture hash as the given material
-// Returns empty table if no collisions
+// Lua function: RemixMaterial.GetMaterialCollisions(materialName) - DEPRECATED, returns empty table
 LUA_FUNCTION(RemixMaterial_GetMaterialCollisions) {
-    if (!LUA->IsType(1, Type::String)) {
-        LUA->ThrowError("RemixMaterial.GetMaterialCollisions: Expected string for material name");
-        return 0;
-    }
-    
-    const char* materialName = LUA->GetString(1);
-    auto collisions = D3D9TextureTracker::Instance().GetMaterialCollisions(materialName);
-    
-    // Create result table (array of material names)
+    // Deprecated - use HashCollisionFixer module instead
     LUA->CreateTable();
-    int idx = 1;
-    for (const auto& name : collisions) {
-        LUA->PushNumber(idx);
-        LUA->PushString(name.c_str());
-        LUA->SetTable(-3);
-        idx++;
-    }
-    
     return 1;
 }
 
-// Lua function: RemixMaterial.HasHashCollision(materialName)
-// Returns true if the material's texture hash collides with another material
+// Lua function: RemixMaterial.HasHashCollision(materialName) - DEPRECATED, returns false
 LUA_FUNCTION(RemixMaterial_HasHashCollision) {
-    if (!LUA->IsType(1, Type::String)) {
-        LUA->ThrowError("RemixMaterial.HasHashCollision: Expected string for material name");
-        return 0;
-    }
-    
-    const char* materialName = LUA->GetString(1);
-    auto collisions = D3D9TextureTracker::Instance().GetMaterialCollisions(materialName);
-    
-    LUA->PushBool(!collisions.empty());
+    // Deprecated - use HashCollisionFixer module instead
+    LUA->PushBool(false);
     return 1;
 }
 
-// Lua function: RemixMaterial.IsSolidColor(materialName)
-// Returns true if the material's texture is a solid color (all pixels identical)
-// Also returns the color as a second value (RGB number)
+// Lua function: RemixMaterial.IsSolidColor(materialName) - DEPRECATED, returns false
 LUA_FUNCTION(RemixMaterial_IsSolidColor) {
-    if (!LUA->IsType(1, Type::String)) {
-        LUA->ThrowError("RemixMaterial.IsSolidColor: Expected string for material name");
-        return 0;
-    }
-    
-    const char* materialName = LUA->GetString(1);
-    uint32_t color = 0;
-    bool isSolid = D3D9TextureTracker::Instance().IsMaterialSolidColor(materialName, &color);
-    
-    LUA->PushBool(isSolid);
-    
-    if (isSolid) {
-        // Return color as RGB values (0-255)
-        LUA->CreateTable();
-        LUA->PushNumber((color >> 16) & 0xFF);
-        LUA->SetField(-2, "r");
-        LUA->PushNumber((color >> 8) & 0xFF);
-        LUA->SetField(-2, "g");
-        LUA->PushNumber(color & 0xFF);
-        LUA->SetField(-2, "b");
-        return 2;
-    }
-    
+    // Deprecated - use HashCollisionFixer.CheckSolidColor() instead
+    LUA->PushBool(false);
     return 1;
 }
 
-// Lua function: RemixMaterial.GetSolidColorMaterials()
-// Returns a table of material names that have solid-color textures and need fixing
-// Only returns materials that haven't been marked as fixed yet
+// Lua function: RemixMaterial.GetSolidColorMaterials() - DEPRECATED, returns empty table
 LUA_FUNCTION(RemixMaterial_GetSolidColorMaterials) {
-    auto materials = D3D9TextureTracker::Instance().GetSolidColorMaterials();
-    
-    // Create result table (array of material names)
+    // Deprecated - use HashCollisionFixer.GetMaterialsNeedingFix() instead
     LUA->CreateTable();
-    int idx = 1;
-    for (const auto& name : materials) {
-        LUA->PushNumber(idx);
-        LUA->PushString(name.c_str());
-        LUA->SetTable(-3);
-        idx++;
-    }
-    
     return 1;
 }
 
-// Lua function: RemixMaterial.MarkMaterialFixed(materialName)
-// Marks a material as "fixed" so it won't be returned by GetSolidColorMaterials again
+// Lua function: RemixMaterial.MarkMaterialFixed(materialName) - DEPRECATED, no-op
 LUA_FUNCTION(RemixMaterial_MarkMaterialFixed) {
-    if (!LUA->IsType(1, Type::String)) {
-        LUA->ThrowError("RemixMaterial.MarkMaterialFixed: Expected string for material name");
-        return 0;
-    }
-    
-    const char* materialName = LUA->GetString(1);
-    D3D9TextureTracker::Instance().MarkMaterialFixed(materialName);
-    
+    // Deprecated - use HashCollisionFixer.MarkMaterialFixed() instead
     LUA->PushBool(true);
     return 1;
 }
 
-// Lua function: RemixMaterial.IsMaterialFixed(materialName)
-// Returns true if a material has been marked as fixed
+// Lua function: RemixMaterial.IsMaterialFixed(materialName) - DEPRECATED, returns false
 LUA_FUNCTION(RemixMaterial_IsMaterialFixed) {
-    if (!LUA->IsType(1, Type::String)) {
-        LUA->ThrowError("RemixMaterial.IsMaterialFixed: Expected string for material name");
-        return 0;
-    }
-    
-    const char* materialName = LUA->GetString(1);
-    bool isFixed = D3D9TextureTracker::Instance().IsMaterialFixed(materialName);
-    
-    LUA->PushBool(isFixed);
+    // Deprecated - use HashCollisionFixer.IsMaterialFixed() instead
+    LUA->PushBool(false);
     return 1;
 }
 
-// Lua function: RemixMaterial.ProcessPendingSolidColors()
-// Processes all pending solid-color materials and fires the "RTX_SolidColorDetected" hook for each
-// Returns the number of materials processed
-// This should be called from a Think hook or timer to process materials on the main thread
+// Lua function: RemixMaterial.ProcessPendingSolidColors() - DEPRECATED, returns 0
 LUA_FUNCTION(RemixMaterial_ProcessPendingSolidColors) {
-    auto materials = D3D9TextureTracker::Instance().GetSolidColorMaterials();
-    
-    int count = 0;
-    for (const auto& materialName : materials) {
-        // Fire hook: hook.Call("RTX_SolidColorDetected", nil, materialName)
-        LUA->PushSpecial(SPECIAL_GLOB);     // Push _G
-        LUA->GetField(-1, "hook");          // Push hook
-        LUA->GetField(-1, "Call");          // Push hook.Call
-        LUA->Remove(-2);                    // Remove hook table
-        LUA->Remove(-2);                    // Remove _G
-        
-        LUA->PushString("RTX_SolidColorDetected");  // Hook name
-        LUA->PushNil();                             // Gamemode table (nil)
-        LUA->PushString(materialName.c_str());      // Material name argument
-        
-        // Call with 3 args (hookName, gm, materialName), expect 0 returns
-        LUA->Call(3, 0);
-        
-        count++;
-    }
-    
-    LUA->PushNumber(count);
+    // Deprecated - use HashCollisionFixer module instead
+    LUA->PushNumber(0);
     return 1;
 }
 

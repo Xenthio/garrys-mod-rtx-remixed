@@ -194,14 +194,16 @@ size_t GetPendingCount() {
 // Lua Bindings
 // =========================================================================
 
-// Get filesystem from Source Engine
+// Get filesystem from Source Engine (defined in module.cpp)
+// This is the standard way to access IFileSystem in this codebase.
 extern IFileSystem* g_pFullFileSystem;
 
-// Lua: HashCollisionFixer.CheckMaterial(materialName, texturePath)
+// Lua: HashCollisionFixer.CheckMaterial(materialName, texturePath, [debugOutput])
+// debugOutput is optional, defaults to false
 static int Lua_CheckMaterial(lua_State* L) {
     const char* materialName = LUA->CheckString(1);
     const char* texturePath = LUA->CheckString(2);
-    bool debug = LUA->GetBool(3);
+    bool debug = LUA->IsType(3, GarrysMod::Lua::Type::Bool) ? LUA->GetBool(3) : false;
     
     bool result = CheckMaterial(g_pFullFileSystem, materialName, texturePath, debug);
     LUA->PushBool(result);

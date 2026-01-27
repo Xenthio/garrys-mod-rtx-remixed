@@ -113,8 +113,8 @@ local function FixSolidColorMaterial(matName)
             fixCount = fixCount + 1
             
             -- Tell C++ we've fixed this material
-            if RemixMaterial and RemixMaterial.MarkMaterialFixed then
-                RemixMaterial.MarkMaterialFixed(matName)
+            if HashCollisionFixer and HashCollisionFixer.MarkMaterialFixed then
+                HashCollisionFixer.MarkMaterialFixed(matName)
             end
             
             if debug_mode:GetBool() then

@@ -113,37 +113,6 @@ public:
     // Enable/disable debug output
     void SetDebugOutput(bool enabled);
     
-    // Create a modified copy of a texture with slightly different pixels (for hash collision fix)
-    // Returns the new texture and its hash, or nullptr/0 if failed
-    // The modification is based on materialName to ensure unique hashes for different materials
-    IDirect3DTexture9* CreateModifiedTexture(IDirect3DTexture9* pOriginal, const std::string& materialName, uint64_t* outHash);
-    
-    // Check for hash collision and fix if possible (returns the fixed hash, or original if no fix needed/possible)
-    // This is called automatically when new textures are detected, independent of LegacyTextureProcessor
-    uint64_t CheckAndFixHashCollision(IDirect3DTexture9* pTexture, const std::string& materialName, uint64_t originalHash);
-    
-    // Get hash collision groups: returns a map of hash -> list of material names that share that hash
-    // Only returns hashes that have multiple materials (actual collisions)
-    std::unordered_map<uint64_t, std::vector<std::string>> GetHashCollisions() const;
-    
-    // Check if a specific material has a hash collision with another material
-    // Returns the other material name(s) if collision exists, empty vector otherwise
-    std::vector<std::string> GetMaterialCollisions(const std::string& materialName) const;
-    
-    // Check if a material's texture is a solid color (all pixels identical)
-    // Returns true if solid color, also outputs the color if outColor is not null
-    bool IsMaterialSolidColor(const std::string& materialName, uint32_t* outColor = nullptr) const;
-    
-    // Get all solid-color materials that have been detected (for Lua to fix)
-    // Returns materials that haven't been marked as "fixed" yet
-    std::vector<std::string> GetSolidColorMaterials() const;
-    
-    // Mark a material as "fixed" so it won't be returned by GetSolidColorMaterials again
-    void MarkMaterialFixed(const std::string& materialName);
-    
-    // Check if a material has been marked as fixed
-    bool IsMaterialFixed(const std::string& materialName) const;
-    
     // Get the D3D9 device (for texture creation)
     IDirect3DDevice9Ex* GetDevice() const { return m_pDevice; }
 
@@ -199,24 +168,11 @@ private:
     // Hash to category flags mapping
     std::unordered_map<uint64_t, uint32_t> m_hashToCategoryFlags;
     
-    // Hash to material names mapping (for collision detection)
-    // Maps a hash to ALL materials that use textures with that hash
-    std::unordered_map<uint64_t, std::vector<std::string>> m_hashToMaterialNames;
-    
-    // Modified textures created for collision fixes (keep references to prevent cleanup)
-    std::vector<IDirect3DTexture9*> m_modifiedTextures;
-    
     // Pending categorizations (textures that returned hash=0)
     std::vector<PendingCategory> m_pendingCategories;
     
     // World texture names from BSP (for DECAL_STATIC marking)
     std::unordered_set<std::string> m_worldTextureNames;
-    
-    // Solid-color materials detected (for Lua to fix)
-    std::unordered_set<std::string> m_solidColorMaterials;
-    
-    // Materials that have been fixed by Lua (won't be returned again)
-    std::unordered_set<std::string> m_fixedMaterials;
     
     // Category enable flags
     bool m_enableAutoCategorization = true;     // Master switch

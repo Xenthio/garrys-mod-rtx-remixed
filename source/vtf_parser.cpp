@@ -174,8 +174,8 @@ size_t GetTotalMipmapSize(uint32_t width, uint32_t height, uint8_t mipmapCount, 
     
     for (int i = 0; i < mipmapCount; i++) {
         totalSize += GetImageDataSize(w, h, format);
-        w = max(1u, w / 2);
-        h = max(1u, h / 2);
+        w = (std::max)(1u, w / 2);
+        h = (std::max)(1u, h / 2);
     }
     
     return totalSize;
@@ -428,8 +428,8 @@ bool ExtractPixelData(const std::vector<uint8_t>& fileData,
     // Skip all smaller mipmaps and all frames except the first
     size_t smallerMipsSize = 0;
     for (int mip = mipmapCount - 1; mip >= 1; mip--) {
-        uint32_t mipW = max(1u, header.width >> mip);
-        uint32_t mipH = max(1u, header.height >> mip);
+        uint32_t mipW = (std::max)(1u, header.width >> mip);
+        uint32_t mipH = (std::max)(1u, header.height >> mip);
         smallerMipsSize += GetImageDataSize(mipW, mipH, srcFormat) * frameCount;
     }
     
@@ -442,8 +442,8 @@ bool ExtractPixelData(const std::vector<uint8_t>& fileData,
         // Try alternative: maybe single frame with no low-res image
         dataOffset = header.headerSize;
         for (int mip = mipmapCount - 1; mip >= 1; mip--) {
-            uint32_t mipW = max(1u, header.width >> mip);
-            uint32_t mipH = max(1u, header.height >> mip);
+            uint32_t mipW = (std::max)(1u, header.width >> mip);
+            uint32_t mipH = (std::max)(1u, header.height >> mip);
             dataOffset += GetImageDataSize(mipW, mipH, srcFormat);
         }
         
@@ -564,15 +564,15 @@ bool IsSolidColorRGBA(const std::vector<uint8_t>& pixelData,
     
     // Also check corners and edges for accuracy
     size_t checkPositions[] = {
-        0,                          // Top-left
-        (width - 1) * 4,            // Top-right
-        (height - 1) * width * 4,   // Bottom-left
+        0,                                       // Top-left
+        (width - 1) * 4,                         // Top-right
+        (height - 1) * width * 4,                // Bottom-left
         ((height - 1) * width + width - 1) * 4,  // Bottom-right
-        (height / 2) * width * 4,   // Middle-left
-        (height / 2 * width + width - 1) * 4,    // Middle-right
-        (width / 2) * 4,            // Top-middle
+        ((height / 2) * width) * 4,              // Middle-left
+        ((height / 2) * width + width - 1) * 4,  // Middle-right
+        (width / 2) * 4,                         // Top-middle
         ((height - 1) * width + width / 2) * 4,  // Bottom-middle
-        (height / 2 * width + width / 2) * 4     // Center
+        ((height / 2) * width + width / 2) * 4   // Center
     };
     
     for (size_t pos : checkPositions) {

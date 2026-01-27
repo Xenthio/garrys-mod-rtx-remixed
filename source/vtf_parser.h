@@ -23,7 +23,14 @@ namespace VTFParser {
 // =========================================================================
 constexpr int VTF_MAJOR_VERSION_SUPPORTED = 7;
 constexpr int VTF_MAX_MINOR_VERSION = 5;
+
+// Maximum VTF file size to load into memory.
+// 256 MB should cover all Source Engine textures (typical max is 4096x4096 RGBA = 64MB).
+// Larger files are rejected to prevent out-of-memory issues.
 constexpr size_t MAX_VTF_FILE_SIZE = 256 * 1024 * 1024;  // 256 MB
+
+// Maximum texture dimension for solid-color checking.
+// Larger textures are skipped for performance (solid-color textures are typically small).
 constexpr size_t MAX_SOLID_COLOR_CHECK_SIZE = 512;  // Only check textures up to 512x512
 
 // =========================================================================
