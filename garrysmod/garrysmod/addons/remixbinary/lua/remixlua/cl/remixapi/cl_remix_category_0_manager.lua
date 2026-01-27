@@ -519,6 +519,86 @@ function RemixCategoryManager.CategorizeAllTrackedMaterials()
     return stats
 end
 
+--[[
+    Auto-categorize a single material (called by MaterialPipeline)
+    @param materialName string - The material name to categorize
+    @return boolean - True if the material was categorized
+]]--
+function RemixCategoryManager.AutoCategorizeMaterial(materialName)
+    if not RemixMaterial then
+        return false
+    end
+    
+    local lowerName = materialName:lower()
+    
+    -- Check if already processed
+    if processedTextures[lowerName] then
+        return false
+    end
+    
+    -- Check which categories are enabled
+    local enableDecals = GetConVar("rtx_auto_categorize_decals"):GetBool()
+    local enableEmissive = GetConVar("rtx_auto_categorize_emissive"):GetBool()
+    local enableParticles = GetConVar("rtx_auto_categorize_particles"):GetBool()
+    local debug = GetConVar("rtx_debug_categorization"):GetBool()
+    
+    local category = nil
+    local categoryName = nil
+    
+    -- Check for particles (including sprites)
+    if enableParticles and RemixCategoryManager.IsMaterialParticle(materialName) then
+        category = RemixCategoryManager.CATEGORY.PARTICLE
+        categoryName = "PARTICLE"
+    
+    -- Check for decals
+    elseif enableDecals and RemixCategoryManager.IsMaterialDecal(materialName) then
+        category = RemixCategoryManager.CATEGORY.DECAL_STATIC
+        categoryName = "DECAL"
+    
+    -- Check for emissive
+    elseif enableEmissive and RemixCategoryManager.IsMaterialEmissive(materialName) then
+        category = RemixCategoryManager.PRESET.EMISSIVE
+        categoryName = "EMISSIVE"
+    end
+    
+    if category then
+        -- Mark as processed
+        processedTextures[lowerName] = true
+        
+        -- Check if already categorized
+        local allHashes = RemixMaterial.GetAllTextureHashes and RemixMaterial.GetAllTextureHashes(materialName)
+        if allHashes and #allHashes > 0 then
+            local alreadyCategorized = false
+            for _, hashStr in ipairs(allHashes) do
+                local existing = RemixMaterial.GetHashCategory and RemixMaterial.GetHashCategory(hashStr)
+                if existing and existing ~= 0 then
+                    alreadyCategorized = true
+                    break
+                end
+            end
+            
+            if alreadyCategorized then
+                if debug then
+                    MsgC(Color(200, 200, 200), string.format("[RemixCategoryManager] %s already categorized: %s\n", categoryName, materialName))
+                end
+                return false
+            end
+        end
+        
+        -- Apply category
+        if RemixCategoryManager.SetMaterialCategory(materialName, category) then
+            if debug then
+                MsgC(Color(100, 255, 100), string.format("[RemixCategoryManager] Categorized as %s: %s\n", categoryName, materialName))
+            end
+            return true
+        end
+    end
+    
+    -- Mark as processed even if not categorized (so we don't re-check)
+    processedTextures[lowerName] = true
+    return false
+end
+
 function RemixCategoryManager.ForceTrackTexture(textureName)
     -- Create a simple material that uses this texture
     local matName = "rtx_force_track_" .. textureName:gsub("[^%w]", "_")
@@ -1942,25 +2022,12 @@ local function AutoInitFunction()
             MsgC(Color(255, 200, 100), "[RemixCategoryManager] World geometry categorization disabled (remix_auto_categorize_world = 0)\n")
         end
         
-        -- Scan for overlay decals and emissive materials (if master toggle and individual categories are enabled)
-        local scanDecals = GetConVar("rtx_auto_categorize_decals"):GetBool()
-        local scanEmissive = GetConVar("rtx_auto_categorize_emissive"):GetBool()
+        -- NOTE: Per-material decal/emissive categorization is now handled by MaterialPipeline
+        -- via RemixCategoryManager.AutoCategorizeMaterial() called from Stage2_Autocategorize
+        -- The bulk CategorizeAllTrackedMaterials() is no longer called here.
         
-        if masterEnabled and (scanDecals or scanEmissive) then
-            MsgC(Color(100, 200, 255), string.format("[RemixCategoryManager] Scanning tracked materials (decals: %s, emissive: %s)...\n", 
-                scanDecals and "enabled" or "disabled", 
-                scanEmissive and "enabled" or "disabled"))
-            RemixCategoryManager.CategorizeAllTrackedMaterials()
-        else
-            if not masterEnabled then
-                MsgC(Color(255, 200, 100), "[RemixCategoryManager] Auto-categorization disabled (remix_auto_categorize = 0)\n")
-            else
-                MsgC(Color(255, 200, 100), "[RemixCategoryManager] Decal and emissive scanning disabled\n")
-            end
-        end
-        
-        MsgC(Color(255, 200, 100), "[RemixCategoryManager] Auto-categorization complete!\n")
-        MsgC(Color(255, 200, 100), "[RemixCategoryManager] Note: New textures will be auto-categorized in real-time as they render!\n")
+        MsgC(Color(255, 200, 100), "[RemixCategoryManager] BSP world texture initialization complete!\n")
+        MsgC(Color(255, 200, 100), "[RemixCategoryManager] Per-material categorization is handled by MaterialPipeline.\n")
     end)
 end
 
