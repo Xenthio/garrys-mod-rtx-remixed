@@ -45,13 +45,14 @@ jobs:
           $artifactName = "gmcl_rtxfixesbinary_win64.dll"
           $sourcePath = "x86_64\Release\gmcl_rtxfixesbinary_win64.dll"
         }
-        New-Item -ItemType Directory -Force -Path artifacts
-        Copy-Item $sourcePath "artifacts\$artifactName"
+        New-Item -ItemType Directory -Force -Path "artifacts\garrysmod\lua\bin"
+        Copy-Item $sourcePath "artifacts\garrysmod\lua\bin\$artifactName"
+        Copy-Item "garrysmod\*" "artifacts\garrysmod\" -Recurse -Force
       shell: pwsh
     
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
         name: windows-${{ matrix.platform }}
-        path: artifacts/*.dll
+        path: artifacts/*
         if-no-files-found: error
