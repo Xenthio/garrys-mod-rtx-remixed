@@ -64,17 +64,28 @@ RTXMaterialPipeline = RTXMaterialPipeline or {}
 -- CONVARS - Configuration
 -- =============================================================================
 
-CreateClientConVar("rtx_material_pipeline", "1", true, false, 
-    "Enable/disable the material processing pipeline")
-CreateClientConVar("rtx_material_pipeline_debug", "0", true, false, 
+-- Master enable/disable
+CreateClientConVar("rtx_mat_enabled", "1", true, false, 
+    "Enable/disable the entire material processing pipeline")
+
+-- Per-stage enable controls
+CreateClientConVar("rtx_mat_hashfix_enabled", "1", true, false, 
+    "Enable/disable hash collision fixer stage")
+CreateClientConVar("rtx_mat_category_enabled", "1", true, false, 
+    "Enable/disable auto-categorization stage")
+CreateClientConVar("rtx_mat_pbr_enabled", "1", true, false, 
+    "Enable/disable ToPBR conversion stage")
+
+-- Pipeline settings
+CreateClientConVar("rtx_mat_debug", "0", true, false, 
     "Enable debug output for material pipeline")
-CreateClientConVar("rtx_material_pipeline_batch", "5", true, false, 
+CreateClientConVar("rtx_mat_batch", "5", true, false, 
     "Number of materials processed per tick (1-20)")
-CreateClientConVar("rtx_material_pipeline_delay", "2", true, false, 
+CreateClientConVar("rtx_mat_delay", "2", true, false, 
     "Delay in seconds before auto-processing starts")
-CreateClientConVar("rtx_material_pipeline_continuous", "1", true, false, 
+CreateClientConVar("rtx_mat_continuous", "1", true, false, 
     "Continuously discover new materials (1=enabled)")
-CreateClientConVar("rtx_material_pipeline_continuous_interval", "5", true, false, 
+CreateClientConVar("rtx_mat_continuous_interval", "5", true, false, 
     "Interval in seconds between material discovery scans")
 
 -- =============================================================================
@@ -113,7 +124,7 @@ local UniqueTextures = {}
 -- =============================================================================
 
 local function DebugPrint(...)
-    if GetConVar("rtx_material_pipeline_debug"):GetBool() then
+    if GetConVar("rtx_mat_debug"):GetBool() then
         MsgC(Color(100, 200, 255), "[RTX Pipeline] ", Color(255, 255, 255), ...)
         MsgC(Color(255, 255, 255), "\n")
     end
@@ -166,6 +177,12 @@ end
     but represent different materials.
 ]]--
 local function Stage1_HashCollisionFix(materialName)
+    -- Check if stage is enabled
+    if not GetConVar("rtx_mat_hashfix_enabled"):GetBool() then
+        DebugPrint("Stage 1 SKIP (disabled): ", materialName)
+        return true, false
+    end
+    
     -- Check if HashCollisionFixer C++ module is available
     if not HashCollisionFixer then
         DebugPrint("Stage 1 SKIP (no HashCollisionFixer): ", materialName)
@@ -282,6 +299,12 @@ end
     - LEGACY_EMISSIVE (0x1000000) - For self-illuminated materials
 ]]--
 local function Stage2_Autocategorize(materialName)
+    -- Check if stage is enabled
+    if not GetConVar("rtx_mat_category_enabled"):GetBool() then
+        DebugPrint("Stage 2 SKIP (disabled): ", materialName)
+        return true, false
+    end
+    
     -- Check if RemixCategoryManager is available
     if not RemixCategoryManager then
         DebugPrint("Stage 2 SKIP (no RemixCategoryManager): ", materialName)
@@ -360,6 +383,12 @@ end
     Integrates with existing RTXToPBR / LegacyTextureProcessor system.
 ]]--
 local function Stage3_QueueForToPBR(materialName)
+    -- Check if stage is enabled
+    if not GetConVar("rtx_mat_pbr_enabled"):GetBool() then
+        DebugPrint("Stage 3 SKIP (disabled): ", materialName)
+        return true, false
+    end
+    
     -- Check what ToPBR system is available
     local processor = LegacyTextureProcessor or VTFConverter
     
@@ -450,7 +479,7 @@ end
     Called each tick when processing is active.
 ]]--
 local function ProcessBatch()
-    if not GetConVar("rtx_material_pipeline"):GetBool() then
+    if not GetConVar("rtx_mat_enabled"):GetBool() then
         return
     end
     
@@ -460,7 +489,7 @@ local function ProcessBatch()
     end
     
     State.processing = true
-    local batchSize = math.Clamp(GetConVar("rtx_material_pipeline_batch"):GetInt(), 1, 20)
+    local batchSize = math.Clamp(GetConVar("rtx_mat_batch"):GetInt(), 1, 20)
     local processed = 0
     
     while processed < batchSize and #State.queue > 0 do
@@ -486,7 +515,7 @@ end
 ]]--
 function RTXMaterialPipeline.QueueMaterial(materialName)
     if not materialName or materialName == "" then return end
-    if not GetConVar("rtx_material_pipeline"):GetBool() then return end
+    if not GetConVar("rtx_mat_enabled"):GetBool() then return end
     
     -- Skip if already processed or queued
     if State.processedMaterials[materialName] then return end
@@ -632,19 +661,19 @@ function RTXMaterialPipeline.Initialize()
     InfoPrint("Initializing material processing pipeline...")
     
     -- Wait for other systems to initialize, then start discovery
-    local delay = GetConVar("rtx_material_pipeline_delay"):GetFloat()
+    local delay = GetConVar("rtx_mat_delay"):GetFloat()
     timer.Simple(delay, function()
-        if not GetConVar("rtx_material_pipeline"):GetBool() then return end
+        if not GetConVar("rtx_mat_enabled"):GetBool() then return end
         
         InfoPrint("Starting automatic material discovery...")
         RTXMaterialPipeline.DiscoverAllMaterials()
         
         -- Set up continuous discovery if enabled
-        if GetConVar("rtx_material_pipeline_continuous"):GetBool() then
-            local interval = GetConVar("rtx_material_pipeline_continuous_interval"):GetFloat()
+        if GetConVar("rtx_mat_continuous"):GetBool() then
+            local interval = GetConVar("rtx_mat_continuous_interval"):GetFloat()
             timer.Create("RTXPipeline_Discovery", interval, 0, function()
-                if not GetConVar("rtx_material_pipeline"):GetBool() then return end
-                if not GetConVar("rtx_material_pipeline_continuous"):GetBool() then return end
+                if not GetConVar("rtx_mat_enabled"):GetBool() then return end
+                if not GetConVar("rtx_mat_continuous"):GetBool() then return end
                 
                 RTXMaterialPipeline.DiscoverAllMaterials()
             end)
@@ -677,17 +706,17 @@ end)
 -- CONSOLE COMMANDS
 -- =============================================================================
 
-concommand.Add("rtx_pipeline_process", function()
+concommand.Add("rtx_mat_process", function()
     InfoPrint("Processing all materials now...")
     RTXMaterialPipeline.ProcessAllNow()
 end, nil, "Process all materials through the RTX pipeline immediately")
 
-concommand.Add("rtx_pipeline_discover", function()
+concommand.Add("rtx_mat_discover", function()
     local count = RTXMaterialPipeline.DiscoverAllMaterials()
     InfoPrint("Discovered and queued ", count, " materials")
 end, nil, "Discover all materials and add to pipeline queue")
 
-concommand.Add("rtx_pipeline_stats", function()
+concommand.Add("rtx_mat_stats", function()
     local stats = RTXMaterialPipeline.GetStats()
     
     MsgC(Color(100, 200, 255), "\n=== RTX Material Pipeline Statistics ===\n")
@@ -704,14 +733,14 @@ concommand.Add("rtx_pipeline_stats", function()
     MsgC(Color(100, 200, 255), "=========================================\n\n")
 end, nil, "Show material pipeline statistics")
 
-concommand.Add("rtx_pipeline_reset", function()
+concommand.Add("rtx_mat_reset", function()
     RTXMaterialPipeline.Reset()
     InfoPrint("Pipeline reset")
 end, nil, "Reset the material pipeline state")
 
-concommand.Add("rtx_pipeline_check", function(ply, cmd, args)
+concommand.Add("rtx_mat_check", function(ply, cmd, args)
     if #args < 1 then
-        WarnPrint("Usage: rtx_pipeline_check <material_name>")
+        WarnPrint("Usage: rtx_mat_check <material_name>")
         return
     end
     
