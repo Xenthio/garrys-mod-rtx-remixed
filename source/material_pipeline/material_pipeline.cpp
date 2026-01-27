@@ -415,32 +415,96 @@ int Pipeline::ProcessPendingMaterials() {
     }
     
     if (toProcess.empty()) {
+        // Even if no new materials, check if ToPBR background processing finished
+        // and needs USDA written
+        ToPBR::TextureProcessor::Instance().WriteUSDAIfNeeded();
         return 0;
     }
     
     int processed = 0;
+    extern IMaterialSystem* materials;
+    
     for (const auto& pending : toProcess) {
         // Call the instance method which handles tracking callbacks
         OnMaterialDetected(pending.name, pending.hash);
         
-        // If auto-processing is enabled, process through unified pipeline
+        // If auto-processing is enabled, run quick stages synchronously
+        // ToPBR will be queued for background processing
         if (m_config.autoProcessing) {
-            if (ProcessMaterial(pending.name)) {
-                processed++;
+            // Get the IMaterial for stages that need it
+            IMaterial* material = nullptr;
+            if (materials) {
+                material = materials->FindMaterial(pending.name.c_str(), TEXTURE_GROUP_OTHER, false);
+                if (material && material->IsErrorMaterial()) {
+                    material = nullptr;
+                }
             }
+            
+            // Get texture pointer for stages that need it
+            IDirect3DTexture9* texture = D3D9TextureTracker::Instance().GetTextureForMaterial(pending.name.c_str());
+            
+            // -------------------------------------------------------------------------
+            // STAGE 1: ShaderFixes (FAST - runs synchronously)
+            // -------------------------------------------------------------------------
+            if (ShaderFixes::NeedsFix(pending.name, material)) {
+                auto fixResult = ShaderFixes::ApplyFix(pending.name, material);
+                if (fixResult.applied && m_config.debugOutput) {
+                    Msg("[MaterialPipeline] Stage 1 (ShaderFixes): %s - %s\n", 
+                        pending.name.c_str(), fixResult.description.c_str());
+                }
+            }
+            
+            // -------------------------------------------------------------------------
+            // STAGE 2: HashCollisionFixer (FAST - runs synchronously)
+            // -------------------------------------------------------------------------
+            std::string baseTexturePath;
+            if (material) {
+                bool found = false;
+                IMaterialVar* pVar = material->FindVar("$basetexture", &found, false);
+                if (found && pVar) {
+                    const char* texPath = pVar->GetStringValue();
+                    if (texPath && texPath[0]) {
+                        baseTexturePath = texPath;
+                    }
+                }
+            }
+            
+            if (!baseTexturePath.empty()) {
+                HashCollisionFixer::CheckMaterial(
+                    m_fileSystem, pending.name, baseTexturePath, m_config.debugOutput);
+            }
+            
+            // -------------------------------------------------------------------------
+            // STAGE 3: AutoCategorisation (FAST - runs synchronously)
+            // -------------------------------------------------------------------------
+            if (texture) {
+                AutoCategorisation::DetectAndApply(pending.name, material, texture);
+            }
+            
+            // Note: Stage 4 (ToPBR) will be processed asynchronously below
+            processed++;
         } else {
             processed++;  // Count as "processed" even if we just tracked it
         }
     }
     
-    // Write USDA after processing batch of materials
-    // This ensures PBR materials are written to disk for RTX Remix
-    if (processed > 0) {
-        ToPBR::TextureProcessor::Instance().WriteUSDAIfNeeded();
-        
-        if (m_config.debugOutput) {
-            Msg("[MaterialPipeline] Processed %d pending materials, USDA updated\n", processed);
+    // -------------------------------------------------------------------------
+    // STAGE 4: ToPBR (ASYNC - uses background worker thread)
+    // -------------------------------------------------------------------------
+    // Queue all tracked materials for async background processing
+    // This is non-blocking and returns immediately
+    if (m_config.autoProcessing && processed > 0) {
+        int queued = ToPBR::TextureProcessor::Instance().QueueMaterialsForProcessing();
+        if (queued > 0 && m_config.debugOutput) {
+            Msg("[MaterialPipeline] Queued %d materials for async ToPBR processing\n", queued);
         }
+    }
+    
+    // Write USDA if background processing has completed some materials
+    ToPBR::TextureProcessor::Instance().WriteUSDAIfNeeded();
+    
+    if (processed > 0 && m_config.debugOutput) {
+        Msg("[MaterialPipeline] Processed %d pending materials (quick stages), ToPBR queued async\n", processed);
     }
     
     return processed;
