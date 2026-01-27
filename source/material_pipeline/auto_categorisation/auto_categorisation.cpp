@@ -27,7 +27,7 @@ namespace AutoCategorisation {
 
 // Safe tolower helper for use with std::transform
 static char SafeToLower(unsigned char c) {
-    return static_cast<char>(stdSafeToLower(c));
+    return static_cast<char>(std::tolower(c));
 }
 
 // =========================================================================
