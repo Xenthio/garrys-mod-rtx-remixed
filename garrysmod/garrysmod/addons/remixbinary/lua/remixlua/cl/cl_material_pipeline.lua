@@ -9,6 +9,12 @@
     
     PIPELINE STAGES:
     ================
+    0a. PBR FIXER - Fix ExoPBR and GPBR materials ($basetexture fix)
+    
+    0b. REFRACT FIXER - Fix Refract shader materials ($basetexture fix)
+    
+    0c. DETAIL REMOVER - Remove detail textures (set to rtx/ignore)
+    
     1. HASH COLLISION FIX - Detect solid-color textures and create unique 
        replacement textures to prevent Remix hash collisions
        
@@ -23,7 +29,7 @@
     - Non-blocking batch processing to prevent frame drops
     - Integration with existing RemixCategoryManager and RTXToPBR systems
     - Clean separation of concerns with extensible stage system
-    - Comprehensive statistics and debugging
+    - All modules provide only ProcessMaterial() - no independent discovery
     
     USAGE:
     ======
@@ -432,6 +438,14 @@ end
 
 --[[
     Process a single material through all pipeline stages in order.
+    
+    Stage order:
+    0a. RTXFixPBR.ProcessMaterial() - Fix ExoPBR/GPBR materials (Lua)
+    0b. RTXFixRefract.ProcessMaterial() - Fix Refract shader materials (Lua)
+    0c. RTXRemoveDetail.ProcessMaterial() - Remove detail textures (Lua)
+    1.  Hash Collision Fix (C++/Lua) - Detect solid color textures
+    2.  Autocategorization (C++/Lua) - Apply Remix categories
+    3.  Queue for ToPBR (C++) - VTF→DDS conversion
 ]]--
 local function ProcessMaterial(materialName)
     if State.processedMaterials[materialName] then
@@ -439,6 +453,30 @@ local function ProcessMaterial(materialName)
     end
     
     DebugPrint("PROCESSING: ", materialName)
+    
+    -- Stage 0a: ExoPBR/GPBR Fixer (Lua)
+    if RTXFixPBR and RTXFixPBR.ProcessMaterial and RTXFixPBR.IsEnabled and RTXFixPBR.IsEnabled() then
+        local fixed = RTXFixPBR.ProcessMaterial(materialName)
+        if fixed then
+            DebugPrint("Stage 0a FIXED (PBR): ", materialName)
+        end
+    end
+    
+    -- Stage 0b: Refract Shader Fixer (Lua)
+    if RTXFixRefract and RTXFixRefract.ProcessMaterial and RTXFixRefract.IsEnabled and RTXFixRefract.IsEnabled() then
+        local fixed = RTXFixRefract.ProcessMaterial(materialName)
+        if fixed then
+            DebugPrint("Stage 0b FIXED (Refract): ", materialName)
+        end
+    end
+    
+    -- Stage 0c: Detail Texture Remover (Lua)
+    if RTXRemoveDetail and RTXRemoveDetail.ProcessMaterial and RTXRemoveDetail.IsEnabled and RTXRemoveDetail.IsEnabled() then
+        local fixed = RTXRemoveDetail.ProcessMaterial(materialName)
+        if fixed then
+            DebugPrint("Stage 0c FIXED (Detail): ", materialName)
+        end
+    end
     
     -- Stage 1: Hash Collision Fix
     local s1Continue, s1Result = Stage1_HashCollisionFix(materialName)
@@ -472,6 +510,7 @@ local function ProcessMaterial(materialName)
         " (HashFix:", s1Result and "Y" or "N",
         " Cat:", s2Result and "Y" or "N",
         " ToPBR:", s3Result and "Y" or "N", ")")
+end
 end
 
 --[[
@@ -787,5 +826,6 @@ end, nil, "Check the processing status of a specific material")
 MsgC(Color(100, 255, 150), "\n========================================\n")
 MsgC(Color(100, 255, 150), " RTX Material Pipeline v2.0 Loaded\n")
 MsgC(Color(200, 200, 200), " Unified material processing system\n")
-MsgC(Color(200, 200, 200), " Stages: HashFix → Categorize → ToPBR\n")
+MsgC(Color(200, 200, 200), " Stages: PBRFix → RefractFix → DetailRemove\n")
+MsgC(Color(200, 200, 200), "         → HashFix → Categorize → ToPBR\n")
 MsgC(Color(100, 255, 150), "========================================\n\n")
