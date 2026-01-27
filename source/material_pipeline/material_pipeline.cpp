@@ -90,8 +90,8 @@ bool Pipeline::Initialize(remix::Interface* remix, GarrysMod::Lua::ILuaBase* LUA
         // Register HashCollisionFixer Lua bindings
         HashCollisionFixer::RegisterLuaBindings(LUA);
         
-        // Register ToPBR (LegacyTextureProcessor) Lua bindings
-        ToPBR::InitializeLegacyTextureProcessorLuaBindings(LUA);
+        // Register ToPBR Lua bindings (under MaterialPipeline.ToPBR table)
+        ToPBR::InitializeToPBRLuaBindings(LUA);
         
         // Register AutoCategorisation Lua bindings
         AutoCategorisation::RegisterLuaBindings(LUA);
@@ -176,9 +176,9 @@ bool Pipeline::InitializeInternal(IDirect3DDevice9Ex* device, remix::Interface* 
     // Initialize HashCollisionFixer
     HashCollisionFixer::Initialize();
     
-    // Initialize LegacyTextureProcessor
+    // Initialize ToPBR (texture processor)
     if (!ToPBR::TextureProcessor::Instance().Initialize(remix)) {
-        Warning("[MaterialPipeline] Failed to initialize LegacyTextureProcessor\n");
+        Warning("[MaterialPipeline] Failed to initialize ToPBR::TextureProcessor\n");
         D3D9TextureTracker::Instance().Shutdown();
         return false;
     }

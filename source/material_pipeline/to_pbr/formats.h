@@ -206,7 +206,4 @@ namespace SourceEngine {
 } // namespace ToPBR
 } // namespace MaterialPipeline
 
-// Backwards compatibility alias
-namespace LegacyTextureProcessor = MaterialPipeline::ToPBR;
-
 #endif // _WIN64

@@ -4797,7 +4797,7 @@ LUA_FUNCTION(LegacyTextureProcessor_AppendToUSDAAsync) {
 namespace MaterialPipeline {
 namespace ToPBR {
 
-void InitializeLegacyTextureProcessorLuaBindings(GarrysMod::Lua::ILuaBase* LUA) {
+void InitializeToPBRLuaBindings(GarrysMod::Lua::ILuaBase* LUA) {
     // Register ToPBR functions under MaterialPipeline.ToPBR table
     // First get or create MaterialPipeline table
     LUA->PushSpecial(GarrysMod::Lua::SPECIAL_GLOB);

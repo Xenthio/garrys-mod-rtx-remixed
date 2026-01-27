@@ -547,20 +547,10 @@ private:
     void StopWorkerThread();
 };
 
-// Lua bindings initialization
-void InitializeLegacyTextureProcessorLuaBindings(GarrysMod::Lua::ILuaBase* LUA);
-
-// Backwards compatibility alias within this namespace
-using VTFTextureConverter = TextureProcessor;
+// Lua bindings initialization - registers MaterialPipeline.ToPBR table
+void InitializeToPBRLuaBindings(GarrysMod::Lua::ILuaBase* LUA);
 
 } // namespace ToPBR
 } // namespace MaterialPipeline
-
-// =========================================================================
-// Backwards Compatibility Aliases
-// =========================================================================
-// These allow existing code to continue using the old namespace names
-namespace LegacyTextureProcessor = MaterialPipeline::ToPBR;
-namespace VTFConverter = MaterialPipeline::ToPBR;
 
 #endif // _WIN64
