@@ -2,7 +2,7 @@
 // vtf_parser.h - Standalone VTF (Valve Texture Format) parser
 // =========================================================================
 // Generic VTF file reading and processing that can be used by any system.
-// No dependencies on LegacyTextureProcessor or other subsystems.
+// No dependencies on MaterialPipeline::ToPBR or other subsystems.
 // =========================================================================
 
 #pragma once
