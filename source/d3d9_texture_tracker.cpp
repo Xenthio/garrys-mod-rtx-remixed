@@ -654,7 +654,7 @@ void D3D9TextureTracker::CheckAndApplyCategories(IDirect3DTexture9* pTexture) {
     }
     
     // === PRIORITY 2: IGNORE ===
-    // Nodraw, invisible, clip textures - should be ignored by RTX
+    // Nodraw, invisible, clip textures, and detail textures - should be ignored by RTX
     else if (lowerName.find("tools/toolsnodraw") != std::string::npos ||
              lowerName.find("tools/toolsinvisible") != std::string::npos ||
              lowerName.find("tools/toolsclip") != std::string::npos ||
@@ -663,7 +663,10 @@ void D3D9TextureTracker::CheckAndApplyCategories(IDirect3DTexture9* pTexture) {
              lowerName.find("tools/toolstrigger") != std::string::npos ||
              lowerName.find("tools/toolsblocklight") != std::string::npos ||
              lowerName.find("tools/toolsareaportal") != std::string::npos ||
-             lowerName.find("tools/toolsoccluder") != std::string::npos) {
+             lowerName.find("tools/toolsoccluder") != std::string::npos ||
+             // Detail textures - these are overlays that should not be rendered in RTX
+             lowerName.find("detail/") == 0 ||
+             lowerName.find("/detail/") != std::string::npos) {
         categoryFlags = CAT_IGNORE;
         categoryName = "IGNORE";
     }
