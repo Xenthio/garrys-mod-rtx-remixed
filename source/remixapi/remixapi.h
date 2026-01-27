@@ -19,9 +19,7 @@
 namespace RemixAPI {
     // Forward declarations
     class MaterialManager;
-    class MeshManager;
     class CameraManager;
-    class InstanceManager;
     class ConfigManager;
     class ResourceManager;
     class LightManager;
@@ -38,9 +36,7 @@ namespace RemixAPI {
         
         // Manager access
         MaterialManager& GetMaterialManager() { return *m_materialManager; }
-        MeshManager& GetMeshManager() { return *m_meshManager; }
         CameraManager& GetCameraManager() { return *m_cameraManager; }
-        InstanceManager& GetInstanceManager() { return *m_instanceManager; }
         ConfigManager& GetConfigManager() { return *m_configManager; }
         ResourceManager& GetResourceManager() { return *m_resourceManager; }
         LightManager& GetLightManager() { return *m_lightManager; }
@@ -62,9 +58,7 @@ namespace RemixAPI {
         GarrysMod::Lua::ILuaBase* m_lua;
         
         std::unique_ptr<MaterialManager> m_materialManager;
-        std::unique_ptr<MeshManager> m_meshManager;
         std::unique_ptr<CameraManager> m_cameraManager;
-        std::unique_ptr<InstanceManager> m_instanceManager;
         std::unique_ptr<ConfigManager> m_configManager;
         std::unique_ptr<ResourceManager> m_resourceManager;
         std::unique_ptr<LightManager> m_lightManager;
@@ -173,35 +167,6 @@ namespace RemixAPI {
         uint64_t m_nextMaterialId;
     };
 
-    // Mesh Management
-    class MeshManager {
-    public:
-        MeshManager(remix::Interface* remixInterface, GarrysMod::Lua::ILuaBase* LUA);
-        ~MeshManager();
-        
-        // Mesh creation and management
-        uint64_t CreateMesh(const std::string& name, const remix::MeshInfo& info);
-        bool UpdateMesh(uint64_t meshId, const remix::MeshInfo& info);
-        bool DestroyMesh(uint64_t meshId);
-        bool HasMesh(uint64_t meshId) const;
-        remixapi_MeshHandle GetMeshHandle(uint64_t meshId) const;
-        
-        // Lua bindings
-        void InitializeLuaBindings();
-        
-    private:
-        struct ManagedMesh {
-            remixapi_MeshHandle handle;
-            std::string name;
-            remix::MeshInfo info;
-        };
-        
-        remix::Interface* m_remixInterface;
-        GarrysMod::Lua::ILuaBase* m_lua;
-        std::unordered_map<uint64_t, ManagedMesh> m_meshes;
-        uint64_t m_nextMeshId;
-    };
-
     // Camera Management
     class CameraManager {
     public:
@@ -211,25 +176,6 @@ namespace RemixAPI {
         // Camera control
         bool SetupCamera(const remix::CameraInfo& info);
         bool SetupParameterizedCamera(const remix::CameraInfoParameterizedEXT& info);
-        
-        // Lua bindings
-        void InitializeLuaBindings();
-        
-    private:
-        remix::Interface* m_remixInterface;
-        GarrysMod::Lua::ILuaBase* m_lua;
-    };
-
-    // Instance Management
-    class InstanceManager {
-    public:
-        InstanceManager(remix::Interface* remixInterface, GarrysMod::Lua::ILuaBase* LUA);
-        ~InstanceManager();
-        
-        // Instance drawing
-        bool DrawInstance(const remix::InstanceInfo& info);
-        bool DrawInstanceWithBlend(const remix::InstanceInfo& info, const remix::InstanceInfoBlendEXT& blendInfo);
-        bool DrawInstanceWithBones(const remix::InstanceInfo& info, const remix::InstanceInfoBoneTransformsEXT& boneInfo);
         
         // Lua bindings
         void InitializeLuaBindings();

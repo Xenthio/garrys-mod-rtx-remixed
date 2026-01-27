@@ -1,0 +1,12 @@
+"VertexlitGeneric"
+{
+//Base
+	"$basetexture" 		"models\hlvr\food\crackers_box_d"
+	"$bumpmap" 		"models\hlvr\food\crackers_box_n"
+
+//Specular
+	"$phong" 						"1"
+	"$phongboost"					".3"
+	"$phongfresnelranges"			"[0.87 0.9 1]"
+	"$phongexponent"			"1"
+}

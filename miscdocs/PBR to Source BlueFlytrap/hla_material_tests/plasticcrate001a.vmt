@@ -1,0 +1,16 @@
+"VertexlitGeneric"
+{
+//Base
+	"$basetexture" 		"models\hlvr\food\plastic_crate_01_d"
+	"$bumpmap" 		"models\hlvr\food\plastic_crate_01_n"
+
+//Specular
+	"$phong" 						"1"
+	"$phongboost"					".3"
+	"$phongfresnelranges"			"[0.87 0.9 1]"
+	"$phongexponent"			"1"
+
+//Color Tool
+	"$blendtintbybasealpha" "1" 
+	"$blendtintcoloroverbase" "0"
+}

@@ -2,6 +2,7 @@
 #include "remixapi.h"
 #include "bsp_geometry_manager.h"
 #include "rtx_option_defaults.h"
+#include "material_pipeline/material_pipeline.h"
 #include <Windows.h>
 #include <remix/remix_c.h>
 #include <tier0/dbg.h>
@@ -72,9 +73,7 @@ bool RemixAPI::Initialize(remix::Interface* remixInterface, GarrysMod::Lua::ILua
 
             // Initialize all managers
         m_materialManager = std::make_unique<MaterialManager>(remixInterface, LUA);
-        m_meshManager = std::make_unique<MeshManager>(remixInterface, LUA);
         m_cameraManager = std::make_unique<CameraManager>(remixInterface, LUA);
-        m_instanceManager = std::make_unique<InstanceManager>(remixInterface, LUA);
         m_configManager = std::make_unique<ConfigManager>(remixInterface, LUA);
         m_resourceManager = std::make_unique<ResourceManager>(remixInterface, LUA);
         m_lightManager = std::make_unique<LightManager>(remixInterface, LUA);
@@ -82,13 +81,14 @@ bool RemixAPI::Initialize(remix::Interface* remixInterface, GarrysMod::Lua::ILua
 
             // Initialize Lua bindings for all managers
         m_materialManager->InitializeLuaBindings();
-        m_meshManager->InitializeLuaBindings();
         m_cameraManager->InitializeLuaBindings();
-        m_instanceManager->InitializeLuaBindings();
         m_configManager->InitializeLuaBindings();
         m_resourceManager->InitializeLuaBindings();
         m_lightManager->InitializeLuaBindings();
         m_bspGeometryManager->InitializeLuaBindings();
+        
+        // Initialize the unified material pipeline and its Lua bindings
+        MaterialPipeline::Pipeline::Initialize(remixInterface, LUA);
 
     m_initialized = true;
 #ifdef _DEBUG
@@ -100,13 +100,14 @@ bool RemixAPI::Initialize(remix::Interface* remixInterface, GarrysMod::Lua::ILua
 void RemixAPI::Shutdown() {
     if (!m_initialized) return;
 
+    // Shutdown unified material pipeline first
+    MaterialPipeline::Pipeline::Shutdown();
+    
     m_bspGeometryManager.reset();
     m_resourceManager.reset();
     m_lightManager.reset();
-    m_configManager.reset();
-    m_instanceManager.reset();
+    m_configManager.reset();;
     m_cameraManager.reset();
-    m_meshManager.reset();
     m_materialManager.reset();
 
     m_remixInterface = nullptr;
@@ -789,108 +790,6 @@ remixapi_MaterialHandle MaterialManager::GetMaterialHandle(uint64_t materialId) 
 }
 
 //=============================================================================
-// MeshManager
-//=============================================================================
-MeshManager::MeshManager(remix::Interface* remixInterface, GarrysMod::Lua::ILuaBase* LUA)
-    : m_remixInterface(remixInterface)
-    , m_lua(LUA)
-    , m_nextMeshId(1) {
-}
-
-MeshManager::~MeshManager() {
-    // Clean up all meshes
-    for (auto& pair : m_meshes) {
-        if (pair.second.handle) {
-            m_remixInterface->DestroyMesh(pair.second.handle);
-        }
-    }
-    m_meshes.clear();
-}
-
-uint64_t MeshManager::CreateMesh(const std::string& name, const remix::MeshInfo& info) {
-    if (!m_remixInterface) return 0;
-
-    // Try batched API if available to fix stability issues
-    auto result = [&]() {
-        if (m_remixInterface->m_CInterface.CreateMeshBatched) {
-            return m_remixInterface->CreateMeshBatched(info);
-        }
-        return m_remixInterface->CreateMesh(info);
-    }();
-
-    if (!result) {
-        Warning("[MeshManager] Failed to create mesh '%s': %d\n", name.c_str(), result.status());
-        return 0;
-    }
-
-    uint64_t meshId = m_nextMeshId++;
-    ManagedMesh mesh = {
-        result.value(),
-        name,
-        info
-    };
-    
-    m_meshes[meshId] = mesh;
-#ifdef _DEBUG
-    Msg("[MeshManager] Created mesh '%s' with ID %llu\n", name.c_str(), meshId);
-#endif
-    return meshId;
-}
-
-bool MeshManager::UpdateMesh(uint64_t meshId, const remix::MeshInfo& info) {
-    auto it = m_meshes.find(meshId);
-    if (it == m_meshes.end()) {
-        Warning("[MeshManager] Mesh ID %llu not found\n", meshId);
-        return false;
-    }
-
-    // For now, we need to recreate the mesh
-    // TODO: Check if Remix API supports mesh updates
-    auto oldHandle = it->second.handle;
-    auto result = m_remixInterface->CreateMesh(info);
-        if (!result) {
-        Warning("[MeshManager] Failed to update mesh ID %llu: %d\n", meshId, result.status());
-        return false;
-    }
-
-    m_remixInterface->DestroyMesh(oldHandle);
-    it->second.handle = result.value();
-    it->second.info = info;
-    
-    return true;
-}
-
-bool MeshManager::DestroyMesh(uint64_t meshId) {
-    auto it = m_meshes.find(meshId);
-    if (it == m_meshes.end()) {
-        Warning("[MeshManager] Mesh ID %llu not found\n", meshId);
-        return false;
-    }
-
-    if (it->second.handle) {
-        m_remixInterface->DestroyMesh(it->second.handle);
-    }
-    
-    m_meshes.erase(it);
-#ifdef _DEBUG
-    Msg("[MeshManager] Destroyed mesh ID %llu\n", meshId);
-#endif
-    return true;
-}
-
-bool MeshManager::HasMesh(uint64_t meshId) const {
-    return m_meshes.find(meshId) != m_meshes.end();
-}
-
-remixapi_MeshHandle MeshManager::GetMeshHandle(uint64_t meshId) const {
-    auto it = m_meshes.find(meshId);
-    if (it != m_meshes.end()) {
-        return it->second.handle;
-    }
-    return nullptr;
-}
-
-//=============================================================================
 // CameraManager
 //=============================================================================
 CameraManager::CameraManager(remix::Interface* remixInterface, GarrysMod::Lua::ILuaBase* LUA)
@@ -922,47 +821,6 @@ bool CameraManager::SetupParameterizedCamera(const remix::CameraInfoParameterize
     cameraInfo.type = REMIXAPI_CAMERA_TYPE_WORLD;
 
     return SetupCamera(cameraInfo);
-}
-
-//=============================================================================
-// InstanceManager
-//=============================================================================
-InstanceManager::InstanceManager(remix::Interface* remixInterface, GarrysMod::Lua::ILuaBase* LUA)
-    : m_remixInterface(remixInterface)
-    , m_lua(LUA) {
-}
-
-InstanceManager::~InstanceManager() {
-}
-
-bool InstanceManager::DrawInstance(const remix::InstanceInfo& info) {
-    if (!m_remixInterface) return false;
-
-    auto result = m_remixInterface->DrawInstance(info);
-    if (!result) {
-        Warning("[InstanceManager] Failed to draw instance: %d\n", result.status());
-        return false;
-    }
-    
-    return true;
-}
-
-bool InstanceManager::DrawInstanceWithBlend(const remix::InstanceInfo& info, const remix::InstanceInfoBlendEXT& blendInfo) {
-    if (!m_remixInterface) return false;
-
-    remix::InstanceInfo instanceInfo = info;
-    instanceInfo.pNext = const_cast<remix::InstanceInfoBlendEXT*>(&blendInfo);
-
-    return DrawInstance(instanceInfo);
-}
-
-bool InstanceManager::DrawInstanceWithBones(const remix::InstanceInfo& info, const remix::InstanceInfoBoneTransformsEXT& boneInfo) {
-    if (!m_remixInterface) return false;
-
-    remix::InstanceInfo instanceInfo = info;
-    instanceInfo.pNext = const_cast<remix::InstanceInfoBoneTransformsEXT*>(&boneInfo);
-
-    return DrawInstance(instanceInfo);
 }
 
 //=============================================================================

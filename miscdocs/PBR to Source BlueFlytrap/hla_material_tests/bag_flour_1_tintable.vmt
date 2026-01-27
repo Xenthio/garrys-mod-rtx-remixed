@@ -1,0 +1,16 @@
+"VertexlitGeneric"
+{
+//Base
+	"$basetexture" 		"models\hlvr\food\bag_flour_1_tintable_d"
+	"$bumpmap" 		"models\hlvr\food\bag_flour_1_n"
+
+//Specular
+	"$phong" 						"1"
+	"$phongboost"					".3"
+	"$phongfresnelranges"			"[0.87 0.9 1]"
+	"$phongexponent"			"1"
+
+//Color Tool
+	"$blendtintbybasealpha" "1" 
+	"$blendtintcoloroverbase" "0"
+}

@@ -1,0 +1,28 @@
+"VertexlitGeneric"
+{
+//Base
+	"$basetexture" 		"models\hlvr\food\can_square_d"
+	"$bumpmap" 		"models\hlvr\food\can_square_n"
+	"$phongexponenttexture" 		"models\hlvr\food\can_square_e"
+
+	"$phongalbedotint"				"1"
+	
+//Other
+	"$color2"						"[.2 .2 .2]"
+	"$translucent"					"1"
+	"$nocull"					"1"
+
+//Phong
+	"$phong" 						"1"
+	"$phongboost"					"5.986979"
+	"$phongfresnelranges"			"[0.87 0.9 1]"
+	"$phongexponent"			"5"
+
+	"$ambientocclusion"				"0.7"
+}
+
+//2/3 Metalls (don't change commands order)
+//VMT Setting by:
+//BlueFlytrap - PBR method 
+//Galaxyi -  Almost all numbers and command
+//MrShlapa - Small adjustments and visual overhaul

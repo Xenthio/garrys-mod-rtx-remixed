@@ -1,0 +1,12 @@
+"VertexlitGeneric"
+{
+//Base
+	"$basetexture" 		"models\hlvr\food\cabbage01a_d"
+	"$bumpmap" 		"models\hlvr\food\cabbage01a_n"
+
+//Specular
+	"$phong" 						"1"
+	"$phongboost"					".5"
+	"$phongfresnelranges"			"[0.87 0.9 1]"
+	"$phongexponent"			"1"
+}

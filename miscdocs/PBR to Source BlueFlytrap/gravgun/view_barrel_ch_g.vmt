@@ -1,0 +1,21 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "models\blueflytrap\gravitygun\view\texture\view_barrel_ch_g"
+	"$bumpmap" "models\blueflytrap\gravitygun\view\texture\view_barrel_n"
+
+	"$color2"			"[0 0 0]"
+
+	"$additive"	"1"
+
+	"$phong" "1"
+
+	"$phongboost"	"0.0"
+	"$phongfresnelranges"	"[0.76 0.921 1.25]"
+
+	"$selfillum"	"1"
+
+	"$envmap" "env_cubemap"
+
+	"$envmaptint"	"[0 0.9 0]"
+	"$envmapfresnel"	"1"
+}

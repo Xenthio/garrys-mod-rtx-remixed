@@ -29,10 +29,10 @@ public:
     // Track a material being rendered
     void SetCurrentMaterial(IMaterial* pMaterial);
     
-    // Check and apply automatic categories (particles, emissive, sky, water, etc.)
-    void CheckAndApplyCategories(IDirect3DTexture9* pTexture);
+    // NOTE: CheckAndApplyCategories was removed - all categorisation now goes through
+    // MaterialPipeline::AutoCategorisation::DetectAndApply() (Stage 3 of the pipeline).
     
-    // Apply category flags to a texture hash (used by CheckAndApply and Retry)
+    // Apply category flags to a texture hash (used by RecheckWorldTextures and RetryPending)
     void ApplyCategoryToHash(uint64_t hash, uint32_t categoryFlags, const char* materialName);
     
     // Re-scan all cached materials and apply categories
@@ -54,6 +54,9 @@ public:
 
     // Get cache statistics
     size_t GetCacheSize() const { return m_textureCache.size(); }
+    
+    // Check if initialized
+    bool IsInitialized() const { return m_bInitialized; }
 
     // Get all cached materials
     std::vector<std::string> GetCachedMaterials() const {

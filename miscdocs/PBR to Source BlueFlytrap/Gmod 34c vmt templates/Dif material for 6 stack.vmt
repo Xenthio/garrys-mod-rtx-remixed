@@ -1,0 +1,15 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "path to basetexture"
+	"$bumpmap" "path to normalmap"
+
+	"$color2"	"[0 0 0]"
+	"$blendTintByBaseAlpha"	"1"
+
+	"$phong" "0"
+}
+
+//	Material using pseudo pbr method 34.2 (Metalness)
+//	Engine branch: Garrys Mod
+//	Hierarchy: Stack 1/6
+//	This vmt affects: Diffuse

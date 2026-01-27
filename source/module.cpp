@@ -22,6 +22,7 @@
 #include <remix/remix_c.h>
 #include "remixapi/remixapi.h"
 #include "d3d9_texture_tracker.h"
+// HashCollisionFixer is now initialized via MaterialPipeline - no direct include needed
 #endif // _WIN64
 
 #include "prop_fixes.h" 
@@ -259,8 +260,9 @@ GMOD_MODULE_OPEN() {
 
         // Only register Remix-related Lua functions in 64-bit builds
         #ifdef _WIN64
-            // The new RemixAPI is already initialized above, no need to call Initialize again
-
+            // The new RemixAPI is already initialized above, which initializes
+            // the unified MaterialPipeline (including HashCollisionFixer)
+            // No need for separate HashCollisionFixer initialization here
         #endif // _WIN64    
 
         LUA->Pop();

@@ -1,0 +1,26 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "path to G"
+	"$bumpmap" "path to normalmap"
+
+	"$color2"	"[0 0 0]"
+
+	"$additive"	"1"
+
+	"$phong" "1"
+
+	"$phongboost"	"0.0"
+	"$phongfresnelranges"	"[0.87 0.9 1]"
+
+	"$selfillum"	"1"
+
+	"$envmap" "env_cubemap"
+
+	"$envmaptint"	"[0 0.9 0]"
+	"$envmapfresnel"	"1"
+}
+
+//	Material using pseudo pbr method 34.2 (Metalness)
+//	Engine branch: Garrys Mod
+//	Hierarchy: Stack 4/5
+//	This vmt affects: Envmap (Metal: Green)

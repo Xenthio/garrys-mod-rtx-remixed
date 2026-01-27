@@ -170,6 +170,87 @@ hook.Add("InitPostEntity", "RTX_ApplyLightupdaterState", function()
     end)
 end)
 
+-- ToPBR Conversion Settings (Only show for 64-bit client)
+if BRANCH == "x86-64" or BRANCH == "chromium" then
+    hook.Add( "PopulateToolMenu", "RTXOptionsClient_ToPBR", function()
+        spawnmenu.AddToolMenuOption( "Utilities", "RTX Remix", "RTX_Client_ToPBR", "#ToPBR Conversion", "", "", function( panel )
+            panel:ClearControls()
+            
+            panel:Help("Automatic PBR Conversion")
+            panel:ControlHelp("Converts Source Engine materials to PBR format for RTX Remix.")
+            
+            -- Master toggle
+            local enabledCheckbox = panel:CheckBox("Enable ToPBR Conversion", "rtx_topbr_enabled")
+            panel:ControlHelp("Enable automatic conversion of materials to PBR format.")
+            
+            -- Auto-processing toggle
+            local autoCheckbox = panel:CheckBox("Auto-Process on Map Load", "rtx_topbr_auto")
+            panel:ControlHelp("Automatically process materials when a map loads.")
+            
+            -- Delay slider
+            local delaySlider = panel:NumSlider("Processing Delay (seconds)", "rtx_topbr_delay", 1, 30, 0)
+            panel:ControlHelp("Delay before auto-processing starts after map load.")
+            
+            -- Experimental metallic generation
+            local metallicCheckbox = panel:CheckBox("Experimental Metallic Detection", "rtx_topbr_metallic")
+            panel:ControlHelp("Generate metallic maps from base texture brightness.")
+            panel:ControlHelp("WARNING: May cause dark materials to appear completely black!")
+            
+            -- Auto-discover companion textures
+            local autodiscoverCheckbox = panel:CheckBox("Auto-Discover Textures", "rtx_topbr_autodiscover")
+            panel:ControlHelp("Search for companion textures (_normal, _mask, _spec) not in VMT.")
+            
+            -- Debug output toggle
+            local debugCheckbox = panel:CheckBox("Debug Output", "rtx_topbr_debug")
+            panel:ControlHelp("Shows debug messages in console for troubleshooting.")
+            
+            panel:Help("Manual Controls")
+            
+            -- Process button
+            local processButton = panel:Button("Process Materials Now")
+            processButton.DoClick = function()
+                RunConsoleCommand("rtx_topbr_process")
+            end
+            panel:ControlHelp("Manually trigger PBR conversion for all tracked materials.")
+            
+            -- Stats button
+            local statsButton = panel:Button("Show Statistics")
+            statsButton.DoClick = function()
+                RunConsoleCommand("rtx_topbr_stats")
+            end
+            
+            -- Clear cache button
+            local clearButton = panel:Button("Clear Cache")
+            clearButton.DoClick = function()
+                RunConsoleCommand("rtx_topbr_clear")
+            end
+            panel:ControlHelp("Clear the conversion cache (useful after changing settings).")
+            
+            -- Update controls based on enabled state
+            local function UpdateControls()
+                local enabled = GetConVar("rtx_topbr_enabled"):GetBool()
+                if autoCheckbox then autoCheckbox:SetEnabled(enabled) end
+                if delaySlider then delaySlider:SetEnabled(enabled) end
+                if metallicCheckbox then metallicCheckbox:SetEnabled(enabled) end
+                if autodiscoverCheckbox then autodiscoverCheckbox:SetEnabled(enabled) end
+                if processButton then processButton:SetEnabled(enabled) end
+                if statsButton then statsButton:SetEnabled(enabled) end
+                if clearButton then clearButton:SetEnabled(enabled) end
+            end
+            
+            -- Set initial state
+            UpdateControls()
+            
+            -- Update when master checkbox changes
+            if enabledCheckbox then
+                enabledCheckbox.OnChange = function(self, value)
+                    UpdateControls()
+                end
+            end
+        end )
+    end )
+end
+
 -- Auto-Categorization Settings (Only show for 64-bit client)
 if BRANCH == "x86-64" or BRANCH == "chromium" then
     hook.Add( "PopulateToolMenu", "RTXOptionsClient_AutoCategorization", function()
