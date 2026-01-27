@@ -112,9 +112,6 @@ public:
     
     // Enable/disable debug output
     void SetDebugOutput(bool enabled);
-    
-    // Get the D3D9 device (for texture creation)
-    IDirect3DDevice9Ex* GetDevice() const { return m_pDevice; }
 
 private:
     // Pending categorization entry

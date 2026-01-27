@@ -1165,66 +1165,6 @@ LUA_FUNCTION(RemixMaterial_SetDebugOutput) {
     return 1;
 }
 
-// NOTE: Hash collision and solid-color detection functions have been moved to the HashCollisionFixer module.
-// The functions below are deprecated stubs for backwards compatibility.
-// Use HashCollisionFixer.CheckMaterial(), HashCollisionFixer.GetMaterialsNeedingFix() etc. instead.
-
-// Lua function: RemixMaterial.GetHashCollisions() - DEPRECATED, returns empty table
-LUA_FUNCTION(RemixMaterial_GetHashCollisions) {
-    // Deprecated - use HashCollisionFixer module instead
-    LUA->CreateTable();
-    return 1;
-}
-
-// Lua function: RemixMaterial.GetMaterialCollisions(materialName) - DEPRECATED, returns empty table
-LUA_FUNCTION(RemixMaterial_GetMaterialCollisions) {
-    // Deprecated - use HashCollisionFixer module instead
-    LUA->CreateTable();
-    return 1;
-}
-
-// Lua function: RemixMaterial.HasHashCollision(materialName) - DEPRECATED, returns false
-LUA_FUNCTION(RemixMaterial_HasHashCollision) {
-    // Deprecated - use HashCollisionFixer module instead
-    LUA->PushBool(false);
-    return 1;
-}
-
-// Lua function: RemixMaterial.IsSolidColor(materialName) - DEPRECATED, returns false
-LUA_FUNCTION(RemixMaterial_IsSolidColor) {
-    // Deprecated - use HashCollisionFixer.CheckSolidColor() instead
-    LUA->PushBool(false);
-    return 1;
-}
-
-// Lua function: RemixMaterial.GetSolidColorMaterials() - DEPRECATED, returns empty table
-LUA_FUNCTION(RemixMaterial_GetSolidColorMaterials) {
-    // Deprecated - use HashCollisionFixer.GetMaterialsNeedingFix() instead
-    LUA->CreateTable();
-    return 1;
-}
-
-// Lua function: RemixMaterial.MarkMaterialFixed(materialName) - DEPRECATED, no-op
-LUA_FUNCTION(RemixMaterial_MarkMaterialFixed) {
-    // Deprecated - use HashCollisionFixer.MarkMaterialFixed() instead
-    LUA->PushBool(true);
-    return 1;
-}
-
-// Lua function: RemixMaterial.IsMaterialFixed(materialName) - DEPRECATED, returns false
-LUA_FUNCTION(RemixMaterial_IsMaterialFixed) {
-    // Deprecated - use HashCollisionFixer.IsMaterialFixed() instead
-    LUA->PushBool(false);
-    return 1;
-}
-
-// Lua function: RemixMaterial.ProcessPendingSolidColors() - DEPRECATED, returns 0
-LUA_FUNCTION(RemixMaterial_ProcessPendingSolidColors) {
-    // Deprecated - use HashCollisionFixer module instead
-    LUA->PushNumber(0);
-    return 1;
-}
-
 // Initialize Material Manager Lua bindings
 void MaterialManager::InitializeLuaBindings() {
     if (!m_lua) return;
@@ -1316,32 +1256,6 @@ void MaterialManager::InitializeLuaBindings() {
     
     m_lua->PushCFunction(RemixMaterial_SetDebugOutput);
     m_lua->SetField(-2, "SetDebugOutput");
-    
-    // Hash collision detection functions
-    m_lua->PushCFunction(RemixMaterial_GetHashCollisions);
-    m_lua->SetField(-2, "GetHashCollisions");
-    
-    m_lua->PushCFunction(RemixMaterial_GetMaterialCollisions);
-    m_lua->SetField(-2, "GetMaterialCollisions");
-    
-    m_lua->PushCFunction(RemixMaterial_HasHashCollision);
-    m_lua->SetField(-2, "HasHashCollision");
-    
-    // Solid color detection and fix functions
-    m_lua->PushCFunction(RemixMaterial_IsSolidColor);
-    m_lua->SetField(-2, "IsSolidColor");
-    
-    m_lua->PushCFunction(RemixMaterial_GetSolidColorMaterials);
-    m_lua->SetField(-2, "GetSolidColorMaterials");
-    
-    m_lua->PushCFunction(RemixMaterial_MarkMaterialFixed);
-    m_lua->SetField(-2, "MarkMaterialFixed");
-    
-    m_lua->PushCFunction(RemixMaterial_IsMaterialFixed);
-    m_lua->SetField(-2, "IsMaterialFixed");
-    
-    m_lua->PushCFunction(RemixMaterial_ProcessPendingSolidColors);
-    m_lua->SetField(-2, "ProcessPendingSolidColors");
     
     // Set the table as the global "RemixMaterial"
     m_lua->SetField(-2, "RemixMaterial");

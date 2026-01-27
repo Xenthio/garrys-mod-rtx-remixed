@@ -12,7 +12,6 @@
 #include <cctype>
 #include <remix/remix.h>
 #include "remixapi/legacy_texture_processor.h"
-#include "globalconvars.h"
 
 // Global material system pointer (from module.cpp)
 extern IMaterialSystem* materials;
@@ -346,10 +345,6 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                                 hash = result.value();
                             }
                         }
-                        
-                        // NOTE: Solid-color texture fixing is handled by the HashCollisionFixer module.
-                        // It uses VTF file parsing to detect solid colors (safe with DXVK).
-                        // We don't modify anything in Hook_SetTexture to avoid DXVK crashes.
                         
                         // AddRef to keep the texture alive while we reference it
                         p2DTexture->AddRef();
@@ -1460,28 +1455,6 @@ void D3D9TextureTracker::SetDebugOutput(bool enabled) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_enableDebugOutput = enabled;
     Msg("[D3D9TextureTracker] Debug output %s\n", enabled ? "enabled" : "disabled");
-}
-
-// FNV-1a hash constants for generating unique texture modifications
-constexpr uint64_t FNV_OFFSET_BASIS_64 = 14695981039346656037ULL;
-constexpr uint64_t FNV_PRIME_64 = 1099511628211ULL;
-
-// Create a NEW texture with a solid color plus a tiny modification based on material name.
-// NOTE: This function is currently DISABLED because even creating new D3D9 textures
-// and using UpdateTexture causes crashes with DXVK/RTX Remix.
-// The crash happens with "An invalid parameter was passed to a function that considers invalid parameters fatal"
-// 
-// For now, we only provide collision DETECTION, not automatic fixing.
-// A proper fix would need to be done at the Source Engine material level or via Lua.
-IDirect3DTexture9* D3D9TextureTracker::CreateModifiedTexture(IDirect3DTexture9* pOriginal, 
-                                                               const std::string& materialName, 
-                                                               uint64_t* outHash) {
-    // DISABLED: Creating new D3D9 textures and using UpdateTexture still causes crashes with DXVK
-    // Return nullptr to indicate we couldn't create a modified texture
-    (void)pOriginal;
-    (void)materialName;
-    if (outHash) *outHash = 0;
-    return nullptr;
 }
 
 // Check if material is a world texture
