@@ -196,9 +196,31 @@ size_t GetPendingCount() {
 // Lua Bindings
 // =========================================================================
 
-// Get filesystem from Source Engine (defined in module.cpp)
-// This is the standard way to access IFileSystem in this codebase.
-extern IFileSystem* g_pFullFileSystem;
+// Filesystem access - dynamically retrieved from Source Engine
+static IFileSystem* s_pFileSystem = nullptr;
+
+static IFileSystem* GetFileSystem() {
+    if (s_pFileSystem) return s_pFileSystem;
+    
+    // Get filesystem interface the same way as other modules
+    HMODULE hModule = GetModuleHandleA("filesystem_stdio.dll");
+    if (hModule) {
+        typedef void* (*CreateInterfaceFn)(const char* pName, int* pReturnCode);
+        CreateInterfaceFn createInterface = (CreateInterfaceFn)GetProcAddress(hModule, "CreateInterface");
+        if (createInterface) {
+            // Try different versions
+            s_pFileSystem = (IFileSystem*)createInterface("VFileSystem022", nullptr);
+            if (!s_pFileSystem) {
+                s_pFileSystem = (IFileSystem*)createInterface("VFileSystem021", nullptr);
+            }
+            if (!s_pFileSystem) {
+                s_pFileSystem = (IFileSystem*)createInterface("VFileSystem017", nullptr);
+            }
+        }
+    }
+    
+    return s_pFileSystem;
+}
 
 // Lua: HashCollisionFixer.CheckMaterial(materialName, texturePath, [debugOutput])
 // debugOutput is optional, defaults to false
@@ -207,7 +229,13 @@ LUA_FUNCTION(Lua_CheckMaterial) {
     const char* texturePath = LUA->CheckString(2);
     bool debug = LUA->IsType(3, Type::Bool) ? LUA->GetBool(3) : false;
     
-    bool result = CheckMaterial(g_pFullFileSystem, materialName, texturePath, debug);
+    IFileSystem* fs = GetFileSystem();
+    if (!fs) {
+        LUA->PushBool(false);
+        return 1;
+    }
+    
+    bool result = CheckMaterial(fs, materialName, texturePath, debug);
     LUA->PushBool(result);
     return 1;
 }
@@ -296,7 +324,14 @@ LUA_FUNCTION(Lua_CheckSolidColor) {
     const char* texturePath = LUA->CheckString(1);
     bool debug = LUA->IsType(2, Type::Bool) ? LUA->GetBool(2) : false;
     
-    VTFParser::SolidColorResult result = VTFParser::CheckSolidColor(g_pFullFileSystem, texturePath, debug);
+    IFileSystem* fs = GetFileSystem();
+    if (!fs) {
+        LUA->PushBool(false);
+        LUA->PushString("Could not get filesystem interface");
+        return 2;
+    }
+    
+    VTFParser::SolidColorResult result = VTFParser::CheckSolidColor(fs, texturePath, debug);
     
     if (result.error) {
         LUA->PushBool(false);
