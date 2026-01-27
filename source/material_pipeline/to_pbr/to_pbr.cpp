@@ -1,9 +1,9 @@
 #ifdef _WIN64
 
-#include "remixapi.h"
-#include "legacy_texture_processor_formats.h"
-#include "legacy_texture_processor_vtf.h"
-#include "legacy_texture_processor_usda.h"
+#include "to_pbr.h"
+#include "formats.h"
+#include "vtf.h"
+#include "usda.h"
 #include <tier0/dbg.h>
 #include <materialsystem/imaterialsystem.h>
 #include <materialsystem/imaterial.h>
@@ -12,8 +12,7 @@
 #include <filesystem.h>
 #include <d3d9.h>
 #include <Windows.h>
-#include "../d3d9_texture_tracker.h"
-#include "legacy_texture_processor.h"
+#include "../../d3d9_texture_tracker.h"
 
 #include <algorithm>
 #include <cstring>
@@ -26,7 +25,8 @@
 extern IMaterialSystem* materials;
 extern remix::Interface* g_remix;
 
-namespace LegacyTextureProcessor {
+namespace MaterialPipeline {
+namespace ToPBR {
 
 // PBR conversion constants
 constexpr float MAX_PHONG_EXPONENT = 150.0f;  // Typical max in Source Engine
@@ -142,7 +142,7 @@ bool TextureProcessor::Initialize(remix::Interface* remixInterface) {
     }
     
     if (!remixInterface) {
-        Warning("[LegacyTextureProcessor] Invalid Remix interface\n");
+        Warning("[MaterialPipeline::ToPBR] Invalid Remix interface\n");
         return false;
     }
     
@@ -150,7 +150,7 @@ bool TextureProcessor::Initialize(remix::Interface* remixInterface) {
     m_fileSystem = GetFileSystemInterface();
     
     if (!m_fileSystem) {
-        Warning("[LegacyTextureProcessor] Could not get filesystem interface\n");
+        Warning("[MaterialPipeline::ToPBR] Could not get filesystem interface\n");
         return false;
     }
     
@@ -178,9 +178,26 @@ bool TextureProcessor::Initialize(remix::Interface* remixInterface) {
         }
     }
     
+    // Load existing hashes from USDA file to skip already-processed materials
+    if (!m_outputDirectory.empty()) {
+        std::string modDir = USDA::GetModDirectory(m_outputDirectory);
+        std::string materialsUsdaPath = modDir + "/materials.usda";
+        
+        std::unordered_set<uint64_t> existingHashes;
+        if (USDA::LoadExistingHashes(materialsUsdaPath, existingHashes, true)) {
+            // Bulk insert existing hashes
+            m_materialsWrittenToUSDA.insert(existingHashes.begin(), existingHashes.end());
+            
+            if (!existingHashes.empty()) {
+                Msg("[MaterialPipeline::ToPBR] Loaded %zu existing material hashes from USDA\n", 
+                    existingHashes.size());
+            }
+        }
+    }
+    
     m_initialized = true;
-    Msg("[LegacyTextureProcessor] Initialized successfully\n");
-    Msg("[LegacyTextureProcessor] Output directory: %s\n", m_outputDirectory.c_str());
+    Msg("[MaterialPipeline::ToPBR] Initialized successfully\n");
+    Msg("[MaterialPipeline::ToPBR] Output directory: %s\n", m_outputDirectory.c_str());
     return true;
 }
 
@@ -220,13 +237,13 @@ void TextureProcessor::Shutdown() {
     m_remixInterface = nullptr;
     m_initialized = false;
     
-    Msg("[LegacyTextureProcessor] Shutdown complete\n");
+    Msg("[MaterialPipeline::ToPBR] Shutdown complete\n");
 }
 
 void TextureProcessor::SetOutputDirectory(const std::string& path) {
     m_outputDirectory = path;
     if (m_debugOutput) {
-        Msg("[LegacyTextureProcessor] Output directory set to: %s\n", path.c_str());
+        Msg("[MaterialPipeline::ToPBR] Output directory set to: %s\n", path.c_str());
     }
 }
 
@@ -236,7 +253,7 @@ IFileSystem* TextureProcessor::GetFileSystem() {
 
 bool TextureProcessor::EnsureOutputDirectory() {
     if (m_outputDirectory.empty()) {
-        Warning("[LegacyTextureProcessor] Output directory not set\n");
+        Warning("[MaterialPipeline::ToPBR] Output directory not set\n");
         return false;
     }
     
@@ -259,7 +276,7 @@ bool TextureProcessor::EnsureOutputDirectory() {
     // Check if directory exists now
     DWORD attrib = GetFileAttributesA(m_outputDirectory.c_str());
     if (attrib == INVALID_FILE_ATTRIBUTES || !(attrib & FILE_ATTRIBUTE_DIRECTORY)) {
-        Warning("[LegacyTextureProcessor] Failed to create output directory: %s\n", m_outputDirectory.c_str());
+        Warning("[MaterialPipeline::ToPBR] Failed to create output directory: %s\n", m_outputDirectory.c_str());
         return false;
     }
     
@@ -312,13 +329,13 @@ bool TextureProcessor::WriteDDSHeader(std::ofstream& file, uint32_t width, uint3
 
 bool TextureProcessor::WriteTextureToDDS(const ConvertedTexture& texture, const std::string& outputPath) {
     if (texture.pixelData.empty()) {
-        Warning("[LegacyTextureProcessor] Cannot write empty texture\n");
+        Warning("[MaterialPipeline::ToPBR] Cannot write empty texture\n");
         return false;
     }
     
     std::ofstream file(outputPath, std::ios::binary);
     if (!file.is_open()) {
-        Warning("[LegacyTextureProcessor] Failed to open file for writing: %s\n", outputPath.c_str());
+        Warning("[MaterialPipeline::ToPBR] Failed to open file for writing: %s\n", outputPath.c_str());
         return false;
     }
     
@@ -327,7 +344,7 @@ bool TextureProcessor::WriteTextureToDDS(const ConvertedTexture& texture, const 
     
     // Write DDS header with mipmap info
     if (!WriteDDSHeader(file, texture.width, texture.height, true, mipCount)) {
-        Warning("[LegacyTextureProcessor] Failed to write DDS header\n");
+        Warning("[MaterialPipeline::ToPBR] Failed to write DDS header\n");
         return false;
     }
     
@@ -393,14 +410,14 @@ bool TextureProcessor::WriteTextureToDDS(const ConvertedTexture& texture, const 
     }
     
     if (!file.good()) {
-        Warning("[LegacyTextureProcessor] Failed to write texture data\n");
+        Warning("[MaterialPipeline::ToPBR] Failed to write texture data\n");
         return false;
     }
     
     file.close();
     
     if (m_debugOutput) {
-        Msg("[LegacyTextureProcessor] Wrote DDS file: %s (%dx%d, %d mips)\n", outputPath.c_str(), texture.width, texture.height, mipCount);
+        Msg("[MaterialPipeline::ToPBR] Wrote DDS file: %s (%dx%d, %d mips)\n", outputPath.c_str(), texture.width, texture.height, mipCount);
     }
     
     return true;
@@ -427,7 +444,7 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
     // =========================================================================
     
     if (m_debugOutput) {
-        Msg("[LegacyTextureProcessor] GenerateRoughnessTexture for %s:\n", props.materialName.c_str());
+        Msg("[MaterialPipeline::ToPBR] GenerateRoughnessTexture for %s:\n", props.materialName.c_str());
         Msg("  hasPhong=%d, hasPhongExpTex=%d (%s)\n", props.hasPhong, props.hasPhongExponentTexture, props.phongExponentTexturePath.c_str());
         Msg("  normMapAlphaEnvMapMask=%d, hasBaseMapAlphaPhongMask=%d\n", props.normalMapAlphaEnvMapMask, props.hasBaseMapAlphaPhongMask);
         Msg("  hasBump=%d (%s)\n", props.hasBumpMap, props.bumpMapPath.c_str());
@@ -452,7 +469,7 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
             useAlphaChannel = false;
             isPhongExponentTexture = true;
             if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] %s: [PHONG] Using $phongexponenttexture (best quality)\n", props.materialName.c_str());
+                Msg("[MaterialPipeline::ToPBR] %s: [PHONG] Using $phongexponenttexture (best quality)\n", props.materialName.c_str());
             }
         }
         // Priority 2: $basemapalphaphongmask - base texture alpha as phong mask
@@ -460,7 +477,7 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
             vtfPath = props.baseTexturePath;
             useAlphaChannel = true;
             if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] %s: [PHONG] Using base texture alpha ($basemapalphaphongmask)\n", props.materialName.c_str());
+                Msg("[MaterialPipeline::ToPBR] %s: [PHONG] Using base texture alpha ($basemapalphaphongmask)\n", props.materialName.c_str());
             }
         }
         // Priority 3: $normalmapalphaenvmapmask - normal map alpha as mask
@@ -468,7 +485,7 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
             vtfPath = props.bumpMapPath;
             useAlphaChannel = true;
             if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] %s: [PHONG] Using normal map alpha ($normalmapalphaenvmapmask)\n", props.materialName.c_str());
+                Msg("[MaterialPipeline::ToPBR] %s: [PHONG] Using normal map alpha ($normalmapalphaenvmapmask)\n", props.materialName.c_str());
             }
         }
         // Priority 4: Default Source Engine behavior - phong + bumpmap = normal alpha has phong mask
@@ -476,7 +493,7 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
             vtfPath = props.bumpMapPath;
             useAlphaChannel = true;
             if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] %s: [PHONG] Using normal map alpha (default Source behavior)\n", props.materialName.c_str());
+                Msg("[MaterialPipeline::ToPBR] %s: [PHONG] Using normal map alpha (default Source behavior)\n", props.materialName.c_str());
             }
         }
     }
@@ -490,7 +507,7 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
             vtfPath = props.envMapMaskPath;
             useAlphaChannel = false;
             if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] %s: Using $envmapmask for roughness\n", props.materialName.c_str());
+                Msg("[MaterialPipeline::ToPBR] %s: Using $envmapmask for roughness\n", props.materialName.c_str());
             }
         }
         // Priority 6: $basealphaenvmapmask - base texture alpha as envmap mask (INVERTED!)
@@ -499,7 +516,7 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
             useAlphaChannel = true;
             isInvertedMask = true;
             if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] %s: Using base texture alpha ($basealphaenvmapmask - INVERTED)\n", props.materialName.c_str());
+                Msg("[MaterialPipeline::ToPBR] %s: Using base texture alpha ($basealphaenvmapmask - INVERTED)\n", props.materialName.c_str());
             }
         }
         // Priority 7: Auto-discovered _mask/_spec textures
@@ -507,7 +524,7 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
             vtfPath = props.discoveredMaskPath;
             useAlphaChannel = false;  // Use the RGB channels of the discovered mask
             if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] %s: Using auto-discovered mask/spec texture: %s\n", props.materialName.c_str(), props.discoveredMaskPath.c_str());
+                Msg("[MaterialPipeline::ToPBR] %s: Using auto-discovered mask/spec texture: %s\n", props.materialName.c_str(), props.discoveredMaskPath.c_str());
             }
         }
         // Priority 8: $envmap + normal map alpha (implicit $normalmapalphaenvmapmask)
@@ -515,7 +532,7 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
             vtfPath = props.bumpMapPath;
             useAlphaChannel = true;
             if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] %s: Trying normal map alpha (implicit envmap roughness)\n", props.materialName.c_str());
+                Msg("[MaterialPipeline::ToPBR] %s: Trying normal map alpha (implicit envmap roughness)\n", props.materialName.c_str());
             }
         }
         // Priority 9: $envmap + base texture alpha (implicit $basealphaenvmapmask)
@@ -524,7 +541,7 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
             useAlphaChannel = true;
             isInvertedMask = true;
             if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] %s: Trying base texture alpha (implicit envmap - INVERTED)\n", props.materialName.c_str());
+                Msg("[MaterialPipeline::ToPBR] %s: Trying base texture alpha (implicit envmap - INVERTED)\n", props.materialName.c_str());
             }
         }
         // Priority 10 (LAST RESORT): Try normal map alpha anyway for materials with bumpmap
@@ -532,7 +549,7 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
             vtfPath = props.bumpMapPath;
             useAlphaChannel = true;
             if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] %s: Last resort - trying normal map alpha\n", props.materialName.c_str());
+                Msg("[MaterialPipeline::ToPBR] %s: Last resort - trying normal map alpha\n", props.materialName.c_str());
             }
         }
     }
@@ -540,7 +557,7 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
     // No valid roughness source found - use constant value in USDA
     if (vtfPath.empty()) {
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] No roughness texture source for %s, will use constant %.2f\n",
+            Msg("[MaterialPipeline::ToPBR] No roughness texture source for %s, will use constant %.2f\n",
                 props.materialName.c_str(), props.roughness);
         }
         return false;
@@ -550,12 +567,12 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
     std::vector<uint8_t> fileData;
     
     if (m_debugOutput) {
-        Msg("[LegacyTextureProcessor] Attempting to read texture for roughness: %s\n", vtfPath.c_str());
+        Msg("[MaterialPipeline::ToPBR] Attempting to read texture for roughness: %s\n", vtfPath.c_str());
     }
     
     if (!ReadVTFFile(vtfPath, fileData)) {
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] Failed to read VTF: %s (will use constant)\n", vtfPath.c_str());
+            Msg("[MaterialPipeline::ToPBR] Failed to read VTF: %s (will use constant)\n", vtfPath.c_str());
         }
         return false;
     }
@@ -563,7 +580,7 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
     VTFFileHeader header;
     if (!ParseVTFHeader(fileData, header)) {
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] Failed to parse VTF header: %s\n", vtfPath.c_str());
+            Msg("[MaterialPipeline::ToPBR] Failed to parse VTF header: %s\n", vtfPath.c_str());
         }
         return false;
     }
@@ -571,7 +588,7 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
     ConvertedTexture sourceTex;
     if (!ExtractVTFPixelData(fileData, header, sourceTex, false)) {
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] Failed to extract pixel data: %s\n", vtfPath.c_str());
+            Msg("[MaterialPipeline::ToPBR] Failed to extract pixel data: %s\n", vtfPath.c_str());
         }
         return false;
     }
@@ -589,7 +606,7 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
         }
         if (!hasAlphaVariation) {
             if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] %s: Alpha channel has no variation (all %d), will use constant roughness\n", 
+                Msg("[MaterialPipeline::ToPBR] %s: Alpha channel has no variation (all %d), will use constant roughness\n", 
                     vtfPath.c_str(), firstAlpha);
             }
             return false;
@@ -671,7 +688,7 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
     if (m_debugOutput) {
         const char* sourceType = isPhongExponentTexture ? "phong exponent texture" :
                                  useAlphaChannel ? "alpha channel (phong mask)" : "envmap mask";
-        Msg("[LegacyTextureProcessor] Generated roughness from %s: %s (%dx%d)\n",
+        Msg("[MaterialPipeline::ToPBR] Generated roughness from %s: %s (%dx%d)\n",
             sourceType, vtfPath.c_str(), outTexture.width, outTexture.height);
     }
     return true;
@@ -685,7 +702,7 @@ bool TextureProcessor::GenerateMetallicTexture(const MaterialPBRProperties& prop
     // Only generate metallic map if material has envmap and average brightness suggests some metallic areas
     if (!props.hasEnvMap || props.baseTextureBrightness >= 0.4f || props.metallic <= 0.05f) {
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: No metallic texture needed (hasEnvMap=%d, avgBrightness=%.2f, metallic=%.2f)\n",
+            Msg("[MaterialPipeline::ToPBR] %s: No metallic texture needed (hasEnvMap=%d, avgBrightness=%.2f, metallic=%.2f)\n",
                 props.materialName.c_str(), props.hasEnvMap ? 1 : 0, props.baseTextureBrightness, props.metallic);
         }
         return false;
@@ -695,7 +712,7 @@ bool TextureProcessor::GenerateMetallicTexture(const MaterialPBRProperties& prop
     std::vector<uint8_t> fileData;
     if (!ReadVTFFile(props.baseTexturePath, fileData)) {
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: Could not read base texture for metallic map generation\n",
+            Msg("[MaterialPipeline::ToPBR] %s: Could not read base texture for metallic map generation\n",
                 props.materialName.c_str());
         }
         return false;
@@ -705,7 +722,7 @@ bool TextureProcessor::GenerateMetallicTexture(const MaterialPBRProperties& prop
     VTFFileHeader header;
     if (!ParseVTFHeader(fileData, header)) {
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: Could not parse base texture VTF header for metallic map\n",
+            Msg("[MaterialPipeline::ToPBR] %s: Could not parse base texture VTF header for metallic map\n",
                 props.materialName.c_str());
         }
         return false;
@@ -715,7 +732,7 @@ bool TextureProcessor::GenerateMetallicTexture(const MaterialPBRProperties& prop
     ConvertedTexture sourceTex;
     if (!ExtractVTFPixelData(fileData, header, sourceTex, false)) {
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: Could not extract base texture pixel data for metallic map\n",
+            Msg("[MaterialPipeline::ToPBR] %s: Could not extract base texture pixel data for metallic map\n",
                 props.materialName.c_str());
         }
         return false;
@@ -763,7 +780,7 @@ bool TextureProcessor::GenerateMetallicTexture(const MaterialPBRProperties& prop
     }
     
     if (m_debugOutput) {
-        Msg("[LegacyTextureProcessor] %s: Generated %dx%d per-pixel metallic map from base texture brightness\n",
+        Msg("[MaterialPipeline::ToPBR] %s: Generated %dx%d per-pixel metallic map from base texture brightness\n",
             props.materialName.c_str(), sourceTex.width, sourceTex.height);
     }
     
@@ -772,7 +789,7 @@ bool TextureProcessor::GenerateMetallicTexture(const MaterialPBRProperties& prop
 
 bool TextureProcessor::ReadVTFFile(const std::string& path, std::vector<uint8_t>& outData) {
     if (!m_fileSystem) {
-        Warning("[LegacyTextureProcessor] Filesystem not available\n");
+        Warning("[MaterialPipeline::ToPBR] Filesystem not available\n");
         return false;
     }
     // Delegate to VTF module
@@ -919,7 +936,7 @@ uint64_t TextureProcessor::GenerateTextureHashWithPixelData(const std::string& p
             hash *= 1099511628211ULL;
             
             if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] Solid color texture detected: %s (RGBA: %d,%d,%d,%d) - hash with color data\n",
+                Msg("[MaterialPipeline::ToPBR] Solid color texture detected: %s (RGBA: %d,%d,%d,%d) - hash with color data\n",
                     path.c_str(), pixelData[0], pixelData[1], pixelData[2], pixelData[3]);
             }
         }
@@ -935,7 +952,7 @@ uint64_t TextureProcessor::GenerateTextureHashWithPixelData(const std::string& p
 bool TextureProcessor::UploadTextureToRemix(const ConvertedTexture& texture, 
                                                 remixapi_TextureHandle* outHandle) {
     if (!m_remixInterface) {
-        Warning("[LegacyTextureProcessor] Remix interface not available\n");
+        Warning("[MaterialPipeline::ToPBR] Remix interface not available\n");
         return false;
     }
     
@@ -953,7 +970,7 @@ bool TextureProcessor::UploadTextureToRemix(const ConvertedTexture& texture,
     
     auto result = m_remixInterface->CreateTexture(texInfo);
     if (!result) {
-        Warning("[LegacyTextureProcessor] Failed to create texture: error %d\n", result.status());
+        Warning("[MaterialPipeline::ToPBR] Failed to create texture: error %d\n", result.status());
         return false;
     }
     
@@ -962,7 +979,7 @@ bool TextureProcessor::UploadTextureToRemix(const ConvertedTexture& texture,
     }
     
     if (m_debugOutput) {
-        Msg("[LegacyTextureProcessor] Uploaded texture: %dx%d, hash 0x%llX\n", 
+        Msg("[MaterialPipeline::ToPBR] Uploaded texture: %dx%d, hash 0x%llX\n", 
             texture.width, texture.height, texture.hash);
     }
     
@@ -970,7 +987,7 @@ bool TextureProcessor::UploadTextureToRemix(const ConvertedTexture& texture,
 }
 
 uint64_t TextureProcessor::ConvertAndUploadTexture(const std::string& vtfPath, bool isNormalMap) {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     
     // Check cache
     auto it = m_uploadedTextures.find(vtfPath);
@@ -1078,7 +1095,7 @@ float TextureProcessor::CalculateRoughness(const MaterialPBRProperties& props) {
                 // brightness 0.2 -> roughness 0.15 (brushed metal)
                 roughness = 0.05f + (props.baseTextureBrightness * 0.50f);
                 if (m_debugOutput) {
-                    Msg("[LegacyTextureProcessor] %s: Metallic roughness from dark texture: brightness=%.3f -> roughness=%.2f\n",
+                    Msg("[MaterialPipeline::ToPBR] %s: Metallic roughness from dark texture: brightness=%.3f -> roughness=%.2f\n",
                         props.materialName.c_str(), props.baseTextureBrightness, roughness);
                 }
             }
@@ -1125,7 +1142,7 @@ float TextureProcessor::CalculateRoughness(const MaterialPBRProperties& props) {
         }
         roughness = max(0.30f, roughness - rimFactor);
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: Rim light adjustment: rimFactor=%.2f, roughness=%.2f\n",
+            Msg("[MaterialPipeline::ToPBR] %s: Rim light adjustment: rimFactor=%.2f, roughness=%.2f\n",
                 props.materialName.c_str(), rimFactor, roughness);
         }
     }
@@ -1175,7 +1192,7 @@ float TextureProcessor::EstimateMetallic(const MaterialPBRProperties& props) {
             }
             
             if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] %s: [EXPERIMENTAL] Metallic from base texture darkness: brightness=%.3f -> metallic=%.2f\n",
+                Msg("[MaterialPipeline::ToPBR] %s: [EXPERIMENTAL] Metallic from base texture darkness: brightness=%.3f -> metallic=%.2f\n",
                     props.materialName.c_str(), props.baseTextureBrightness, metallic);
             }
         }
@@ -1206,7 +1223,7 @@ bool TextureProcessor::AnalyzeBaseTextureBrightness(const std::string& texturePa
     std::vector<uint8_t> fileData;
     if (!ReadVTFFile(texturePath, fileData)) {
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] Failed to read base texture for brightness analysis: %s\n", texturePath.c_str());
+            Msg("[MaterialPipeline::ToPBR] Failed to read base texture for brightness analysis: %s\n", texturePath.c_str());
         }
         return false;
     }
@@ -1214,7 +1231,7 @@ bool TextureProcessor::AnalyzeBaseTextureBrightness(const std::string& texturePa
     VTFFileHeader header;
     if (!ParseVTFHeader(fileData, header)) {
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] Failed to parse VTF header for brightness analysis: %s\n", texturePath.c_str());
+            Msg("[MaterialPipeline::ToPBR] Failed to parse VTF header for brightness analysis: %s\n", texturePath.c_str());
         }
         return false;
     }
@@ -1222,7 +1239,7 @@ bool TextureProcessor::AnalyzeBaseTextureBrightness(const std::string& texturePa
     ConvertedTexture sourceTex;
     if (!ExtractVTFPixelData(fileData, header, sourceTex, false)) {
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] Failed to extract pixel data for brightness analysis: %s\n", texturePath.c_str());
+            Msg("[MaterialPipeline::ToPBR] Failed to extract pixel data for brightness analysis: %s\n", texturePath.c_str());
         }
         return false;
     }
@@ -1250,7 +1267,7 @@ bool TextureProcessor::AnalyzeBaseTextureBrightness(const std::string& texturePa
     outBrightness = static_cast<float>(totalLuminance / pixelCount);
     
     if (m_debugOutput) {
-        Msg("[LegacyTextureProcessor] %s: Base texture brightness analyzed: %.3f (pixels=%zu)\n",
+        Msg("[MaterialPipeline::ToPBR] %s: Base texture brightness analyzed: %.3f (pixels=%zu)\n",
             texturePath.c_str(), outBrightness, pixelCount);
     }
     
@@ -1288,7 +1305,7 @@ void TextureProcessor::DiscoverCompanionTextures(const std::string& baseTextureP
     }
     
     if (m_debugOutput) {
-        Msg("[LegacyTextureProcessor] Searching for companion textures for: %s\n", basePath.c_str());
+        Msg("[MaterialPipeline::ToPBR] Searching for companion textures for: %s\n", basePath.c_str());
     }
     
     // List of suffix variants to check for each type
@@ -1309,7 +1326,7 @@ void TextureProcessor::DiscoverCompanionTextures(const std::string& baseTextureP
                 props.discoveredNormalPath = candidatePath;
                 props.hasDiscoveredNormal = true;
                 if (m_debugOutput) {
-                    Msg("[LegacyTextureProcessor] Discovered normal map: %s\n", candidatePath.c_str());
+                    Msg("[MaterialPipeline::ToPBR] Discovered normal map: %s\n", candidatePath.c_str());
                 }
                 break;
             }
@@ -1325,7 +1342,7 @@ void TextureProcessor::DiscoverCompanionTextures(const std::string& baseTextureP
                 props.discoveredHeightPath = candidatePath;
                 props.hasDiscoveredHeight = true;
                 if (m_debugOutput) {
-                    Msg("[LegacyTextureProcessor] Discovered height map: %s\n", candidatePath.c_str());
+                    Msg("[MaterialPipeline::ToPBR] Discovered height map: %s\n", candidatePath.c_str());
                 }
                 break;
             }
@@ -1341,7 +1358,7 @@ void TextureProcessor::DiscoverCompanionTextures(const std::string& baseTextureP
                 props.discoveredMaskPath = candidatePath;
                 props.hasDiscoveredMask = true;
                 if (m_debugOutput) {
-                    Msg("[LegacyTextureProcessor] Discovered mask/spec map: %s\n", candidatePath.c_str());
+                    Msg("[MaterialPipeline::ToPBR] Discovered mask/spec map: %s\n", candidatePath.c_str());
                 }
                 break;
             }
@@ -1356,7 +1373,7 @@ void TextureProcessor::DiscoverCompanionTextures(const std::string& baseTextureP
             props.discoveredAOPath = candidatePath;
             props.hasDiscoveredAO = true;
             if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] Discovered AO map: %s\n", candidatePath.c_str());
+                Msg("[MaterialPipeline::ToPBR] Discovered AO map: %s\n", candidatePath.c_str());
             }
             break;
         }
@@ -2249,7 +2266,7 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
     }
     
     if (debugOutput) {
-        Msg("[LegacyTextureProcessor] VMT direct parse for '%s':\n", materialName.c_str());
+        Msg("[MaterialPipeline::ToPBR] VMT direct parse for '%s':\n", materialName.c_str());
         Msg("  shader='%s', $basetexture='%s', $bumpmap='%s'\n",
             outProps.shaderName.c_str(), outProps.baseTexture.c_str(), outProps.bumpMap.c_str());
         Msg("  $phong=%d, $phongexponent=%.1f, $ssbump=%d, $envmap=%d\n",
@@ -2320,14 +2337,14 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
 bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName, 
                                               MaterialPBRProperties& outProps) {
     if (!materials) {
-        Warning("[LegacyTextureProcessor] Material system not available\n");
+        Warning("[MaterialPipeline::ToPBR] Material system not available\n");
         return false;
     }
     
     IMaterial* pMaterial = materials->FindMaterial(materialName.c_str(), TEXTURE_GROUP_OTHER, false);
     if (!pMaterial || pMaterial->IsErrorMaterial()) {
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] Material not found: %s\n", materialName.c_str());
+            Msg("[MaterialPipeline::ToPBR] Material not found: %s\n", materialName.c_str());
         }
         return false;
     }
@@ -2479,7 +2496,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     // If VMT parsing succeeded, prefer VMT shader name over the DX6 fallback name
     if (hasVMTParsed && !vmtParsed.shaderName.empty()) {
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: Using VMT shader '%s' instead of runtime '%s'\n", 
+            Msg("[MaterialPipeline::ToPBR] %s: Using VMT shader '%s' instead of runtime '%s'\n", 
                 materialName.c_str(), vmtParsed.shaderName.c_str(), outProps.shaderName.c_str());
         }
         outProps.shaderName = vmtParsed.shaderName;
@@ -2509,7 +2526,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     if (hasVMTParsed && vmtParsed.hasBaseTexture && IsValidTexturePath(vmtParsed.baseTexture)) {
         outProps.baseTexturePath = vmtParsed.baseTexture;
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: $basetexture (from VMT) = %s\n", materialName.c_str(), outProps.baseTexturePath.c_str());
+            Msg("[MaterialPipeline::ToPBR] %s: $basetexture (from VMT) = %s\n", materialName.c_str(), outProps.baseTexturePath.c_str());
         }
     } else {
         // Fallback to FindVar
@@ -2531,9 +2548,9 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
                 outProps.baseTexturePath = texPath;
             }
             if (m_debugOutput && !outProps.baseTexturePath.empty()) {
-                Msg("[LegacyTextureProcessor] %s: $basetexture (from FindVar) = %s\n", materialName.c_str(), outProps.baseTexturePath.c_str());
+                Msg("[MaterialPipeline::ToPBR] %s: $basetexture (from FindVar) = %s\n", materialName.c_str(), outProps.baseTexturePath.c_str());
             } else if (m_debugOutput && strVal) {
-                Msg("[LegacyTextureProcessor] %s: $basetexture filtered (invalid path: '%s')\n", materialName.c_str(), strVal);
+                Msg("[MaterialPipeline::ToPBR] %s: $basetexture filtered (invalid path: '%s')\n", materialName.c_str(), strVal);
             }
         }
     }
@@ -2544,7 +2561,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
         outProps.bumpMapPath = vmtParsed.bumpMap;
         outProps.hasBumpMap = true;
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: $bumpmap (from VMT) = %s\n", materialName.c_str(), outProps.bumpMapPath.c_str());
+            Msg("[MaterialPipeline::ToPBR] %s: $bumpmap (from VMT) = %s\n", materialName.c_str(), outProps.bumpMapPath.c_str());
         }
     } else {
         IMaterialVar* pVar = pMaterial->FindVar("$bumpmap", &found, false);
@@ -2565,9 +2582,9 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
                 outProps.hasBumpMap = true;
             }
             if (m_debugOutput && outProps.hasBumpMap) {
-                Msg("[LegacyTextureProcessor] %s: $bumpmap (from FindVar) = %s\n", materialName.c_str(), outProps.bumpMapPath.c_str());
+                Msg("[MaterialPipeline::ToPBR] %s: $bumpmap (from FindVar) = %s\n", materialName.c_str(), outProps.bumpMapPath.c_str());
             } else if (m_debugOutput && strVal) {
-                Msg("[LegacyTextureProcessor] %s: $bumpmap filtered (invalid path: '%s')\n", materialName.c_str(), strVal);
+                Msg("[MaterialPipeline::ToPBR] %s: $bumpmap filtered (invalid path: '%s')\n", materialName.c_str(), strVal);
             }
         }
     }
@@ -2576,7 +2593,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     if (hasVMTParsed && vmtParsed.hasSSBump && vmtParsed.ssbump != 0) {
         outProps.isSSBump = true;
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: $ssbump = 1 (from VMT, will convert to normal map)\n", materialName.c_str());
+            Msg("[MaterialPipeline::ToPBR] %s: $ssbump = 1 (from VMT, will convert to normal map)\n", materialName.c_str());
         }
     } else {
         IMaterialVar* pVar = pMaterial->FindVar("$ssbump", &found, false);
@@ -2585,7 +2602,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
             if (ssbumpValue != 0) {
                 outProps.isSSBump = true;
                 if (m_debugOutput) {
-                    Msg("[LegacyTextureProcessor] %s: $ssbump = 1 (will convert to normal map)\n", materialName.c_str());
+                    Msg("[MaterialPipeline::ToPBR] %s: $ssbump = 1 (will convert to normal map)\n", materialName.c_str());
                 }
             }
         }
@@ -2597,7 +2614,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
             outProps.bumpMapPath = vmtParsed.normalMap;
             outProps.hasBumpMap = true;
             if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] %s: $normalmap (from VMT) = %s\n", materialName.c_str(), outProps.bumpMapPath.c_str());
+                Msg("[MaterialPipeline::ToPBR] %s: $normalmap (from VMT) = %s\n", materialName.c_str(), outProps.bumpMapPath.c_str());
             }
         } else {
             IMaterialVar* pVar = pMaterial->FindVar("$normalmap", &found, false);
@@ -2618,9 +2635,9 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
                     outProps.hasBumpMap = true;
                 }
                 if (m_debugOutput && outProps.hasBumpMap) {
-                    Msg("[LegacyTextureProcessor] %s: $normalmap = %s\n", materialName.c_str(), outProps.bumpMapPath.c_str());
+                    Msg("[MaterialPipeline::ToPBR] %s: $normalmap = %s\n", materialName.c_str(), outProps.bumpMapPath.c_str());
                 } else if (m_debugOutput && strVal) {
-                    Msg("[LegacyTextureProcessor] %s: $normalmap filtered (invalid path: '%s')\n", materialName.c_str(), strVal);
+                    Msg("[MaterialPipeline::ToPBR] %s: $normalmap filtered (invalid path: '%s')\n", materialName.c_str(), strVal);
                 }
             }
         }
@@ -2631,7 +2648,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
         outProps.envMapMaskPath = vmtParsed.envMapMask;
         outProps.hasEnvMapMask = true;
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: $envmapmask (from VMT) = %s\n", materialName.c_str(), outProps.envMapMaskPath.c_str());
+            Msg("[MaterialPipeline::ToPBR] %s: $envmapmask (from VMT) = %s\n", materialName.c_str(), outProps.envMapMaskPath.c_str());
         }
     } else {
         IMaterialVar* pVar = pMaterial->FindVar("$envmapmask", &found, false);
@@ -2652,12 +2669,12 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
                 outProps.hasEnvMapMask = true;
             }
             if (m_debugOutput && outProps.hasEnvMapMask) {
-                Msg("[LegacyTextureProcessor] %s: $envmapmask = %s\n", materialName.c_str(), outProps.envMapMaskPath.c_str());
+                Msg("[MaterialPipeline::ToPBR] %s: $envmapmask = %s\n", materialName.c_str(), outProps.envMapMaskPath.c_str());
             } else if (m_debugOutput && strVal) {
-                Msg("[LegacyTextureProcessor] %s: $envmapmask filtered (invalid path: '%s')\n", materialName.c_str(), strVal);
+                Msg("[MaterialPipeline::ToPBR] %s: $envmapmask filtered (invalid path: '%s')\n", materialName.c_str(), strVal);
             }
         } else if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: $envmapmask not found\n", materialName.c_str());
+            Msg("[MaterialPipeline::ToPBR] %s: $envmapmask not found\n", materialName.c_str());
         }
     }
     
@@ -2665,7 +2682,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     if (hasVMTParsed && vmtParsed.hasEnvMap) {
         outProps.hasEnvMap = true;
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: $envmap (from VMT) = %s\n", materialName.c_str(), vmtParsed.envMap.c_str());
+            Msg("[MaterialPipeline::ToPBR] %s: $envmap (from VMT) = %s\n", materialName.c_str(), vmtParsed.envMap.c_str());
         }
     } else {
         IMaterialVar* pVar = pMaterial->FindVar("$envmap", &found, false);
@@ -2682,10 +2699,10 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
             if (strVal && strVal[0] != '\0' && !isUndefined) {
                 outProps.hasEnvMap = true;
                 if (m_debugOutput) {
-                    Msg("[LegacyTextureProcessor] %s: $envmap = %s\n", materialName.c_str(), strVal);
+                    Msg("[MaterialPipeline::ToPBR] %s: $envmap = %s\n", materialName.c_str(), strVal);
                 }
             } else if (m_debugOutput && strVal && isUndefined) {
-                Msg("[LegacyTextureProcessor] %s: $envmap = %s (ignored)\n", materialName.c_str(), strVal);
+                Msg("[MaterialPipeline::ToPBR] %s: $envmap = %s (ignored)\n", materialName.c_str(), strVal);
             }
         }
     }
@@ -2694,7 +2711,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     if (hasVMTParsed && vmtParsed.hasNormalMapAlphaEnvMapMask) {
         outProps.normalMapAlphaEnvMapMask = (vmtParsed.normalMapAlphaEnvMapMask != 0);
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: $normalmapalphaenvmapmask (from VMT) = %d\n", materialName.c_str(), vmtParsed.normalMapAlphaEnvMapMask);
+            Msg("[MaterialPipeline::ToPBR] %s: $normalmapalphaenvmapmask (from VMT) = %d\n", materialName.c_str(), vmtParsed.normalMapAlphaEnvMapMask);
         }
     } else {
         IMaterialVar* pVar = pMaterial->FindVar("$normalmapalphaenvmapmask", &found, false);
@@ -2711,13 +2728,13 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
             outProps.normalMapAlphaEnvMapMask = isTruthy;
             if (m_debugOutput) {
                 if (outProps.normalMapAlphaEnvMapMask) {
-                    Msg("[LegacyTextureProcessor] %s: $normalmapalphaenvmapmask = 1 (will use normal alpha for roughness)\n", materialName.c_str());
+                    Msg("[MaterialPipeline::ToPBR] %s: $normalmapalphaenvmapmask = 1 (will use normal alpha for roughness)\n", materialName.c_str());
                 } else {
-                    Msg("[LegacyTextureProcessor] %s: $normalmapalphaenvmapmask found but value = 0\n", materialName.c_str());
+                    Msg("[MaterialPipeline::ToPBR] %s: $normalmapalphaenvmapmask found but value = 0\n", materialName.c_str());
                 }
             }
         } else if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: $normalmapalphaenvmapmask NOT FOUND\n", materialName.c_str());
+            Msg("[MaterialPipeline::ToPBR] %s: $normalmapalphaenvmapmask NOT FOUND\n", materialName.c_str());
         }
     }
     
@@ -2758,7 +2775,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
         outProps.phongExponentTexturePath = vmtParsed.phongExponentTexture;
         outProps.hasPhongExponentTexture = true;
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: $phongexponenttexture (from VMT) = %s\n", materialName.c_str(), outProps.phongExponentTexturePath.c_str());
+            Msg("[MaterialPipeline::ToPBR] %s: $phongexponenttexture (from VMT) = %s\n", materialName.c_str(), outProps.phongExponentTexturePath.c_str());
         }
     } else {
         IMaterialVar* pVar = pMaterial->FindVar("$phongexponenttexture", &found, false);
@@ -2768,7 +2785,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
             if (strVal && strVal[0] != '\0') {
                 texPath = strVal;
                 if (m_debugOutput) {
-                    Msg("[LegacyTextureProcessor] %s: $phongexponenttexture raw string = '%s'\n", materialName.c_str(), strVal);
+                    Msg("[MaterialPipeline::ToPBR] %s: $phongexponenttexture raw string = '%s'\n", materialName.c_str(), strVal);
                 }
             }
             if (!IsValidTexturePath(texPath)) {
@@ -2776,7 +2793,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
                 if (pTex) {
                     texPath = pTex->GetName();
                     if (m_debugOutput) {
-                        Msg("[LegacyTextureProcessor] %s: $phongexponenttexture from texture = '%s'\n", materialName.c_str(), texPath.c_str());
+                        Msg("[MaterialPipeline::ToPBR] %s: $phongexponenttexture from texture = '%s'\n", materialName.c_str(), texPath.c_str());
                     }
                 }
             }
@@ -2784,13 +2801,13 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
                 outProps.phongExponentTexturePath = texPath;
                 outProps.hasPhongExponentTexture = true;
                 if (m_debugOutput) {
-                    Msg("[LegacyTextureProcessor] %s: $phongexponenttexture = %s\n", materialName.c_str(), texPath.c_str());
+                    Msg("[MaterialPipeline::ToPBR] %s: $phongexponenttexture = %s\n", materialName.c_str(), texPath.c_str());
                 }
             } else if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] %s: $phongexponenttexture FILTERED as invalid path: '%s'\n", materialName.c_str(), texPath.c_str());
+                Msg("[MaterialPipeline::ToPBR] %s: $phongexponenttexture FILTERED as invalid path: '%s'\n", materialName.c_str(), texPath.c_str());
             }
         } else if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: $phongexponenttexture not found\n", materialName.c_str());
+            Msg("[MaterialPipeline::ToPBR] %s: $phongexponenttexture not found\n", materialName.c_str());
         }
     }
     
@@ -2798,14 +2815,14 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     if (hasVMTParsed && vmtParsed.hasBaseMapAlphaPhongMask) {
         outProps.hasBaseMapAlphaPhongMask = (vmtParsed.baseMapAlphaPhongMask != 0);
         if (m_debugOutput && outProps.hasBaseMapAlphaPhongMask) {
-            Msg("[LegacyTextureProcessor] %s: $basemapalphaphongmask (from VMT) = 1\n", materialName.c_str());
+            Msg("[MaterialPipeline::ToPBR] %s: $basemapalphaphongmask (from VMT) = 1\n", materialName.c_str());
         }
     } else {
         IMaterialVar* pVar = pMaterial->FindVar("$basemapalphaphongmask", &found, false);
         if (found && pVar) {
             outProps.hasBaseMapAlphaPhongMask = (pVar->GetIntValue() == 1);
             if (m_debugOutput && outProps.hasBaseMapAlphaPhongMask) {
-                Msg("[LegacyTextureProcessor] %s: $basemapalphaphongmask = 1\n", materialName.c_str());
+                Msg("[MaterialPipeline::ToPBR] %s: $basemapalphaphongmask = 1\n", materialName.c_str());
             }
         }
     }
@@ -2814,7 +2831,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     if (hasVMTParsed && vmtParsed.hasBaseAlphaEnvMapMask) {
         outProps.hasBaseAlphaEnvMapMask = (vmtParsed.baseAlphaEnvMapMask != 0);
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: $basealphaenvmapmask (from VMT) = %d\n", materialName.c_str(), vmtParsed.baseAlphaEnvMapMask);
+            Msg("[MaterialPipeline::ToPBR] %s: $basealphaenvmapmask (from VMT) = %d\n", materialName.c_str(), vmtParsed.baseAlphaEnvMapMask);
         }
     } else {
         IMaterialVar* pVar = pMaterial->FindVar("$basealphaenvmapmask", &found, false);
@@ -2830,12 +2847,12 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
             
             outProps.hasBaseAlphaEnvMapMask = isTruthy;
             if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] %s: $basealphaenvmapmask found (int=%d, float=%.2f, str='%s') -> %d\n", 
+                Msg("[MaterialPipeline::ToPBR] %s: $basealphaenvmapmask found (int=%d, float=%.2f, str='%s') -> %d\n", 
                     materialName.c_str(), intVal, floatVal, strVal ? strVal : "null", 
                     outProps.hasBaseAlphaEnvMapMask ? 1 : 0);
             }
         } else if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: $basealphaenvmapmask NOT FOUND\n", materialName.c_str());
+            Msg("[MaterialPipeline::ToPBR] %s: $basealphaenvmapmask NOT FOUND\n", materialName.c_str());
         }
     }
     
@@ -2846,7 +2863,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
         outProps.phongFresnelRanges[2] = vmtParsed.phongFresnelRanges[2];
         outProps.hasPhongFresnelRanges = true;
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: $phongfresnelranges (from VMT) = [%.2f %.2f %.2f]\n", 
+            Msg("[MaterialPipeline::ToPBR] %s: $phongfresnelranges (from VMT) = [%.2f %.2f %.2f]\n", 
                 materialName.c_str(), outProps.phongFresnelRanges[0], outProps.phongFresnelRanges[1], outProps.phongFresnelRanges[2]);
         }
     } else {
@@ -2862,7 +2879,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
                     outProps.phongFresnelRanges[2] = z;
                     outProps.hasPhongFresnelRanges = true;
                     if (m_debugOutput) {
-                        Msg("[LegacyTextureProcessor] %s: $phongfresnelranges = [%.2f %.2f %.2f]\n", 
+                        Msg("[MaterialPipeline::ToPBR] %s: $phongfresnelranges = [%.2f %.2f %.2f]\n", 
                             materialName.c_str(), x, y, z);
                     }
                 }
@@ -2887,7 +2904,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
             }
         }
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: $envmaptint (from VMT) = [%.2f %.2f %.2f]%s\n", 
+            Msg("[MaterialPipeline::ToPBR] %s: $envmaptint (from VMT) = [%.2f %.2f %.2f]%s\n", 
                 materialName.c_str(), vmtParsed.envMapTint[0], vmtParsed.envMapTint[1], vmtParsed.envMapTint[2],
                 isDefaultTint ? " (default)" : "");
         }
@@ -2920,23 +2937,23 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
                         if (!outProps.hasEnvMap) {
                             outProps.hasEnvMap = true;
                             if (m_debugOutput) {
-                                Msg("[LegacyTextureProcessor] %s: Setting hasEnvMap=true based on non-default $envmaptint\n", materialName.c_str());
+                                Msg("[MaterialPipeline::ToPBR] %s: Setting hasEnvMap=true based on non-default $envmaptint\n", materialName.c_str());
                             }
                         }
                     }
                     
                     if (m_debugOutput) {
-                        Msg("[LegacyTextureProcessor] %s: $envmaptint = [%.2f %.2f %.2f]%s\n", 
+                        Msg("[MaterialPipeline::ToPBR] %s: $envmaptint = [%.2f %.2f %.2f]%s\n", 
                             materialName.c_str(), r, g, b, isDefaultTint ? " (default, ignoring)" : "");
                     }
                 } else if (m_debugOutput) {
-                    Msg("[LegacyTextureProcessor] %s: $envmaptint found but parse failed: '%s'\n", materialName.c_str(), strVal);
+                    Msg("[MaterialPipeline::ToPBR] %s: $envmaptint found but parse failed: '%s'\n", materialName.c_str(), strVal);
                 }
             } else if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] %s: $envmaptint found but empty value\n", materialName.c_str());
+                Msg("[MaterialPipeline::ToPBR] %s: $envmaptint found but empty value\n", materialName.c_str());
             }
         } else if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: $envmaptint not found by FindVar\n", materialName.c_str());
+            Msg("[MaterialPipeline::ToPBR] %s: $envmaptint not found by FindVar\n", materialName.c_str());
         }
     }
     
@@ -2959,7 +2976,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
         outProps.selfIllumMaskPath = vmtParsed.selfIllumMask;
         outProps.hasSelfIllumMask = true;
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: $selfillummask (from VMT) = %s\n", materialName.c_str(), outProps.selfIllumMaskPath.c_str());
+            Msg("[MaterialPipeline::ToPBR] %s: $selfillummask (from VMT) = %s\n", materialName.c_str(), outProps.selfIllumMaskPath.c_str());
         }
     }
     
@@ -2970,7 +2987,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
         outProps.selfIllumTint[2] = vmtParsed.selfIllumTint[2];
         outProps.hasSelfIllumTint = true;
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: $selfillumtint (from VMT) = [%.2f %.2f %.2f]\n", 
+            Msg("[MaterialPipeline::ToPBR] %s: $selfillumtint (from VMT) = [%.2f %.2f %.2f]\n", 
                 materialName.c_str(), outProps.selfIllumTint[0], outProps.selfIllumTint[1], outProps.selfIllumTint[2]);
         }
     }
@@ -2979,7 +2996,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     if (hasVMTParsed && vmtParsed.hasRimLight) {
         outProps.hasRimLight = (vmtParsed.rimLight != 0);
         if (m_debugOutput && outProps.hasRimLight) {
-            Msg("[LegacyTextureProcessor] %s: $rimlight=1 (from VMT)\n", materialName.c_str());
+            Msg("[MaterialPipeline::ToPBR] %s: $rimlight=1 (from VMT)\n", materialName.c_str());
         }
     }
     if (hasVMTParsed && vmtParsed.hasRimLightExponent) {
@@ -3005,7 +3022,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
         outProps.phongTint[2] = vmtParsed.phongTint[2];
         outProps.hasPhongTint = true;
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: $phongtint (from VMT) = [%.2f %.2f %.2f]\n", 
+            Msg("[MaterialPipeline::ToPBR] %s: $phongtint (from VMT) = [%.2f %.2f %.2f]\n", 
                 materialName.c_str(), outProps.phongTint[0], outProps.phongTint[1], outProps.phongTint[2]);
         }
     }
@@ -3015,7 +3032,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
         outProps.parallaxMapPath = vmtParsed.parallaxMap;
         outProps.hasParallaxMap = true;
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: $parallaxmap (from VMT) = %s\n", materialName.c_str(), outProps.parallaxMapPath.c_str());
+            Msg("[MaterialPipeline::ToPBR] %s: $parallaxmap (from VMT) = %s\n", materialName.c_str(), outProps.parallaxMapPath.c_str());
         }
     }
     if (hasVMTParsed && vmtParsed.hasParallaxMapScale) {
@@ -3028,7 +3045,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
         outProps.envMapContrast = vmtParsed.envMapContrast;
         outProps.hasEnvMapContrast = true;
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: $envmapcontrast (from VMT) = %.2f\n", materialName.c_str(), outProps.envMapContrast);
+            Msg("[MaterialPipeline::ToPBR] %s: $envmapcontrast (from VMT) = %.2f\n", materialName.c_str(), outProps.envMapContrast);
         }
     }
     if (hasVMTParsed && vmtParsed.hasEnvMapSaturation) {
@@ -3047,7 +3064,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
             outProps.armTexturePath = vmtParsed.texture1;
             outProps.hasARMTexture = true;
             if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] %s: [ExoPBR] ARM texture = %s\n", materialName.c_str(), vmtParsed.texture1.c_str());
+                Msg("[MaterialPipeline::ToPBR] %s: [ExoPBR] ARM texture = %s\n", materialName.c_str(), vmtParsed.texture1.c_str());
             }
         }
         
@@ -3055,7 +3072,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
             outProps.exoNormalPath = vmtParsed.texture2;
             outProps.hasExoNormal = true;
             if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] %s: [ExoPBR] Normal texture = %s\n", materialName.c_str(), vmtParsed.texture2.c_str());
+                Msg("[MaterialPipeline::ToPBR] %s: [ExoPBR] Normal texture = %s\n", materialName.c_str(), vmtParsed.texture2.c_str());
             }
         }
         
@@ -3063,7 +3080,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
             outProps.emissionTexturePath = vmtParsed.texture3;
             outProps.hasEmissionTexture = true;
             if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] %s: [ExoPBR] Emission texture = %s\n", materialName.c_str(), vmtParsed.texture3.c_str());
+                Msg("[MaterialPipeline::ToPBR] %s: [ExoPBR] Emission texture = %s\n", materialName.c_str(), vmtParsed.texture3.c_str());
             }
         }
         
@@ -3085,7 +3102,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
         outProps.metallic = 0.0f;   // Default, will be overridden by ARM map
         
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: [ExoPBR] Material detected - using direct PBR path\n", materialName.c_str());
+            Msg("[MaterialPipeline::ToPBR] %s: [ExoPBR] Material detected - using direct PBR path\n", materialName.c_str());
         }
     }
     
@@ -3101,7 +3118,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
             outProps.mraoTexturePath = vmtParsed.mraoTexture;
             outProps.hasMRAOTexture = true;
             if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] %s: [GPBR] MRAO texture = %s\n", materialName.c_str(), vmtParsed.mraoTexture.c_str());
+                Msg("[MaterialPipeline::ToPBR] %s: [GPBR] MRAO texture = %s\n", materialName.c_str(), vmtParsed.mraoTexture.c_str());
             }
         }
         
@@ -3116,7 +3133,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
             outProps.gpbrEmissionPath = vmtParsed.gpbrEmissionTexture;
             outProps.hasGPBREmission = true;
             if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] %s: [GPBR] Emission texture = %s\n", materialName.c_str(), vmtParsed.gpbrEmissionTexture.c_str());
+                Msg("[MaterialPipeline::ToPBR] %s: [GPBR] Emission texture = %s\n", materialName.c_str(), vmtParsed.gpbrEmissionTexture.c_str());
             }
         }
         
@@ -3145,7 +3162,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
         outProps.metallic = 0.0f;   // Default, will be overridden by MRAO map
         
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: [GPBR] Material detected - using direct PBR path\n", materialName.c_str());
+            Msg("[MaterialPipeline::ToPBR] %s: [GPBR] Material detected - using direct PBR path\n", materialName.c_str());
         }
     }
     
@@ -3163,7 +3180,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
             outProps.bftExponentTexturePath = vmtParsed.phongExponentTexture;  // Reuse BFT field
             outProps.hasBFTExponentTexture = true;
             if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] %s: [MWB-PBR] Exponent texture = %s\n", 
+                Msg("[MaterialPipeline::ToPBR] %s: [MWB-PBR] Exponent texture = %s\n", 
                     materialName.c_str(), vmtParsed.phongExponentTexture.c_str());
             }
         }
@@ -3173,7 +3190,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
         outProps.metallic = 0.0f;   // Will be extracted from exponent green or base alpha
         
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: [MWB-PBR] Material detected - using MWB handler\n", 
+            Msg("[MaterialPipeline::ToPBR] %s: [MWB-PBR] Material detected - using MWB handler\n", 
                 materialName.c_str());
         }
     }
@@ -3190,7 +3207,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
             outProps.bftExponentTexturePath = vmtParsed.phongExponentTexture;
             outProps.hasBFTExponentTexture = true;
             if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] %s: [BFT] Exponent texture = %s\n", 
+                Msg("[MaterialPipeline::ToPBR] %s: [BFT] Exponent texture = %s\n", 
                     materialName.c_str(), vmtParsed.phongExponentTexture.c_str());
             }
         }
@@ -3205,7 +3222,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
         outProps.roughness = 0.5f;  // Will be overridden by exponent texture
         
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] %s: [BFT] Material detected - %s layer\n", 
+            Msg("[MaterialPipeline::ToPBR] %s: [BFT] Material detected - %s layer\n", 
                 materialName.c_str(), outProps.isBFTMetallicLayer ? "metallic" : "base");
         }
     }
@@ -3303,13 +3320,13 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
         
         if (m_debugOutput) {
             if (outProps.isGlass) {
-                Msg("[LegacyTextureProcessor] %s: DETECTED AS GLASS (shader=%s, vmtShader=%s, vmtRefract=%d, translucent=%d, surfaceprop=%s, hasEnvMap=%d)\n",
+                Msg("[MaterialPipeline::ToPBR] %s: DETECTED AS GLASS (shader=%s, vmtShader=%s, vmtRefract=%d, translucent=%d, surfaceprop=%s, hasEnvMap=%d)\n",
                     materialName.c_str(), outProps.shaderName.c_str(), 
                     hasVMTParsed ? vmtParsed.shaderName.c_str() : "N/A",
                     vmtHasRefractAmount, outProps.isTranslucent, outProps.surfaceProp.c_str(), outProps.hasEnvMap);
             } else if (isSurfaceGlass || isRefractShader || vmtIsRefract || vmtHasRefractAmount) {
                 // This shouldn't happen, but log it for debugging
-                Msg("[LegacyTextureProcessor] %s: GLASS DETECTION FAILED - shader=%s, isRefract=%d, vmtIsRefract=%d, vmtRefract=%d, isSurfaceGlass=%d, translucent=%d, hasEnvMap=%d\n",
+                Msg("[MaterialPipeline::ToPBR] %s: GLASS DETECTION FAILED - shader=%s, isRefract=%d, vmtIsRefract=%d, vmtRefract=%d, isSurfaceGlass=%d, translucent=%d, hasEnvMap=%d\n",
                     materialName.c_str(), outProps.shaderName.c_str(), isRefractShader, vmtIsRefract, vmtHasRefractAmount, isSurfaceGlass, outProps.isTranslucent, outProps.hasEnvMap);
             }
         }
@@ -3325,7 +3342,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
             outProps.hasBaseTextureBrightness = true;
             
             if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] %s: Base texture brightness=%.3f (for metallic detection)\n",
+                Msg("[MaterialPipeline::ToPBR] %s: Base texture brightness=%.3f (for metallic detection)\n",
                     materialName.c_str(), brightness);
             }
         }
@@ -3341,7 +3358,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
             outProps.bumpMapPath = outProps.discoveredNormalPath;
             outProps.hasBumpMap = true;
             if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] %s: Using auto-discovered normal map: %s\n", 
+                Msg("[MaterialPipeline::ToPBR] %s: Using auto-discovered normal map: %s\n", 
                     materialName.c_str(), outProps.discoveredNormalPath.c_str());
             }
         }
@@ -3351,7 +3368,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
             outProps.parallaxMapPath = outProps.discoveredHeightPath;
             outProps.hasParallaxMap = true;
             if (m_debugOutput) {
-                Msg("[LegacyTextureProcessor] %s: Using auto-discovered height map: %s\n", 
+                Msg("[MaterialPipeline::ToPBR] %s: Using auto-discovered height map: %s\n", 
                     materialName.c_str(), outProps.discoveredHeightPath.c_str());
             }
         }
@@ -3362,7 +3379,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     outProps.metallic = EstimateMetallic(outProps);
     
     if (m_debugOutput) {
-        Msg("[LegacyTextureProcessor] %s extracted: hasPhong=%d, phongExp=%.0f, hasBump=%d, hasEnvMask=%d, hasPhongExpTex=%d, hasEnvMapTint=%d, hasEnvMap=%d, normMapAlpha=%d, isGlass=%d\n",
+        Msg("[MaterialPipeline::ToPBR] %s extracted: hasPhong=%d, phongExp=%.0f, hasBump=%d, hasEnvMask=%d, hasPhongExpTex=%d, hasEnvMapTint=%d, hasEnvMap=%d, normMapAlpha=%d, isGlass=%d\n",
             materialName.c_str(), outProps.hasPhong, outProps.phongExponent, outProps.hasBumpMap, 
             outProps.hasEnvMapMask, outProps.hasPhongExponentTexture, outProps.hasEnvMapTint, outProps.hasEnvMap, outProps.normalMapAlphaEnvMapMask, outProps.isGlass);
     }
@@ -3443,15 +3460,24 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
     
     // Check if we've already created a material for this hash (thread-safe)
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         if (m_processedMaterialInfo.find(textureHash) != m_processedMaterialInfo.end()) {
-            return true; // Already done
+            return true; // Already done this session
+        }
+        
+        // Also check if hash was already in USDA file from previous session
+        if (m_materialsWrittenToUSDA.find(textureHash) != m_materialsWrittenToUSDA.end()) {
+            if (m_debugOutput) {
+                Msg("[MaterialPipeline::ToPBR] Skipping hash 0x%llX - already in USDA from previous session\n", 
+                    (unsigned long long)textureHash);
+            }
+            return true; // Already done in previous session
         }
     }
     
     // Ensure output directory exists for texture files
     if (!EnsureOutputDirectory()) {
-        Warning("[LegacyTextureProcessor] Cannot create output directory, skipping material\n");
+        Warning("[MaterialPipeline::ToPBR] Cannot create output directory, skipping material\n");
         return false;
     }
     
@@ -3479,7 +3505,7 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
         ProcessedMaterial result = ExoPBR::ProcessTextures(props, textureHash, ctx);
         if (result.success) {
             CopyProcessedMaterial(result, matInfo);
-            std::lock_guard<std::mutex> lock(m_mutex);
+            std::lock_guard<std::recursive_mutex> lock(m_mutex);
             m_processedMaterialInfo[textureHash] = matInfo;
             m_stats.materialsProcessed++;
             return true;
@@ -3491,7 +3517,7 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
         ProcessedMaterial result = GPBR::ProcessTextures(props, textureHash, ctx);
         if (result.success) {
             CopyProcessedMaterial(result, matInfo);
-            std::lock_guard<std::mutex> lock(m_mutex);
+            std::lock_guard<std::recursive_mutex> lock(m_mutex);
             m_processedMaterialInfo[textureHash] = matInfo;
             m_stats.materialsProcessed++;
             return true;
@@ -3503,7 +3529,7 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
         ProcessedMaterial result = MWBPBR::ProcessTextures(props, textureHash, ctx);
         if (result.success) {
             CopyProcessedMaterial(result, matInfo);
-            std::lock_guard<std::mutex> lock(m_mutex);
+            std::lock_guard<std::recursive_mutex> lock(m_mutex);
             m_processedMaterialInfo[textureHash] = matInfo;
             m_stats.materialsProcessed++;
             return true;
@@ -3515,7 +3541,7 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
         ProcessedMaterial result = BFTPseudoPBR::ProcessTextures(props, textureHash, ctx);
         if (result.success) {
             CopyProcessedMaterial(result, matInfo);
-            std::lock_guard<std::mutex> lock(m_mutex);
+            std::lock_guard<std::recursive_mutex> lock(m_mutex);
             m_processedMaterialInfo[textureHash] = matInfo;
             m_stats.materialsProcessed++;
             return true;
@@ -3532,13 +3558,13 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
         
         // Store for USDA generation (thread-safe)
         {
-            std::lock_guard<std::mutex> lock(m_mutex);
+            std::lock_guard<std::recursive_mutex> lock(m_mutex);
             m_processedMaterialInfo[textureHash] = matInfo;
             m_stats.materialsProcessed++;
         }
         
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] Processed material '%s' (hash 0x%llX): roughness=%.2f, metallic=%.2f%s%s%s%s\n",
+            Msg("[MaterialPipeline::ToPBR] Processed material '%s' (hash 0x%llX): roughness=%.2f, metallic=%.2f%s%s%s%s\n",
                 props.materialName.c_str(), textureHash, matInfo.roughnessConstant, matInfo.metallicConstant,
                 !matInfo.normalPath.empty() ? " [normal]" : "",
                 !matInfo.roughnessPath.empty() ? " [roughness]" : "",
@@ -3566,10 +3592,10 @@ int TextureProcessor::ProcessTrackedMaterialsBatch(int maxBatch) {
     
     auto startTime = std::chrono::high_resolution_clock::now();
     
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     
     if (!m_initialized) {
-        Warning("[LegacyTextureProcessor] Not initialized\n");
+        Warning("[MaterialPipeline::ToPBR] Not initialized\n");
         return 0;
     }
     
@@ -3587,7 +3613,7 @@ int TextureProcessor::ProcessTrackedMaterialsBatch(int maxBatch) {
         if (m_debugOutput) {
             auto lockTime = std::chrono::duration_cast<std::chrono::microseconds>(afterLock - startTime).count();
             auto totalTime = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime).count();
-            Msg("[LegacyTextureProcessor] Batch: early exit, set fast-path flag (lock: %lld us, total: %lld us)\n", lockTime, totalTime);
+            Msg("[MaterialPipeline::ToPBR] Batch: early exit, set fast-path flag (lock: %lld us, total: %lld us)\n", lockTime, totalTime);
         }
         return 0;
     }
@@ -3607,7 +3633,7 @@ int TextureProcessor::ProcessTrackedMaterialsBatch(int maxBatch) {
         auto lockTime = std::chrono::duration_cast<std::chrono::microseconds>(afterLock - startTime).count();
         auto checkTime = std::chrono::duration_cast<std::chrono::microseconds>(afterCheck - afterLock).count();
         auto getMaterialsTime = std::chrono::duration_cast<std::chrono::microseconds>(afterGetMaterials - afterCheck).count();
-        Msg("[LegacyTextureProcessor] Batch timings: lock=%lld us, check=%lld us, getMaterials=%lld us\n",
+        Msg("[MaterialPipeline::ToPBR] Batch timings: lock=%lld us, check=%lld us, getMaterials=%lld us\n",
             lockTime, checkTime, getMaterialsTime);
     }
     
@@ -3693,8 +3719,8 @@ int TextureProcessor::ProcessTrackedMaterialsBatch(int maxBatch) {
     
     if (processedCount > 0) {
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] Processed %d materials with PBR properties\n", processedCount);
-            Msg("[LegacyTextureProcessor] Stats: %d with normals, %d with roughness textures\n", 
+            Msg("[MaterialPipeline::ToPBR] Processed %d materials with PBR properties\n", processedCount);
+            Msg("[MaterialPipeline::ToPBR] Stats: %d with normals, %d with roughness textures\n", 
                 m_stats.materialsWithNormals, m_stats.materialsWithRoughness);
         }
         
@@ -3706,17 +3732,17 @@ int TextureProcessor::ProcessTrackedMaterialsBatch(int maxBatch) {
 }
 
 bool TextureProcessor::IsMaterialProcessed(const std::string& materialName) const {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     return m_processedMaterials.find(materialName) != m_processedMaterials.end();
 }
 
 TextureProcessor::Stats TextureProcessor::GetStats() const {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     return m_stats;
 }
 
 void TextureProcessor::ClearCache() {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     
     // Clear all tracking data for reprocessing.
     // Note: USDA files remain on disk and need game restart to reload.
@@ -3726,11 +3752,11 @@ void TextureProcessor::ClearCache() {
     m_needsUSDAUpdate = false;
     m_stats = {};
     
-    Msg("[LegacyTextureProcessor] Cache cleared\n");
+    Msg("[MaterialPipeline::ToPBR] Cache cleared\n");
 }
 
 bool TextureProcessor::ProcessSingleMaterial(const std::string& materialName) {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     
     if (!m_initialized) {
         return false;
@@ -3807,7 +3833,7 @@ void TextureProcessor::OnNewMaterialDetected(const std::string& materialName, ui
     
     // Skip already processed
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         if (m_processedMaterials.find(materialName) != m_processedMaterials.end()) {
             return;
         }
@@ -3826,13 +3852,13 @@ void TextureProcessor::OnNewMaterialDetected(const std::string& materialName, ui
     // The actual processing happens in ProcessAllTrackedMaterials or ProcessSingleMaterial
     
     if (m_debugOutput) {
-        Msg("[LegacyTextureProcessor] New material detected for auto-processing: %s (hash 0x%llX)\n", 
+        Msg("[MaterialPipeline::ToPBR] New material detected for auto-processing: %s (hash 0x%llX)\n", 
             materialName.c_str(), textureHash);
     }
 }
 
 void TextureProcessor::WriteUSDAIfNeeded() {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     
     if (!m_needsUSDAUpdate || m_processedMaterialInfo.empty()) {
         return;
@@ -3840,7 +3866,7 @@ void TextureProcessor::WriteUSDAIfNeeded() {
     
     if (WriteModUSDA()) {
         m_needsUSDAUpdate = false;
-        Msg("[LegacyTextureProcessor] USDA updated with %d materials. Restart game for changes to take effect.\n",
+        Msg("[MaterialPipeline::ToPBR] USDA updated with %d materials. Restart game for changes to take effect.\n",
             (int)m_processedMaterialInfo.size());
     }
 }
@@ -3869,7 +3895,7 @@ bool TextureProcessor::WriteModUSDA() {
     // If no new materials to add and file exists, skip writing
     if (newMaterialCount == 0 && !existingHashes.empty()) {
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] No new materials to add to USDA\n");
+            Msg("[MaterialPipeline::ToPBR] No new materials to add to USDA\n");
         }
         return true;
     }
@@ -3884,7 +3910,7 @@ bool TextureProcessor::WriteModUSDA() {
         return false;
     }
     
-    Msg("[LegacyTextureProcessor] Wrote mod.usda and materials.usda with %d materials (%d new) to %s\n", 
+    Msg("[MaterialPipeline::ToPBR] Wrote mod.usda and materials.usda with %d materials (%d new) to %s\n", 
         (int)m_processedMaterialInfo.size(), newMaterialCount, modDir.c_str());
     
     return true;
@@ -3905,7 +3931,7 @@ void TextureProcessor::StartWorkerThread() {
     m_workerThread = std::thread(&TextureProcessor::WorkerThreadFunc, this);
     
     if (m_debugOutput) {
-        Msg("[LegacyTextureProcessor] Background worker thread started\n");
+        Msg("[MaterialPipeline::ToPBR] Background worker thread started\n");
     }
 }
 
@@ -3928,13 +3954,13 @@ void TextureProcessor::StopWorkerThread() {
     m_workerRunning.store(false, std::memory_order_relaxed);
     
     if (m_debugOutput) {
-        Msg("[LegacyTextureProcessor] Background worker thread stopped\n");
+        Msg("[MaterialPipeline::ToPBR] Background worker thread stopped\n");
     }
 }
 
 void TextureProcessor::WorkerThreadFunc() {
     if (m_debugOutput) {
-        Msg("[LegacyTextureProcessor] Worker thread running\n");
+        Msg("[MaterialPipeline::ToPBR] Worker thread running\n");
     }
     
     while (!m_shutdownRequested.load(std::memory_order_relaxed)) {
@@ -3978,14 +4004,21 @@ void TextureProcessor::WorkerThreadFunc() {
         
         // Check if queue is empty - if so, write pending USDA materials
         bool queueEmpty = false;
+        size_t queueSize = 0;
         {
             std::lock_guard<std::mutex> lock(m_queueMutex);
             queueEmpty = m_materialQueue.empty();
+            queueSize = m_materialQueue.size();
         }
         
-        if (queueEmpty) {
+        // Write USDA if queue is empty OR after every 10 materials processed
+        // This ensures USDA is written periodically even during continuous spawning
+        int processedSinceLastWrite = m_lastProcessedCount.load(std::memory_order_relaxed);
+        if (queueEmpty || (processedSinceLastWrite > 0 && processedSinceLastWrite % 10 == 0)) {
             AppendMaterialsToUSDA();
-            m_backgroundProcessing.store(false, std::memory_order_relaxed);
+            if (queueEmpty) {
+                m_backgroundProcessing.store(false, std::memory_order_relaxed);
+            }
         }
     }
     
@@ -3993,14 +4026,14 @@ void TextureProcessor::WorkerThreadFunc() {
     AppendMaterialsToUSDA();
     
     if (m_debugOutput) {
-        Msg("[LegacyTextureProcessor] Worker thread exiting\n");
+        Msg("[MaterialPipeline::ToPBR] Worker thread exiting\n");
     }
 }
 
 bool TextureProcessor::ProcessMaterialOnWorker(const std::string& materialName) {
     // Check if already processed (lock-free check first, then verify under lock)
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         if (m_processedMaterials.find(materialName) != m_processedMaterials.end()) {
             return false; // Already processed
         }
@@ -4008,7 +4041,7 @@ bool TextureProcessor::ProcessMaterialOnWorker(const std::string& materialName) 
     
     // Skip internal materials
     if (materialName.find("__") == 0 || materialName.find("vgui") == 0) {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         m_processedMaterials.insert(materialName);
         return false;
     }
@@ -4016,7 +4049,7 @@ bool TextureProcessor::ProcessMaterialOnWorker(const std::string& materialName) 
     // Extract PBR properties (this reads from Source Engine - thread safe for reading)
     MaterialPBRProperties props;
     if (!ExtractMaterialPBR(materialName, props)) {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         m_processedMaterials.insert(materialName);
         return false;
     }
@@ -4026,7 +4059,7 @@ bool TextureProcessor::ProcessMaterialOnWorker(const std::string& materialName) 
         !props.normalMapAlphaEnvMapMask && !props.hasPhongExponentTexture &&
         !props.hasBaseMapAlphaPhongMask && !props.hasBaseAlphaEnvMapMask &&
         !props.hasEnvMap && !props.hasEnvMapTint && !props.isGlass) {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         m_processedMaterials.insert(materialName);
         return false;
     }
@@ -4036,7 +4069,7 @@ bool TextureProcessor::ProcessMaterialOnWorker(const std::string& materialName) 
         D3D9TextureTracker::Instance().GetTextureVariantsForMaterial(materialName.c_str());
     
     if (!variants || variants->empty()) {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         m_processedMaterials.insert(materialName);
         return false;
     }
@@ -4053,7 +4086,7 @@ bool TextureProcessor::ProcessMaterialOnWorker(const std::string& materialName) 
     }
     
     if (textureHash == 0) {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         m_processedMaterials.insert(materialName);
         return false;
     }
@@ -4065,7 +4098,7 @@ bool TextureProcessor::ProcessMaterialOnWorker(const std::string& materialName) 
     
     // Mark as processed
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         m_processedMaterials.insert(materialName);
         
         if (success) {
@@ -4073,8 +4106,11 @@ bool TextureProcessor::ProcessMaterialOnWorker(const std::string& materialName) 
         }
     }
     
-    if (success && m_debugOutput) {
-        Msg("[LegacyTextureProcessor] [BG] Processed: %s (hash 0x%llX)\n", 
+    // Always log when a material is processed (not just in debug mode) so user knows it's working
+    if (success) {
+        Msg("[MaterialPipeline::ToPBR] Converted: %s\n", materialName.c_str());
+    } else if (m_debugOutput) {
+        Msg("[MaterialPipeline::ToPBR] [BG] Skipped: %s (hash 0x%llX)\n", 
             materialName.c_str(), textureHash);
     }
     
@@ -4083,7 +4119,7 @@ bool TextureProcessor::ProcessMaterialOnWorker(const std::string& materialName) 
 
 int TextureProcessor::QueueMaterialsForProcessing() {
     if (!m_initialized) {
-        Msg("[LegacyTextureProcessor] QueueMaterialsForProcessing: not initialized\n");
+        Msg("[MaterialPipeline::ToPBR] QueueMaterialsForProcessing: not initialized\n");
         return 0;
     }
     
@@ -4097,7 +4133,7 @@ int TextureProcessor::QueueMaterialsForProcessing() {
     std::vector<std::string> cachedMaterials = D3D9TextureTracker::Instance().GetCachedMaterials();
     
     if (m_debugOutput) {
-        Msg("[LegacyTextureProcessor] Found %d cached materials in tracker\n", (int)cachedMaterials.size());
+        Msg("[MaterialPipeline::ToPBR] Found %d cached materials in tracker\n", (int)cachedMaterials.size());
     }
     
     int queuedCount = 0;
@@ -4105,7 +4141,7 @@ int TextureProcessor::QueueMaterialsForProcessing() {
     // Quick check which materials need processing
     std::vector<std::string> materialsToQueue;
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         for (const std::string& matName : cachedMaterials) {
             // Skip already processed
             if (m_processedMaterials.find(matName) != m_processedMaterials.end()) {
@@ -4133,9 +4169,9 @@ int TextureProcessor::QueueMaterialsForProcessing() {
     // Wake up worker thread
     if (queuedCount > 0) {
         m_queueCondition.notify_one();
-        Msg("[LegacyTextureProcessor] Queued %d materials for background processing\n", queuedCount);
+        Msg("[MaterialPipeline::ToPBR] Queued %d materials for background processing\n", queuedCount);
     } else if (m_debugOutput) {
-        Msg("[LegacyTextureProcessor] No new materials to queue (all %d already processed)\n", 
+        Msg("[MaterialPipeline::ToPBR] No new materials to queue (all %d already processed)\n", 
             (int)cachedMaterials.size());
     }
     
@@ -4153,7 +4189,7 @@ bool TextureProcessor::AppendMaterialsToUSDA() {
     size_t totalProcessed = 0;
     size_t alreadyWritten = 0;
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         totalProcessed = m_processedMaterialInfo.size();
         alreadyWritten = m_materialsWrittenToUSDA.size();
         
@@ -4167,13 +4203,13 @@ bool TextureProcessor::AppendMaterialsToUSDA() {
     
     if (pendingMaterials.empty()) {
         if (m_debugOutput) {
-            Msg("[LegacyTextureProcessor] AppendMaterialsToUSDA: no pending materials (total=%d, written=%d)\n",
+            Msg("[MaterialPipeline::ToPBR] AppendMaterialsToUSDA: no pending materials (total=%d, written=%d)\n",
                 (int)totalProcessed, (int)alreadyWritten);
         }
         return true; // Nothing to write
     }
     
-    Msg("[LegacyTextureProcessor] AppendMaterialsToUSDA: %d pending materials to write\n", (int)pendingMaterials.size());
+    Msg("[MaterialPipeline::ToPBR] AppendMaterialsToUSDA: %d pending materials to write\n", (int)pendingMaterials.size());
     
     // Get mod directory
     std::string modDir = USDA::GetModDirectory(m_outputDirectory);
@@ -4187,14 +4223,14 @@ bool TextureProcessor::AppendMaterialsToUSDA() {
     if (!fileExists) {
         // Write mod.usda first
         if (!USDA::WriteModUSDAFile(modDir)) {
-            Warning("[LegacyTextureProcessor] Failed to write mod.usda\n");
+            Warning("[MaterialPipeline::ToPBR] Failed to write mod.usda\n");
             return false;
         }
         
         // Write full materials.usda with all materials
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         if (!USDA::WriteMaterialsUSDAFile(modDir, m_outputDirectory, m_processedMaterialInfo, m_debugOutput)) {
-            Warning("[LegacyTextureProcessor] Failed to write materials.usda\n");
+            Warning("[MaterialPipeline::ToPBR] Failed to write materials.usda\n");
             return false;
         }
         
@@ -4203,7 +4239,7 @@ bool TextureProcessor::AppendMaterialsToUSDA() {
             m_materialsWrittenToUSDA.insert(pair.first);
         }
         
-        Msg("[LegacyTextureProcessor] Created materials.usda with %d materials\n", 
+        Msg("[MaterialPipeline::ToPBR] Created materials.usda with %d materials\n", 
             (int)m_processedMaterialInfo.size());
         return true;
     }
@@ -4217,9 +4253,9 @@ bool TextureProcessor::AppendMaterialsToUSDA() {
     
     // Write full materials.usda with all materials (existing + pending)
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         if (!USDA::WriteMaterialsUSDAFile(modDir, m_outputDirectory, m_processedMaterialInfo, m_debugOutput)) {
-            Warning("[LegacyTextureProcessor] Failed to write materials.usda\n");
+            Warning("[MaterialPipeline::ToPBR] Failed to write materials.usda\n");
             return false;
         }
         
@@ -4229,7 +4265,7 @@ bool TextureProcessor::AppendMaterialsToUSDA() {
         }
     }
     
-    Msg("[LegacyTextureProcessor] Updated materials.usda with %d total materials (%d new)\n", 
+    Msg("[MaterialPipeline::ToPBR] Updated materials.usda with %d total materials (%d new)\n", 
         (int)m_processedMaterialInfo.size(), (int)pendingMaterials.size());
     
     return true;
@@ -4247,15 +4283,16 @@ void TextureProcessor::AppendToUSDAAsync() {
     AppendMaterialsToUSDA();
 }
 
+} // namespace ToPBR
+} // namespace MaterialPipeline
+
 //=============================================================================
-// Lua Bindings
+// Lua Bindings - Must be at global scope
 //=============================================================================
 
-using namespace GarrysMod::Lua;
-
-LUA_FUNCTION(LegacyTextureProcessor_Initialize) {
+LUA_FUNCTION(ToPBR_Initialize) {
     // If already initialized (by C++ during RemixAPI init), return success
-    if (TextureProcessor::Instance().IsInitialized()) {
+    if (MaterialPipeline::ToPBR::TextureProcessor::Instance().IsInitialized()) {
         LUA->PushBool(true);
         return 1;
     }
@@ -4266,129 +4303,129 @@ LUA_FUNCTION(LegacyTextureProcessor_Initialize) {
         return 1;
     }
     
-    bool result = TextureProcessor::Instance().Initialize(g_remix);
+    bool result = MaterialPipeline::ToPBR::TextureProcessor::Instance().Initialize(g_remix);
     LUA->PushBool(result);
     return 1;
 }
 
-LUA_FUNCTION(LegacyTextureProcessor_IsInitialized) {
-    LUA->PushBool(TextureProcessor::Instance().IsInitialized());
+LUA_FUNCTION(ToPBR_IsInitialized) {
+    LUA->PushBool(MaterialPipeline::ToPBR::TextureProcessor::Instance().IsInitialized());
     return 1;
 }
 
-LUA_FUNCTION(LegacyTextureProcessor_ProcessAllMaterials) {
-    int count = TextureProcessor::Instance().ProcessAllTrackedMaterials();
+LUA_FUNCTION(ToPBR_ProcessAllMaterials) {
+    int count = MaterialPipeline::ToPBR::TextureProcessor::Instance().ProcessAllTrackedMaterials();
     LUA->PushNumber(count);
     return 1;
 }
 
-LUA_FUNCTION(LegacyTextureProcessor_ProcessMaterialsBatch) {
+LUA_FUNCTION(ToPBR_ProcessMaterialsBatch) {
     int maxBatch = 5; // Default batch size
-    if (LUA->IsType(1, Type::Number)) {
+    if (LUA->IsType(1, GarrysMod::Lua::Type::Number)) {
         maxBatch = (int)LUA->GetNumber(1);
     }
     
-    int count = TextureProcessor::Instance().ProcessTrackedMaterialsBatch(maxBatch);
+    int count = MaterialPipeline::ToPBR::TextureProcessor::Instance().ProcessTrackedMaterialsBatch(maxBatch);
     LUA->PushNumber(count);
     return 1;
 }
 
-LUA_FUNCTION(LegacyTextureProcessor_SetAutoProcessing) {
-    if (!LUA->IsType(1, Type::Bool)) {
+LUA_FUNCTION(ToPBR_SetAutoProcessing) {
+    if (!LUA->IsType(1, GarrysMod::Lua::Type::Bool)) {
         LUA->ThrowError("Expected boolean for auto processing");
         return 0;
     }
     
-    TextureProcessor::Instance().SetAutoProcessing(LUA->GetBool(1));
+    MaterialPipeline::ToPBR::TextureProcessor::Instance().SetAutoProcessing(LUA->GetBool(1));
     return 0;
 }
 
-LUA_FUNCTION(LegacyTextureProcessor_SetDebugOutput) {
-    if (!LUA->IsType(1, Type::Bool)) {
+LUA_FUNCTION(ToPBR_SetDebugOutput) {
+    if (!LUA->IsType(1, GarrysMod::Lua::Type::Bool)) {
         LUA->ThrowError("Expected boolean for debug output");
         return 0;
     }
     
-    TextureProcessor::Instance().SetDebugOutput(LUA->GetBool(1));
+    MaterialPipeline::ToPBR::TextureProcessor::Instance().SetDebugOutput(LUA->GetBool(1));
     return 0;
 }
 
-LUA_FUNCTION(LegacyTextureProcessor_SetMetallicGeneration) {
-    if (!LUA->IsType(1, Type::Bool)) {
+LUA_FUNCTION(ToPBR_SetMetallicGeneration) {
+    if (!LUA->IsType(1, GarrysMod::Lua::Type::Bool)) {
         LUA->ThrowError("Expected boolean for metallic generation");
         return 0;
     }
     
     bool enabled = LUA->GetBool(1);
-    TextureProcessor::Instance().SetMetallicGeneration(enabled);
+    MaterialPipeline::ToPBR::TextureProcessor::Instance().SetMetallicGeneration(enabled);
     
     if (enabled) {
-        Msg("[LegacyTextureProcessor] Experimental metallic generation ENABLED\n");
-        Msg("[LegacyTextureProcessor] WARNING: This may cause dark envmap materials to appear black.\n");
-        Msg("[LegacyTextureProcessor] In PBR, metallic surfaces reflect their base color - black base = no reflections.\n");
+        Msg("[MaterialPipeline::ToPBR] Experimental metallic generation ENABLED\n");
+        Msg("[MaterialPipeline::ToPBR] WARNING: This may cause dark envmap materials to appear black.\n");
+        Msg("[MaterialPipeline::ToPBR] In PBR, metallic surfaces reflect their base color - black base = no reflections.\n");
     } else {
-        Msg("[LegacyTextureProcessor] Metallic generation DISABLED (default)\n");
-        Msg("[LegacyTextureProcessor] Dark envmap materials will use low roughness for reflections instead.\n");
+        Msg("[MaterialPipeline::ToPBR] Metallic generation DISABLED (default)\n");
+        Msg("[MaterialPipeline::ToPBR] Dark envmap materials will use low roughness for reflections instead.\n");
     }
     return 0;
 }
 
-LUA_FUNCTION(LegacyTextureProcessor_IsMetallicGenerationEnabled) {
-    LUA->PushBool(TextureProcessor::Instance().IsMetallicGenerationEnabled());
+LUA_FUNCTION(ToPBR_IsMetallicGenerationEnabled) {
+    LUA->PushBool(MaterialPipeline::ToPBR::TextureProcessor::Instance().IsMetallicGenerationEnabled());
     return 1;
 }
 
-LUA_FUNCTION(LegacyTextureProcessor_SetAutoDiscover) {
-    if (!LUA->IsType(1, Type::Bool)) {
+LUA_FUNCTION(ToPBR_SetAutoDiscover) {
+    if (!LUA->IsType(1, GarrysMod::Lua::Type::Bool)) {
         LUA->ThrowError("Expected boolean for auto-discover");
         return 0;
     }
     
     bool enabled = LUA->GetBool(1);
-    TextureProcessor::Instance().SetAutoDiscover(enabled);
+    MaterialPipeline::ToPBR::TextureProcessor::Instance().SetAutoDiscover(enabled);
     
     if (enabled) {
-        Msg("[LegacyTextureProcessor] Texture auto-discovery ENABLED (default)\n");
-        Msg("[LegacyTextureProcessor] Will search for companion textures like _normal, _mask, _spec\n");
+        Msg("[MaterialPipeline::ToPBR] Texture auto-discovery ENABLED (default)\n");
+        Msg("[MaterialPipeline::ToPBR] Will search for companion textures like _normal, _mask, _spec\n");
     } else {
-        Msg("[LegacyTextureProcessor] Texture auto-discovery DISABLED\n");
-        Msg("[LegacyTextureProcessor] Only explicitly referenced textures will be used\n");
+        Msg("[MaterialPipeline::ToPBR] Texture auto-discovery DISABLED\n");
+        Msg("[MaterialPipeline::ToPBR] Only explicitly referenced textures will be used\n");
     }
     return 0;
 }
 
-LUA_FUNCTION(LegacyTextureProcessor_IsAutoDiscoverEnabled) {
-    LUA->PushBool(TextureProcessor::Instance().IsAutoDiscoverEnabled());
+LUA_FUNCTION(ToPBR_IsAutoDiscoverEnabled) {
+    LUA->PushBool(MaterialPipeline::ToPBR::TextureProcessor::Instance().IsAutoDiscoverEnabled());
     return 1;
 }
 
-LUA_FUNCTION(LegacyTextureProcessor_SetParseCommentedProperties) {
-    if (!LUA->IsType(1, Type::Bool)) {
+LUA_FUNCTION(ToPBR_SetParseCommentedProperties) {
+    if (!LUA->IsType(1, GarrysMod::Lua::Type::Bool)) {
         LUA->ThrowError("Expected boolean for parse commented properties");
         return 0;
     }
     
     bool enabled = LUA->GetBool(1);
-    TextureProcessor::Instance().SetParseCommentedProperties(enabled);
+    MaterialPipeline::ToPBR::TextureProcessor::Instance().SetParseCommentedProperties(enabled);
     
     if (enabled) {
-        Msg("[LegacyTextureProcessor] Parsing commented-out VMT properties ENABLED\n");
-        Msg("[LegacyTextureProcessor] Will parse // commented properties like $envmap, $normalmapalphaenvmapmask\n");
-        Msg("[LegacyTextureProcessor] Useful for maps where these were disabled for vanilla Source performance\n");
+        Msg("[MaterialPipeline::ToPBR] Parsing commented-out VMT properties ENABLED\n");
+        Msg("[MaterialPipeline::ToPBR] Will parse // commented properties like $envmap, $normalmapalphaenvmapmask\n");
+        Msg("[MaterialPipeline::ToPBR] Useful for maps where these were disabled for vanilla Source performance\n");
     } else {
-        Msg("[LegacyTextureProcessor] Parsing commented-out VMT properties DISABLED (default)\n");
-        Msg("[LegacyTextureProcessor] Respects author intent - commented properties will be ignored\n");
+        Msg("[MaterialPipeline::ToPBR] Parsing commented-out VMT properties DISABLED (default)\n");
+        Msg("[MaterialPipeline::ToPBR] Respects author intent - commented properties will be ignored\n");
     }
     return 0;
 }
 
-LUA_FUNCTION(LegacyTextureProcessor_IsParseCommentedPropertiesEnabled) {
-    LUA->PushBool(TextureProcessor::Instance().IsParseCommentedPropertiesEnabled());
+LUA_FUNCTION(ToPBR_IsParseCommentedPropertiesEnabled) {
+    LUA->PushBool(MaterialPipeline::ToPBR::TextureProcessor::Instance().IsParseCommentedPropertiesEnabled());
     return 1;
 }
 
-LUA_FUNCTION(LegacyTextureProcessor_GetStats) {
-    auto stats = TextureProcessor::Instance().GetStats();
+LUA_FUNCTION(ToPBR_GetStats) {
+    auto stats = MaterialPipeline::ToPBR::TextureProcessor::Instance().GetStats();
     
     LUA->CreateTable();
     
@@ -4410,21 +4447,21 @@ LUA_FUNCTION(LegacyTextureProcessor_GetStats) {
     return 1;
 }
 
-LUA_FUNCTION(LegacyTextureProcessor_ClearCache) {
-    TextureProcessor::Instance().ClearCache();
+LUA_FUNCTION(ToPBR_ClearCache) {
+    MaterialPipeline::ToPBR::TextureProcessor::Instance().ClearCache();
     return 0;
 }
 
-LUA_FUNCTION(LegacyTextureProcessor_ConvertTexture) {
-    if (!LUA->IsType(1, Type::String)) {
+LUA_FUNCTION(ToPBR_ConvertTexture) {
+    if (!LUA->IsType(1, GarrysMod::Lua::Type::String)) {
         LUA->ThrowError("Expected string for texture path");
         return 0;
     }
     
     const char* path = LUA->GetString(1);
-    bool isNormalMap = LUA->IsType(2, Type::Bool) ? LUA->GetBool(2) : false;
+    bool isNormalMap = LUA->IsType(2, GarrysMod::Lua::Type::Bool) ? LUA->GetBool(2) : false;
     
-    uint64_t hash = TextureProcessor::Instance().ConvertAndUploadTexture(path, isNormalMap);
+    uint64_t hash = MaterialPipeline::ToPBR::TextureProcessor::Instance().ConvertAndUploadTexture(path, isNormalMap);
     
     // Return hash as string to preserve precision
     char hashStr[32];
@@ -4434,16 +4471,16 @@ LUA_FUNCTION(LegacyTextureProcessor_ConvertTexture) {
     return 1;
 }
 
-LUA_FUNCTION(LegacyTextureProcessor_InspectMaterial) {
-    if (!LUA->IsType(1, Type::String)) {
+LUA_FUNCTION(ToPBR_InspectMaterial) {
+    if (!LUA->IsType(1, GarrysMod::Lua::Type::String)) {
         LUA->ThrowError("Expected string for material name");
         return 0;
     }
     
     const char* matName = LUA->GetString(1);
     
-    MaterialPBRProperties props;
-    if (!TextureProcessor::Instance().ExtractMaterialPBR(matName, props)) {
+    MaterialPipeline::ToPBR::MaterialPBRProperties props;
+    if (!MaterialPipeline::ToPBR::TextureProcessor::Instance().ExtractMaterialPBR(matName, props)) {
         LUA->PushNil();
         return 1;
     }
@@ -4725,41 +4762,41 @@ LUA_FUNCTION(LegacyTextureProcessor_InspectMaterial) {
     return 1;
 }
 
-LUA_FUNCTION(LegacyTextureProcessor_SetOutputDirectory) {
-    if (!LUA->IsType(1, Type::String)) {
+LUA_FUNCTION(ToPBR_SetOutputDirectory) {
+    if (!LUA->IsType(1, GarrysMod::Lua::Type::String)) {
         LUA->ThrowError("Expected string for output directory path");
         return 0;
     }
     
     const char* path = LUA->GetString(1);
-    TextureProcessor::Instance().SetOutputDirectory(path);
+    MaterialPipeline::ToPBR::TextureProcessor::Instance().SetOutputDirectory(path);
     return 0;
 }
 
-LUA_FUNCTION(LegacyTextureProcessor_GetOutputDirectory) {
-    LUA->PushString(TextureProcessor::Instance().GetOutputDirectory().c_str());
+LUA_FUNCTION(ToPBR_GetOutputDirectory) {
+    LUA->PushString(MaterialPipeline::ToPBR::TextureProcessor::Instance().GetOutputDirectory().c_str());
     return 1;
 }
 
-LUA_FUNCTION(LegacyTextureProcessor_ProcessSingleMaterial) {
-    if (!LUA->IsType(1, Type::String)) {
+LUA_FUNCTION(ToPBR_ProcessSingleMaterial) {
+    if (!LUA->IsType(1, GarrysMod::Lua::Type::String)) {
         LUA->ThrowError("Expected string for material name");
         return 0;
     }
     
     const char* matName = LUA->GetString(1);
-    bool result = TextureProcessor::Instance().ProcessSingleMaterial(matName);
+    bool result = MaterialPipeline::ToPBR::TextureProcessor::Instance().ProcessSingleMaterial(matName);
     LUA->PushBool(result);
     return 1;
 }
 
-LUA_FUNCTION(LegacyTextureProcessor_WriteUSDAIfNeeded) {
-    TextureProcessor::Instance().WriteUSDAIfNeeded();
+LUA_FUNCTION(ToPBR_WriteUSDAIfNeeded) {
+    MaterialPipeline::ToPBR::TextureProcessor::Instance().WriteUSDAIfNeeded();
     return 0;
 }
 
-LUA_FUNCTION(LegacyTextureProcessor_NeedsUSDAUpdate) {
-    LUA->PushBool(TextureProcessor::Instance().NeedsUSDAUpdate());
+LUA_FUNCTION(ToPBR_NeedsUSDAUpdate) {
+    LUA->PushBool(MaterialPipeline::ToPBR::TextureProcessor::Instance().NeedsUSDAUpdate());
     return 1;
 }
 
@@ -4767,206 +4804,137 @@ LUA_FUNCTION(LegacyTextureProcessor_NeedsUSDAUpdate) {
 // Background Processing Lua Bindings
 // =========================================================================
 
-LUA_FUNCTION(LegacyTextureProcessor_QueueMaterialsForProcessing) {
-    int count = TextureProcessor::Instance().QueueMaterialsForProcessing();
+LUA_FUNCTION(ToPBR_QueueMaterialsForProcessing) {
+    int count = MaterialPipeline::ToPBR::TextureProcessor::Instance().QueueMaterialsForProcessing();
     LUA->PushNumber(count);
     return 1;
 }
 
-LUA_FUNCTION(LegacyTextureProcessor_IsProcessingInBackground) {
-    LUA->PushBool(TextureProcessor::Instance().IsProcessingInBackground());
+LUA_FUNCTION(ToPBR_IsProcessingInBackground) {
+    LUA->PushBool(MaterialPipeline::ToPBR::TextureProcessor::Instance().IsProcessingInBackground());
     return 1;
 }
 
-LUA_FUNCTION(LegacyTextureProcessor_GetQueuedMaterialCount) {
-    LUA->PushNumber(static_cast<double>(TextureProcessor::Instance().GetQueuedMaterialCount()));
+LUA_FUNCTION(ToPBR_GetQueuedMaterialCount) {
+    LUA->PushNumber(static_cast<double>(MaterialPipeline::ToPBR::TextureProcessor::Instance().GetQueuedMaterialCount()));
     return 1;
 }
 
-LUA_FUNCTION(LegacyTextureProcessor_GetLastProcessedCount) {
-    LUA->PushNumber(TextureProcessor::Instance().GetLastProcessedCount());
+LUA_FUNCTION(ToPBR_GetLastProcessedCount) {
+    LUA->PushNumber(MaterialPipeline::ToPBR::TextureProcessor::Instance().GetLastProcessedCount());
     return 1;
 }
 
-LUA_FUNCTION(LegacyTextureProcessor_AppendToUSDAAsync) {
-    TextureProcessor::Instance().AppendToUSDAAsync();
+LUA_FUNCTION(ToPBR_AppendToUSDAAsync) {
+    MaterialPipeline::ToPBR::TextureProcessor::Instance().AppendToUSDAAsync();
     return 0;
 }
 
-void InitializeLegacyTextureProcessorLuaBindings(GarrysMod::Lua::ILuaBase* LUA) {
-    // Create LegacyTextureProcessor table
-    LUA->PushSpecial(SPECIAL_GLOB);
+namespace MaterialPipeline {
+namespace ToPBR {
+
+void InitializeToPBRLuaBindings(GarrysMod::Lua::ILuaBase* LUA) {
+    // Register ToPBR functions under MaterialPipeline.ToPBR table
+    // First get or create MaterialPipeline table
+    LUA->PushSpecial(GarrysMod::Lua::SPECIAL_GLOB);
+    LUA->GetField(-1, "MaterialPipeline");
+    if (LUA->IsType(-1, GarrysMod::Lua::Type::Nil)) {
+        LUA->Pop(); // pop nil
+        LUA->CreateTable();
+        LUA->SetField(-2, "MaterialPipeline");
+        LUA->GetField(-1, "MaterialPipeline");
+    }
+    
+    // Create ToPBR subtable
     LUA->CreateTable();
     
-    LUA->PushCFunction(LegacyTextureProcessor_Initialize);
+    LUA->PushCFunction(ToPBR_Initialize);
     LUA->SetField(-2, "Initialize");
     
-    LUA->PushCFunction(LegacyTextureProcessor_IsInitialized);
+    LUA->PushCFunction(ToPBR_IsInitialized);
     LUA->SetField(-2, "IsInitialized");
     
-    LUA->PushCFunction(LegacyTextureProcessor_ProcessAllMaterials);
+    LUA->PushCFunction(ToPBR_ProcessAllMaterials);
     LUA->SetField(-2, "ProcessAllMaterials");
     
-    LUA->PushCFunction(LegacyTextureProcessor_ProcessMaterialsBatch);
+    LUA->PushCFunction(ToPBR_ProcessMaterialsBatch);
     LUA->SetField(-2, "ProcessMaterialsBatch");
     
-    LUA->PushCFunction(LegacyTextureProcessor_ProcessSingleMaterial);
+    LUA->PushCFunction(ToPBR_ProcessSingleMaterial);
     LUA->SetField(-2, "ProcessSingleMaterial");
     
-    LUA->PushCFunction(LegacyTextureProcessor_SetAutoProcessing);
+    LUA->PushCFunction(ToPBR_SetAutoProcessing);
     LUA->SetField(-2, "SetAutoProcessing");
     
-    LUA->PushCFunction(LegacyTextureProcessor_SetDebugOutput);
+    LUA->PushCFunction(ToPBR_SetDebugOutput);
     LUA->SetField(-2, "SetDebugOutput");
     
-    LUA->PushCFunction(LegacyTextureProcessor_SetMetallicGeneration);
+    LUA->PushCFunction(ToPBR_SetMetallicGeneration);
     LUA->SetField(-2, "SetMetallicGeneration");
     
-    LUA->PushCFunction(LegacyTextureProcessor_IsMetallicGenerationEnabled);
+    LUA->PushCFunction(ToPBR_IsMetallicGenerationEnabled);
     LUA->SetField(-2, "IsMetallicGenerationEnabled");
     
-    LUA->PushCFunction(LegacyTextureProcessor_SetAutoDiscover);
+    LUA->PushCFunction(ToPBR_SetAutoDiscover);
     LUA->SetField(-2, "SetAutoDiscover");
     
-    LUA->PushCFunction(LegacyTextureProcessor_IsAutoDiscoverEnabled);
+    LUA->PushCFunction(ToPBR_IsAutoDiscoverEnabled);
     LUA->SetField(-2, "IsAutoDiscoverEnabled");
     
-    LUA->PushCFunction(LegacyTextureProcessor_SetParseCommentedProperties);
+    LUA->PushCFunction(ToPBR_SetParseCommentedProperties);
     LUA->SetField(-2, "SetParseCommentedProperties");
     
-    LUA->PushCFunction(LegacyTextureProcessor_IsParseCommentedPropertiesEnabled);
+    LUA->PushCFunction(ToPBR_IsParseCommentedPropertiesEnabled);
     LUA->SetField(-2, "IsParseCommentedPropertiesEnabled");
     
-    LUA->PushCFunction(LegacyTextureProcessor_GetStats);
+    LUA->PushCFunction(ToPBR_GetStats);
     LUA->SetField(-2, "GetStats");
     
-    LUA->PushCFunction(LegacyTextureProcessor_ClearCache);
+    LUA->PushCFunction(ToPBR_ClearCache);
     LUA->SetField(-2, "ClearCache");
     
-    LUA->PushCFunction(LegacyTextureProcessor_ConvertTexture);
+    LUA->PushCFunction(ToPBR_ConvertTexture);
     LUA->SetField(-2, "ConvertTexture");
     
-    LUA->PushCFunction(LegacyTextureProcessor_InspectMaterial);
+    LUA->PushCFunction(ToPBR_InspectMaterial);
     LUA->SetField(-2, "InspectMaterial");
     
-    LUA->PushCFunction(LegacyTextureProcessor_SetOutputDirectory);
+    LUA->PushCFunction(ToPBR_SetOutputDirectory);
     LUA->SetField(-2, "SetOutputDirectory");
     
-    LUA->PushCFunction(LegacyTextureProcessor_GetOutputDirectory);
+    LUA->PushCFunction(ToPBR_GetOutputDirectory);
     LUA->SetField(-2, "GetOutputDirectory");
     
-    LUA->PushCFunction(LegacyTextureProcessor_WriteUSDAIfNeeded);
+    LUA->PushCFunction(ToPBR_WriteUSDAIfNeeded);
     LUA->SetField(-2, "WriteUSDAIfNeeded");
     
-    LUA->PushCFunction(LegacyTextureProcessor_NeedsUSDAUpdate);
+    LUA->PushCFunction(ToPBR_NeedsUSDAUpdate);
     LUA->SetField(-2, "NeedsUSDAUpdate");
     
     // Background processing
-    LUA->PushCFunction(LegacyTextureProcessor_QueueMaterialsForProcessing);
+    LUA->PushCFunction(ToPBR_QueueMaterialsForProcessing);
     LUA->SetField(-2, "QueueMaterialsForProcessing");
     
-    LUA->PushCFunction(LegacyTextureProcessor_IsProcessingInBackground);
+    LUA->PushCFunction(ToPBR_IsProcessingInBackground);
     LUA->SetField(-2, "IsProcessingInBackground");
     
-    LUA->PushCFunction(LegacyTextureProcessor_GetQueuedMaterialCount);
+    LUA->PushCFunction(ToPBR_GetQueuedMaterialCount);
     LUA->SetField(-2, "GetQueuedMaterialCount");
     
-    LUA->PushCFunction(LegacyTextureProcessor_GetLastProcessedCount);
+    LUA->PushCFunction(ToPBR_GetLastProcessedCount);
     LUA->SetField(-2, "GetLastProcessedCount");
     
-    LUA->PushCFunction(LegacyTextureProcessor_AppendToUSDAAsync);
+    LUA->PushCFunction(ToPBR_AppendToUSDAAsync);
     LUA->SetField(-2, "AppendToUSDAAsync");
     
-    LUA->SetField(-2, "LegacyTextureProcessor");
+    // Set ToPBR table under MaterialPipeline
+    LUA->SetField(-2, "ToPBR");
+    LUA->Pop(2); // pop MaterialPipeline and GLOB
     
-    // Also create an alias as VTFConverter for backwards compatibility
-    LUA->CreateTable();
-    
-    LUA->PushCFunction(LegacyTextureProcessor_Initialize);
-    LUA->SetField(-2, "Initialize");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_IsInitialized);
-    LUA->SetField(-2, "IsInitialized");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_ProcessAllMaterials);
-    LUA->SetField(-2, "ProcessAllMaterials");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_ProcessMaterialsBatch);
-    LUA->SetField(-2, "ProcessMaterialsBatch");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_ProcessSingleMaterial);
-    LUA->SetField(-2, "ProcessSingleMaterial");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_SetAutoProcessing);
-    LUA->SetField(-2, "SetAutoProcessing");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_SetDebugOutput);
-    LUA->SetField(-2, "SetDebugOutput");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_SetMetallicGeneration);
-    LUA->SetField(-2, "SetMetallicGeneration");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_IsMetallicGenerationEnabled);
-    LUA->SetField(-2, "IsMetallicGenerationEnabled");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_SetAutoDiscover);
-    LUA->SetField(-2, "SetAutoDiscover");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_IsAutoDiscoverEnabled);
-    LUA->SetField(-2, "IsAutoDiscoverEnabled");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_SetParseCommentedProperties);
-    LUA->SetField(-2, "SetParseCommentedProperties");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_IsParseCommentedPropertiesEnabled);
-    LUA->SetField(-2, "IsParseCommentedPropertiesEnabled");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_GetStats);
-    LUA->SetField(-2, "GetStats");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_ClearCache);
-    LUA->SetField(-2, "ClearCache");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_ConvertTexture);
-    LUA->SetField(-2, "ConvertTexture");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_InspectMaterial);
-    LUA->SetField(-2, "InspectMaterial");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_SetOutputDirectory);
-    LUA->SetField(-2, "SetOutputDirectory");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_GetOutputDirectory);
-    LUA->SetField(-2, "GetOutputDirectory");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_WriteUSDAIfNeeded);
-    LUA->SetField(-2, "WriteUSDAIfNeeded");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_NeedsUSDAUpdate);
-    LUA->SetField(-2, "NeedsUSDAUpdate");
-    
-    // Background processing
-    LUA->PushCFunction(LegacyTextureProcessor_QueueMaterialsForProcessing);
-    LUA->SetField(-2, "QueueMaterialsForProcessing");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_IsProcessingInBackground);
-    LUA->SetField(-2, "IsProcessingInBackground");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_GetQueuedMaterialCount);
-    LUA->SetField(-2, "GetQueuedMaterialCount");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_GetLastProcessedCount);
-    LUA->SetField(-2, "GetLastProcessedCount");
-    
-    LUA->PushCFunction(LegacyTextureProcessor_AppendToUSDAAsync);
-    LUA->SetField(-2, "AppendToUSDAAsync");
-    
-    LUA->SetField(-2, "VTFConverter");
-    LUA->Pop();
-    
-    Msg("[LegacyTextureProcessor] Lua bindings initialized\n");
+    Msg("[MaterialPipeline::ToPBR] Lua bindings initialized\n");
 }
 
-} // namespace LegacyTextureProcessor
+} // namespace ToPBR
+} // namespace MaterialPipeline
 
 #endif // _WIN64

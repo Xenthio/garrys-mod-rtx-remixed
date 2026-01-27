@@ -1,5 +1,5 @@
 // =========================================================================
-// legacy_texture_processor_vtf.h - VTF file reading and processing utilities
+// vtf.h - VTF file reading and processing utilities
 // =========================================================================
 // Low-level VTF (Valve Texture Format) file operations including:
 // - VTF file reading from Source Engine filesystem
@@ -20,7 +20,8 @@
 // Forward declarations
 class IFileSystem;
 
-namespace LegacyTextureProcessor {
+namespace MaterialPipeline {
+namespace ToPBR {
 
 // Forward declarations within namespace
 struct VTFFileHeader;
@@ -172,6 +173,7 @@ size_t GetImageDataSize(uint32_t width, uint32_t height, VTFImageFormat format);
 size_t GetTotalMipmapSize(uint32_t width, uint32_t height, uint8_t mipmapCount, VTFImageFormat format);
 
 } // namespace VTF
-} // namespace LegacyTextureProcessor
+} // namespace ToPBR
+} // namespace MaterialPipeline
 
 #endif // _WIN64

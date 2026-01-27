@@ -1,21 +1,19 @@
 // =========================================================================
-// legacy_texture_processor_vtf.cpp - VTF file reading and processing utilities
+// vtf_parser.cpp - Standalone VTF (Valve Texture Format) parser
 // =========================================================================
-// Implementation of low-level VTF operations
+// Generic VTF file reading and processing that can be used by any system.
 // =========================================================================
 
 #ifdef _WIN64
 
-#include "legacy_texture_processor_vtf.h"
-#include "legacy_texture_processor.h"
+#include "vtf_parser.h"
 #include <tier0/dbg.h>
 #include <filesystem.h>
 #include <algorithm>
 #include <cstring>
 #include <cmath>
 
-namespace LegacyTextureProcessor {
-namespace VTF {
+namespace VTFParser {
 
 // =========================================================================
 // DXT Block Decompression Helpers (file-local)
@@ -176,11 +174,26 @@ size_t GetTotalMipmapSize(uint32_t width, uint32_t height, uint8_t mipmapCount, 
     
     for (int i = 0; i < mipmapCount; i++) {
         totalSize += GetImageDataSize(w, h, format);
-        w = max(1u, w / 2);
-        h = max(1u, h / 2);
+        w = std::max<uint32_t>(1, w / 2);
+        h = std::max<uint32_t>(1, h / 2);
     }
     
     return totalSize;
+}
+
+const char* GetFormatName(VTFImageFormat format) {
+    switch (format) {
+        case IMAGE_FORMAT_RGBA8888: return "RGBA8888";
+        case IMAGE_FORMAT_ABGR8888: return "ABGR8888";
+        case IMAGE_FORMAT_RGB888: return "RGB888";
+        case IMAGE_FORMAT_BGR888: return "BGR888";
+        case IMAGE_FORMAT_DXT1: return "DXT1";
+        case IMAGE_FORMAT_DXT3: return "DXT3";
+        case IMAGE_FORMAT_DXT5: return "DXT5";
+        case IMAGE_FORMAT_BGRA8888: return "BGRA8888";
+        case IMAGE_FORMAT_BGRX8888: return "BGRX8888";
+        default: return "Unknown";
+    }
 }
 
 // =========================================================================
@@ -192,12 +205,19 @@ bool ReadVTFFile(IFileSystem* fileSystem,
                  std::vector<uint8_t>& outData,
                  bool debugOutput) {
     if (!fileSystem) {
-        Warning("[VTF] Filesystem not available\n");
+        if (debugOutput) Warning("[VTFParser] Filesystem not available\n");
         return false;
     }
     
     // Build full path
-    std::string fullPath = "materials/" + path;
+    std::string fullPath = path;
+    
+    // Add materials/ prefix if not present
+    if (fullPath.find("materials/") != 0 && fullPath.find("materials\\") != 0) {
+        fullPath = "materials/" + fullPath;
+    }
+    
+    // Add .vtf extension if not present
     if (fullPath.find(".vtf") == std::string::npos) {
         fullPath += ".vtf";
     }
@@ -209,7 +229,7 @@ bool ReadVTFFile(IFileSystem* fileSystem,
         file = fileSystem->Open(path.c_str(), "rb", "GAME");
         if (!file) {
             if (debugOutput) {
-                Msg("[VTF] Could not open: %s\n", fullPath.c_str());
+                Msg("[VTFParser] Could not open: %s\n", fullPath.c_str());
             }
             return false;
         }
@@ -219,7 +239,7 @@ bool ReadVTFFile(IFileSystem* fileSystem,
     int fileSize = fileSystem->Size(file);
     if (fileSize <= 0 || static_cast<size_t>(fileSize) > MAX_VTF_FILE_SIZE) {
         fileSystem->Close(file);
-        Warning("[VTF] Invalid file size for %s: %d\n", fullPath.c_str(), fileSize);
+        if (debugOutput) Warning("[VTFParser] Invalid file size for %s: %d\n", fullPath.c_str(), fileSize);
         return false;
     }
     
@@ -229,7 +249,7 @@ bool ReadVTFFile(IFileSystem* fileSystem,
     fileSystem->Close(file);
     
     if (bytesRead != fileSize) {
-        Warning("[VTF] Read error for %s: expected %d, got %d\n", 
+        if (debugOutput) Warning("[VTFParser] Read error for %s: expected %d, got %d\n", 
                 fullPath.c_str(), fileSize, bytesRead);
         return false;
     }
@@ -241,7 +261,7 @@ bool ParseVTFHeader(const std::vector<uint8_t>& fileData,
                     VTFFileHeader& outHeader,
                     bool debugOutput) {
     if (fileData.size() < sizeof(VTFFileHeader)) {
-        Warning("[VTF] File too small for header\n");
+        if (debugOutput) Warning("[VTFParser] File too small for header\n");
         return false;
     }
     
@@ -249,20 +269,22 @@ bool ParseVTFHeader(const std::vector<uint8_t>& fileData,
     
     // Verify signature
     if (memcmp(outHeader.signature, "VTF\0", 4) != 0) {
-        Warning("[VTF] Invalid signature\n");
+        if (debugOutput) Warning("[VTFParser] Invalid signature\n");
         return false;
     }
     
     // Verify version (support 7.0 - 7.5)
     if (outHeader.version[0] != VTF_MAJOR_VERSION_SUPPORTED || outHeader.version[1] > VTF_MAX_MINOR_VERSION) {
-        Warning("[VTF] Unsupported version %d.%d\n", 
+        if (debugOutput) Warning("[VTFParser] Unsupported version %d.%d\n", 
                 outHeader.version[0], outHeader.version[1]);
         return false;
     }
     
     if (debugOutput) {
-        Msg("[VTF] %dx%d, format %d, %d mips\n",
-            outHeader.width, outHeader.height, outHeader.imageFormat, outHeader.mipmapCount);
+        Msg("[VTFParser] %dx%d, format %s (%d), %d mips\n",
+            outHeader.width, outHeader.height, 
+            GetFormatName((VTFImageFormat)outHeader.imageFormat),
+            outHeader.imageFormat, outHeader.mipmapCount);
     }
     
     return true;
@@ -375,16 +397,15 @@ bool DecompressDXT5(const uint8_t* compressedData,
 // Pixel Data Extraction
 // =========================================================================
 
-bool ExtractVTFPixelData(const std::vector<uint8_t>& fileData, 
-                         const VTFFileHeader& header,
-                         ConvertedTexture& outTexture, 
-                         bool isNormalMap,
-                         bool debugOutput) {
+bool ExtractPixelData(const std::vector<uint8_t>& fileData,
+                      const VTFFileHeader& header,
+                      TextureInfo& outTexture,
+                      bool debugOutput) {
     outTexture.width = header.width;
     outTexture.height = header.height;
-    outTexture.mipLevels = 1;
-    outTexture.isNormalMap = isNormalMap;
-    outTexture.format = isNormalMap ? REMIXAPI_FORMAT_R8G8B8A8_UNORM : REMIXAPI_FORMAT_R8G8B8A8_SRGB;
+    outTexture.format = (VTFImageFormat)header.imageFormat;
+    outTexture.mipmapCount = header.mipmapCount;
+    outTexture.valid = false;
     
     VTFImageFormat srcFormat = (VTFImageFormat)header.imageFormat;
     
@@ -407,8 +428,8 @@ bool ExtractVTFPixelData(const std::vector<uint8_t>& fileData,
     // Skip all smaller mipmaps and all frames except the first
     size_t smallerMipsSize = 0;
     for (int mip = mipmapCount - 1; mip >= 1; mip--) {
-        uint32_t mipW = max(1u, header.width >> mip);
-        uint32_t mipH = max(1u, header.height >> mip);
+        uint32_t mipW = std::max<uint32_t>(1, header.width >> mip);
+        uint32_t mipH = std::max<uint32_t>(1, header.height >> mip);
         smallerMipsSize += GetImageDataSize(mipW, mipH, srcFormat) * frameCount;
     }
     
@@ -421,14 +442,14 @@ bool ExtractVTFPixelData(const std::vector<uint8_t>& fileData,
         // Try alternative: maybe single frame with no low-res image
         dataOffset = header.headerSize;
         for (int mip = mipmapCount - 1; mip >= 1; mip--) {
-            uint32_t mipW = max(1u, header.width >> mip);
-            uint32_t mipH = max(1u, header.height >> mip);
+            uint32_t mipW = std::max<uint32_t>(1, header.width >> mip);
+            uint32_t mipH = std::max<uint32_t>(1, header.height >> mip);
             dataOffset += GetImageDataSize(mipW, mipH, srcFormat);
         }
         
         if (dataOffset + largestMipSize > fileData.size()) {
             if (debugOutput) {
-                Msg("[VTF] Data too small: offset %zu + size %zu > total %zu\n",
+                Msg("[VTFParser] Data too small: offset %zu + size %zu > total %zu\n",
                     dataOffset, largestMipSize, fileData.size());
             }
             return false;
@@ -491,162 +512,138 @@ bool ExtractVTFPixelData(const std::vector<uint8_t>& fileData,
             
         default:
             if (debugOutput) {
-                Msg("[VTF] Unsupported format: %d\n", srcFormat);
+                Msg("[VTFParser] Unsupported format: %s (%d)\n", GetFormatName(srcFormat), srcFormat);
             }
             return false;
     }
     
     outTexture.pixelData = std::move(rgba);
-    
-    // Convert normal maps to octahedral format
-    if (isNormalMap) {
-        ConvertNormalMapToOctahedral(outTexture, debugOutput);
-    }
+    outTexture.valid = true;
     
     return true;
 }
 
 // =========================================================================
-// Normal Map Conversion
+// Solid Color Detection
 // =========================================================================
 
-void ConvertNormalMapToOctahedral(ConvertedTexture& texture, bool debugOutput) {
-    if (texture.pixelData.empty()) return;
+bool IsSolidColorRGBA(const std::vector<uint8_t>& pixelData,
+                      uint32_t width, uint32_t height,
+                      uint8_t& outR, uint8_t& outG, uint8_t& outB, uint8_t& outA) {
+    if (pixelData.empty() || width == 0 || height == 0) {
+        return false;
+    }
     
-    uint32_t width = texture.width;
-    uint32_t height = texture.height;
     size_t pixelCount = width * height;
-    
-    std::vector<uint8_t> octahedralData(pixelCount * 4);
-    
-    for (size_t i = 0; i < pixelCount; i++) {
-        size_t srcIdx = i * 4;
-        size_t dstIdx = i * 4;
-        
-        // Read RGB as normal components
-        uint8_t r = texture.pixelData[srcIdx + 0];
-        uint8_t g = texture.pixelData[srcIdx + 1];
-        uint8_t b = texture.pixelData[srcIdx + 2];
-        
-        // Flip inward-pointing normals (z < 0)
-        if (b < 128) {
-            b = 255 - b;
-        }
-        
-        // Convert from [0, 255] to [-1, 1]
-        float nx = (r / 255.0f) * 2.0f - 1.0f;
-        float ny = (g / 255.0f) * 2.0f - 1.0f;
-        float nz = (b / 255.0f) * 2.0f - 1.0f;
-        
-        // Normalize
-        float len = std::sqrt(nx * nx + ny * ny + nz * nz);
-        if (len > 0.0001f) {
-            nx /= len;
-            ny /= len;
-            nz /= len;
-        } else {
-            nx = 0.0f;
-            ny = 0.0f;
-            nz = 1.0f;
-        }
-        
-        // Convert to octahedral encoding
-        float absSum = fabs(nx) + fabs(ny) + fabs(nz);
-        float octX = nx / absSum;
-        float octY = ny / absSum;
-        
-        // Hemispherical encoding
-        float resultX = octX + octY;
-        float resultY = octX - octY;
-        
-        // Convert from [-1, 1] to [0, 1]
-        resultX = resultX * 0.5f + 0.5f;
-        resultY = resultY * 0.5f + 0.5f;
-        
-        // Convert to [0, 255]
-        uint8_t outR = static_cast<uint8_t>(std::clamp(resultX * 255.0f + 0.5f, 0.0f, 255.0f));
-        uint8_t outG = static_cast<uint8_t>(std::clamp(resultY * 255.0f + 0.5f, 0.0f, 255.0f));
-        
-        octahedralData[dstIdx + 0] = outR;
-        octahedralData[dstIdx + 1] = outG;
-        octahedralData[dstIdx + 2] = 0;
-        octahedralData[dstIdx + 3] = 255;
+    if (pixelData.size() < pixelCount * 4) {
+        return false;
     }
     
-    texture.pixelData = std::move(octahedralData);
+    // Get first pixel color
+    outR = pixelData[0];
+    outG = pixelData[1];
+    outB = pixelData[2];
+    outA = pixelData[3];
     
-    if (debugOutput) {
-        Msg("[VTF] Converted to octahedral format (%dx%d)\n", width, height);
+    // For large textures, use sampling instead of checking every pixel
+    size_t step = 1;
+    if (pixelCount > 4096) {
+        step = pixelCount / 1024; // Check ~1024 pixels
     }
+    
+    // Check sampled pixels
+    for (size_t i = 0; i < pixelCount; i += step) {
+        size_t idx = i * 4;
+        if (pixelData[idx + 0] != outR ||
+            pixelData[idx + 1] != outG ||
+            pixelData[idx + 2] != outB ||
+            pixelData[idx + 3] != outA) {
+            return false;
+        }
+    }
+    
+    // Also check corners and edges for accuracy
+    size_t checkPositions[] = {
+        0,                                       // Top-left
+        (width - 1) * 4,                         // Top-right
+        (height - 1) * width * 4,                // Bottom-left
+        ((height - 1) * width + width - 1) * 4,  // Bottom-right
+        ((height / 2) * width) * 4,              // Middle-left
+        ((height / 2) * width + width - 1) * 4,  // Middle-right
+        (width / 2) * 4,                         // Top-middle
+        ((height - 1) * width + width / 2) * 4,  // Bottom-middle
+        ((height / 2) * width + width / 2) * 4   // Center
+    };
+    
+    for (size_t pos : checkPositions) {
+        if (pos + 3 < pixelData.size()) {
+            if (pixelData[pos + 0] != outR ||
+                pixelData[pos + 1] != outG ||
+                pixelData[pos + 2] != outB ||
+                pixelData[pos + 3] != outA) {
+                return false;
+            }
+        }
+    }
+    
+    return true;
 }
 
-void ConvertSSBumpToNormal(ConvertedTexture& texture, bool debugOutput) {
-    if (texture.pixelData.empty()) return;
+SolidColorResult CheckSolidColor(IFileSystem* fileSystem,
+                                  const std::string& texturePath,
+                                  bool debugOutput) {
+    SolidColorResult result;
     
-    uint32_t width = texture.width;
-    uint32_t height = texture.height;
-    size_t pixelCount = width * height;
-    
-    std::vector<uint8_t> normalData(pixelCount * 4);
-    
-    // Bump basis transpose from Source SDK
-    const float OO_SQRT_3 = 0.57735025882720947f;
-    const float basisT0_x = 0.81649661064147949f;
-    const float basisT0_y = -0.40824833512306213f;
-    const float basisT0_z = -0.40824833512306213f;
-    const float basisT1_x = 0.0f;
-    const float basisT1_y = 0.70710676908493042f;
-    const float basisT1_z = -0.7071068286895752f;
-    const float basisT2_x = OO_SQRT_3;
-    const float basisT2_y = OO_SQRT_3;
-    const float basisT2_z = OO_SQRT_3;
-    
-    const float normalStrength = 1.5f;
-    
-    for (size_t i = 0; i < pixelCount; i++) {
-        size_t srcIdx = i * 4;
-        size_t dstIdx = i * 4;
-        
-        float r = texture.pixelData[srcIdx + 0] / 255.0f;
-        float g = texture.pixelData[srcIdx + 1] / 255.0f;
-        float b = texture.pixelData[srcIdx + 2] / 255.0f;
-        
-        // Transform SSBump to tangent-space normal
-        float nx = r * basisT0_x + g * basisT0_y + b * basisT0_z;
-        float ny = r * basisT1_x + g * basisT1_y + b * basisT1_z;
-        float nz = r * basisT2_x + g * basisT2_y + b * basisT2_z;
-        
-        // Boost normal strength
-        nx *= normalStrength;
-        ny *= normalStrength;
-        
-        // Renormalize
-        float len = sqrtf(nx * nx + ny * ny + nz * nz);
-        if (len > 0.0001f) {
-            nx /= len;
-            ny /= len;
-            nz /= len;
-        }
-        
-        // Convert to [0, 255]
-        uint8_t outR = static_cast<uint8_t>(std::clamp((nx * 0.5f + 0.5f) * 255.0f + 0.5f, 0.0f, 255.0f));
-        uint8_t outG = static_cast<uint8_t>(std::clamp((ny * 0.5f + 0.5f) * 255.0f + 0.5f, 0.0f, 255.0f));
-        uint8_t outB = static_cast<uint8_t>(std::clamp((nz * 0.5f + 0.5f) * 255.0f + 0.5f, 0.0f, 255.0f));
-        
-        normalData[dstIdx + 0] = outR;
-        normalData[dstIdx + 1] = outG;
-        normalData[dstIdx + 2] = outB;
-        normalData[dstIdx + 3] = 255;
+    if (!fileSystem || texturePath.empty()) {
+        result.error = true;
+        result.errorMessage = "Invalid parameters";
+        return result;
     }
     
-    texture.pixelData = std::move(normalData);
-    
-    if (debugOutput) {
-        Msg("[VTF] Converted SSBump to normal (%dx%d) strength %.1fx\n", width, height, normalStrength);
+    // Read VTF file
+    std::vector<uint8_t> fileData;
+    if (!ReadVTFFile(fileSystem, texturePath, fileData, debugOutput)) {
+        result.error = true;
+        result.errorMessage = "Failed to read VTF file";
+        return result;
     }
+    
+    // Parse header
+    VTFFileHeader header;
+    if (!ParseVTFHeader(fileData, header, debugOutput)) {
+        result.error = true;
+        result.errorMessage = "Failed to parse VTF header";
+        return result;
+    }
+    
+    // Skip textures that are too large (for performance)
+    if (header.width > MAX_SOLID_COLOR_CHECK_SIZE || header.height > MAX_SOLID_COLOR_CHECK_SIZE) {
+        result.error = false;
+        result.isSolidColor = false;
+        return result;
+    }
+    
+    // Extract pixel data
+    TextureInfo texture;
+    if (!ExtractPixelData(fileData, header, texture, debugOutput)) {
+        result.error = true;
+        result.errorMessage = "Failed to extract pixel data";
+        return result;
+    }
+    
+    // Check if solid color
+    result.isSolidColor = IsSolidColorRGBA(texture.pixelData, texture.width, texture.height,
+                                           result.r, result.g, result.b, result.a);
+    result.error = false;
+    
+    if (debugOutput && result.isSolidColor) {
+        Msg("[VTFParser] Solid color detected: %s = RGBA(%d, %d, %d, %d)\n",
+            texturePath.c_str(), result.r, result.g, result.b, result.a);
+    }
+    
+    return result;
 }
 
-} // namespace VTF
-} // namespace LegacyTextureProcessor
+} // namespace VTFParser
 
 #endif // _WIN64

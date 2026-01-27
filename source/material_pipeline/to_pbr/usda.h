@@ -1,5 +1,5 @@
 // =========================================================================
-// legacy_texture_processor_usda.h - USD/USDA file generation
+// usda.h - USD/USDA file generation
 // =========================================================================
 // Functions for generating RTX Remix mod.usda and materials.usda files
 // =========================================================================
@@ -15,9 +15,10 @@
 #include <ostream>
 
 // Include full header for TextureProcessor::ProcessedMaterialInfo type
-#include "legacy_texture_processor.h"
+#include "to_pbr.h"
 
-namespace LegacyTextureProcessor {
+namespace MaterialPipeline {
+namespace ToPBR {
 namespace USDA {
 
 // =========================================================================
@@ -76,6 +77,15 @@ void WriteOpaqueMaterial(std::ostream& stream,
 // Utility Functions
 // =========================================================================
 
+// Load existing material hashes from a materials.usda file
+// @param materialsUsdaPath - Path to materials.usda
+// @param existingHashes - Output: set of hashes found in the file
+// @param debugOutput - Whether to output debug messages
+// @return true if file was read successfully (false if file doesn't exist is OK)
+bool LoadExistingHashes(const std::string& materialsUsdaPath,
+                        std::unordered_set<uint64_t>& existingHashes,
+                        bool debugOutput = false);
+
 // Convert absolute path to relative path from mod directory
 // @param absolutePath - Full path to texture file
 // @param outputDir - Output directory for context
@@ -88,6 +98,7 @@ std::string GetRelativeTexturePath(const std::string& absolutePath, const std::s
 std::string GetModDirectory(const std::string& outputDirectory);
 
 } // namespace USDA
-} // namespace LegacyTextureProcessor
+} // namespace ToPBR
+} // namespace MaterialPipeline
 
 #endif // _WIN64

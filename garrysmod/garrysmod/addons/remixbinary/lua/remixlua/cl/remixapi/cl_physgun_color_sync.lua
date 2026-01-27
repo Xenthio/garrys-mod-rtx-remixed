@@ -60,9 +60,10 @@ function PhysgunColorSync.Initialize()
     for _, matName in ipairs(PhysgunColorSync.PhysgunMaterials) do
         local mat = Material(matName)
         if mat and not mat:IsError() then
-            -- Force track the material
-            if RemixMaterial.ForceTrackTexture then
-                RemixMaterial.ForceTrackTexture(matName)
+            -- Force track the material using RemixCategoryManager if available
+            -- (This renders the material off-screen to trigger D3D9 tracking)
+            if RemixCategoryManager and RemixCategoryManager.ForceTrackTexture then
+                RemixCategoryManager.ForceTrackTexture(matName)
             end
         end
     end

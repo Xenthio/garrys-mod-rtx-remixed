@@ -1,5 +1,5 @@
 // =========================================================================
-// Legacy Texture Processor - Standard Source Engine Format Handler
+// format_source.cpp - Standard Source Engine Format Handler
 // =========================================================================
 // Handles standard Source Engine materials using traditional phong/envmap:
 //   - VertexLitGeneric
@@ -37,12 +37,13 @@
 
 #ifdef _WIN64
 
-#include "legacy_texture_processor_formats.h"
+#include "formats.h"
 #include <tier0/dbg.h>
 #include <algorithm>
 #include <cmath>
 
-namespace LegacyTextureProcessor {
+namespace MaterialPipeline {
+namespace ToPBR {
 namespace SourceEngine {
 
 // Constants
@@ -1046,6 +1047,7 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
 }
 
 } // namespace SourceEngine
-} // namespace LegacyTextureProcessor
+} // namespace ToPBR
+} // namespace MaterialPipeline
 
 #endif // _WIN64

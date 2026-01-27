@@ -1,5 +1,5 @@
 // =========================================================================
-// Legacy Texture Processor - Format Handler Interface
+// formats.h - Format Handler Interface
 // =========================================================================
 // This header defines the interface and shared types for format-specific
 // texture processors. Each format (ExoPBR, GPBR, BFT, Source) implements
@@ -20,7 +20,7 @@
 
 #ifdef _WIN64
 
-#include "legacy_texture_processor.h"
+#include "to_pbr.h"
 #include <string>
 #include <vector>
 #include <functional>
@@ -28,7 +28,8 @@
 // Forward declarations
 class IFileSystem;
 
-namespace LegacyTextureProcessor {
+namespace MaterialPipeline {
+namespace ToPBR {
 
 // =========================================================================
 // Processed Material Output
@@ -202,6 +203,7 @@ namespace SourceEngine {
                                        const ProcessingContext& ctx);
 }
 
-} // namespace LegacyTextureProcessor
+} // namespace ToPBR
+} // namespace MaterialPipeline
 
 #endif // _WIN64
