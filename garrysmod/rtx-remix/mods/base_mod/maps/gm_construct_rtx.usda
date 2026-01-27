@@ -1,0 +1,301 @@
+#usda 1.0
+(
+    customLayerData = {
+        string lightspeed_game_name = "Unknown Game"
+        string lightspeed_layer_type = "replacement"
+    }
+    endTimeCode = 100
+    startTimeCode = 0
+    timeCodesPerSecond = 24
+    upAxis = "Z"
+)
+
+def "RootNode"
+{
+    def "meshes"
+    {
+        def "mesh_66AD28A6F1817512"
+        {
+            def RectLight "light_450952538f715d188c02b0db4e3f3b3a"
+            {
+                float3[] extent = [(-0.037820816, -0.295, 0), (0.037820816, 0.295, 0)]
+                color3f inputs:color = (1, 1, 1)
+                bool inputs:enableColorTemperature = 0
+                float inputs:height = 0.59
+                float inputs:intensity = 50
+                float inputs:width = 0.07564163
+                float3 xformOp:rotateXYZ = (0, -0, 179.99998)
+                float3 xformOp:scale = (100.00001, 100.00001, 100.00001)
+                double3 xformOp:translate = (3079.465576171875, 2112.412353515625, -48.98970031738281)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+            }
+
+            def RectLight "light_a94c0633d184587894efa12e81af3b87"
+            {
+                float3[] extent = [(-0.037820816, -0.295, 0), (0.037820816, 0.295, 0)]
+                color3f inputs:color = (1, 1, 1)
+                bool inputs:enableColorTemperature = 0
+                float inputs:height = 0.59
+                float inputs:intensity = 50
+                float inputs:width = 0.07564163
+                float3 xformOp:rotateXYZ = (0, -0, 179.99998)
+                float3 xformOp:scale = (100.00001, 100.00001, 100.00001)
+                double3 xformOp:translate = (3399.467529296875, 2112.412353515625, -48.98970031738281)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+            }
+
+            def RectLight "light_410143f431b55dcfb2dfb551caceea8f"
+            {
+                float3[] extent = [(-0.037820816, -0.295, 0), (0.037820816, 0.295, 0)]
+                color3f inputs:color = (1, 1, 1)
+                bool inputs:enableColorTemperature = 0
+                float inputs:height = 0.59
+                float inputs:intensity = 50
+                float inputs:width = 0.07564163
+                float3 xformOp:rotateXYZ = (0, -0, 179.99998)
+                float3 xformOp:scale = (100.00001, 100.00001, 100.00001)
+                double3 xformOp:translate = (2759.2197265625, 2112.412353515625, -48.98970031738281)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+            }
+
+            def RectLight "light_3b514ac3140c5f308ab497aabab4404f"
+            {
+                float3[] extent = [(-0.037820816, -0.295, 0), (0.037820816, 0.295, 0)]
+                color3f inputs:color = (1, 1, 1)
+                bool inputs:enableColorTemperature = 0
+                float inputs:height = 0.59
+                float inputs:intensity = 50
+                float inputs:width = 0.07564163
+                float3 xformOp:rotateXYZ = (0, -0, 179.99998)
+                float3 xformOp:scale = (100.00001, 100.00001, 100.00001)
+                double3 xformOp:translate = (2439.440185546875, 2112.412353515625, -48.98970031738281)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+            }
+
+            def RectLight "light_a0fc9a595bc35507a5f3fd927443ddba"
+            {
+                float3[] extent = [(-0.037820816, -0.295, 0), (0.037820816, 0.295, 0)]
+                color3f inputs:color = (1, 1, 1)
+                bool inputs:enableColorTemperature = 0
+                float inputs:height = 0.59
+                float inputs:intensity = 50
+                float inputs:width = 0.07564163
+                float3 xformOp:rotateXYZ = (0, -0, 179.99998)
+                float3 xformOp:scale = (100.00001, 100.00001, 100.00001)
+                double3 xformOp:translate = (2119.404541015625, 2112.412353515625, -48.98970031738281)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+            }
+
+            def RectLight "light_6d0215ce6cc958218102e11897af499d"
+            {
+                float3[] extent = [(-0.037820816, -0.295, 0), (0.037820816, 0.295, 0)]
+                color3f inputs:color = (1, 1, 1)
+                bool inputs:enableColorTemperature = 0
+                float inputs:height = 0.59
+                float inputs:intensity = 50
+                float inputs:width = 0.07564163
+                float3 xformOp:rotateXYZ = (0, -0, 179.99998)
+                float3 xformOp:scale = (100.00001, 100.00001, 100.00001)
+                double3 xformOp:translate = (3079.46533203125, 1872.442138671875, -48.989776611328125)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+            }
+
+            def RectLight "light_a6cc21454911514297e56c98b91af690"
+            {
+                float3[] extent = [(-0.037820816, -0.295, 0), (0.037820816, 0.295, 0)]
+                color3f inputs:color = (1, 1, 1)
+                bool inputs:enableColorTemperature = 0
+                float inputs:height = 0.59
+                float inputs:intensity = 50
+                float inputs:width = 0.07564163
+                float3 xformOp:rotateXYZ = (0, -0, 179.99998)
+                float3 xformOp:scale = (100.00001, 100.00001, 100.00001)
+                double3 xformOp:translate = (3399.467529296875, 1872.442138671875, -48.989776611328125)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+            }
+
+            def RectLight "light_c324f71df77157e996d3176439356445"
+            {
+                float3[] extent = [(-0.037820816, -0.295, 0), (0.037820816, 0.295, 0)]
+                color3f inputs:color = (1, 1, 1)
+                bool inputs:enableColorTemperature = 0
+                float inputs:height = 0.59
+                float inputs:intensity = 50
+                float inputs:width = 0.07564163
+                float3 xformOp:rotateXYZ = (0, -0, 179.99998)
+                float3 xformOp:scale = (100.00001, 100.00001, 100.00001)
+                double3 xformOp:translate = (2759.219482421875, 1872.442138671875, -48.989776611328125)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+            }
+
+            def RectLight "light_6a35700052fd5b82b04c106db7558886"
+            {
+                float3[] extent = [(-0.037820816, -0.295, 0), (0.037820816, 0.295, 0)]
+                color3f inputs:color = (1, 1, 1)
+                bool inputs:enableColorTemperature = 0
+                float inputs:height = 0.59
+                float inputs:intensity = 50
+                float inputs:width = 0.07564163
+                float3 xformOp:rotateXYZ = (0, -0, 179.99998)
+                float3 xformOp:scale = (100.00001, 100.00001, 100.00001)
+                double3 xformOp:translate = (2439.440185546875, 1872.442138671875, -48.989776611328125)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+            }
+
+            def RectLight "light_ef295f16136e5804853c429d62e745b1"
+            {
+                float3[] extent = [(-0.037820816, -0.295, 0), (0.037820816, 0.295, 0)]
+                color3f inputs:color = (1, 1, 1)
+                bool inputs:enableColorTemperature = 0
+                float inputs:height = 0.59
+                float inputs:intensity = 50
+                float inputs:width = 0.07564163
+                float3 xformOp:rotateXYZ = (0, -0, 179.99998)
+                float3 xformOp:scale = (100.00001, 100.00001, 100.00001)
+                double3 xformOp:translate = (2119.404296875, 1872.442138671875, -48.989776611328125)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+            }
+
+            def RectLight "light_feece19f309b5a08a9ce08ece6f3b79c"
+            {
+                float3[] extent = [(-0.037820816, -0.295, 0), (0.037820816, 0.295, 0)]
+                color3f inputs:color = (1, 1, 1)
+                bool inputs:enableColorTemperature = 0
+                float inputs:height = 0.59
+                float inputs:intensity = 50
+                float inputs:width = 0.07564163
+                float3 xformOp:rotateXYZ = (0, -0, 179.99998)
+                float3 xformOp:scale = (100.00001, 100.00001, 100.00001)
+                double3 xformOp:translate = (3079.46533203125, 1632.1878662109375, -48.989776611328125)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+            }
+
+            def RectLight "light_84329c26b1ed51429d663720dcda9b78"
+            {
+                float3[] extent = [(-0.037820816, -0.295, 0), (0.037820816, 0.295, 0)]
+                color3f inputs:color = (1, 1, 1)
+                bool inputs:enableColorTemperature = 0
+                float inputs:height = 0.59
+                float inputs:intensity = 50
+                float inputs:width = 0.07564163
+                float3 xformOp:rotateXYZ = (0, -0, 179.99998)
+                float3 xformOp:scale = (100.00001, 100.00001, 100.00001)
+                double3 xformOp:translate = (3399.467529296875, 1632.1878662109375, -48.989776611328125)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+            }
+
+            def RectLight "light_fec07abf69865045b05839e5166b11aa"
+            {
+                float3[] extent = [(-0.037820816, -0.295, 0), (0.037820816, 0.295, 0)]
+                color3f inputs:color = (1, 1, 1)
+                bool inputs:enableColorTemperature = 0
+                float inputs:height = 0.59
+                float inputs:intensity = 50
+                float inputs:width = 0.07564163
+                float3 xformOp:rotateXYZ = (0, -0, 179.99998)
+                float3 xformOp:scale = (100.00001, 100.00001, 100.00001)
+                double3 xformOp:translate = (2759.219482421875, 1632.1878662109375, -48.989776611328125)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+            }
+
+            def RectLight "light_0cd363d601695605bdfdaadfc22d8179"
+            {
+                float3[] extent = [(-0.037820816, -0.295, 0), (0.037820816, 0.295, 0)]
+                color3f inputs:color = (1, 1, 1)
+                bool inputs:enableColorTemperature = 0
+                float inputs:height = 0.59
+                float inputs:intensity = 50
+                float inputs:width = 0.07564163
+                float3 xformOp:rotateXYZ = (0, -0, 179.99998)
+                float3 xformOp:scale = (100.00001, 100.00001, 100.00001)
+                double3 xformOp:translate = (2439.440185546875, 1632.1878662109375, -48.989776611328125)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+            }
+
+            def RectLight "light_b04e09c344da5d4b87432df4acd95795"
+            {
+                float3[] extent = [(-0.037820816, -0.295, 0), (0.037820816, 0.295, 0)]
+                color3f inputs:color = (1, 1, 1)
+                bool inputs:enableColorTemperature = 0
+                float inputs:height = 0.59
+                float inputs:intensity = 50
+                float inputs:width = 0.07564163
+                float3 xformOp:rotateXYZ = (0, -0, 179.99998)
+                float3 xformOp:scale = (100.00001, 100.00001, 100.00001)
+                double3 xformOp:translate = (2119.404296875, 1632.1878662109375, -48.989776611328125)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+            }
+
+            def RectLight "light_3fb5c6a8cdf85b5e910ff015342d103b"
+            {
+                float3[] extent = [(-0.037820816, -0.295, 0), (0.037820816, 0.295, 0)]
+                color3f inputs:color = (1, 1, 1)
+                bool inputs:enableColorTemperature = 0
+                float inputs:height = 0.59
+                float inputs:intensity = 50
+                float inputs:width = 0.07564163
+                float3 xformOp:rotateXYZ = (0, -0, 179.99998)
+                float3 xformOp:scale = (100.00001, 100.00001, 100.00001)
+                double3 xformOp:translate = (3079.46533203125, 471.587646484375, -48.989776611328125)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+            }
+
+            def RectLight "light_03f86c1e9ef650d5af1947ad046bc8c1"
+            {
+                float3[] extent = [(-0.037820816, -0.295, 0), (0.037820816, 0.295, 0)]
+                color3f inputs:color = (1, 1, 1)
+                bool inputs:enableColorTemperature = 0
+                float inputs:height = 0.59
+                float inputs:intensity = 50
+                float inputs:width = 0.07564163
+                float3 xformOp:rotateXYZ = (0, -0, 179.99998)
+                float3 xformOp:scale = (100.00001, 100.00001, 100.00001)
+                double3 xformOp:translate = (3399.467529296875, 471.5876159667969, -48.989776611328125)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+            }
+
+            def RectLight "light_245a40d378d75286bd0d7eeed3b32dad"
+            {
+                float3[] extent = [(-0.037820816, -0.295, 0), (0.037820816, 0.295, 0)]
+                color3f inputs:color = (1, 1, 1)
+                bool inputs:enableColorTemperature = 0
+                float inputs:height = 0.59
+                float inputs:intensity = 50
+                float inputs:width = 0.07564163
+                float3 xformOp:rotateXYZ = (0, -0, 179.99998)
+                float3 xformOp:scale = (100.00001, 100.00001, 100.00001)
+                double3 xformOp:translate = (2759.219482421875, 471.5876770019531, -48.989776611328125)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+            }
+
+            def RectLight "light_4ea44e959e5e57d198a9701c8004a3f1"
+            {
+                float3[] extent = [(-0.037820816, -0.295, 0), (0.037820816, 0.295, 0)]
+                color3f inputs:color = (1, 1, 1)
+                bool inputs:enableColorTemperature = 0
+                float inputs:height = 0.59
+                float inputs:intensity = 50
+                float inputs:width = 0.07564163
+                float3 xformOp:rotateXYZ = (0, -0, 179.99998)
+                float3 xformOp:scale = (100.00001, 100.00001, 100.00001)
+                double3 xformOp:translate = (2439.43994140625, 471.58770751953125, -48.989776611328125)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+            }
+
+            def RectLight "light_6fa93df389df5bf29b9e09d5a39e4c9a"
+            {
+                float3[] extent = [(-0.037820816, -0.295, 0), (0.037820816, 0.295, 0)]
+                color3f inputs:color = (1, 1, 1)
+                bool inputs:enableColorTemperature = 0
+                float inputs:height = 0.59
+                float inputs:intensity = 50
+                float inputs:width = 0.07564163
+                float3 xformOp:rotateXYZ = (0, -0, 179.99998)
+                float3 xformOp:scale = (100.00001, 100.00001, 100.00001)
+                double3 xformOp:translate = (2119.404296875, 471.5877380371094, -48.989776611328125)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+            }
+        }
+    }
+}
+
