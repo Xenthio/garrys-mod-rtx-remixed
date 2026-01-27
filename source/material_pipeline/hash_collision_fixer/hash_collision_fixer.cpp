@@ -12,8 +12,6 @@
 #include <tier0/dbg.h>
 #include <filesystem.h>
 
-using namespace GarrysMod::Lua;
-
 namespace MaterialPipeline {
 namespace HashCollisionFixer {
 
@@ -229,7 +227,7 @@ static IFileSystem* GetFileSystem() {
 LUA_FUNCTION(HashFixer_CheckMaterial) {
     const char* materialName = LUA->CheckString(1);
     const char* texturePath = LUA->CheckString(2);
-    bool debug = LUA->IsType(3, Type::Bool) ? LUA->GetBool(3) : false;
+    bool debug = LUA->IsType(3, GarrysMod::Lua::Type::Bool) ? LUA->GetBool(3) : false;
     
     IFileSystem* fs = GetFileSystem();
     if (!fs) {
@@ -322,7 +320,7 @@ LUA_FUNCTION(HashFixer_GetStats) {
 // Lua: HashCollisionFixer.CheckSolidColor(texturePath, [debugOutput])
 LUA_FUNCTION(HashFixer_CheckSolidColor) {
     const char* texturePath = LUA->CheckString(1);
-    bool debug = LUA->IsType(2, Type::Bool) ? LUA->GetBool(2) : false;
+    bool debug = LUA->IsType(2, GarrysMod::Lua::Type::Bool) ? LUA->GetBool(2) : false;
     
     IFileSystem* fs = GetFileSystem();
     if (!fs) {
@@ -353,7 +351,7 @@ LUA_FUNCTION(HashFixer_CheckSolidColor) {
 
 void RegisterLuaBindings(GarrysMod::Lua::ILuaBase* LUA) {
     // Create HashCollisionFixer table
-    LUA->PushSpecial(SPECIAL_GLOB);
+    LUA->PushSpecial(GarrysMod::Lua::SPECIAL_GLOB);
     LUA->CreateTable();
     
     LUA->PushString("CheckMaterial");

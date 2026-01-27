@@ -4251,8 +4251,6 @@ void TextureProcessor::AppendToUSDAAsync() {
 // Lua Bindings
 //=============================================================================
 
-using namespace GarrysMod::Lua;
-
 LUA_FUNCTION(LegacyTextureProcessor_Initialize) {
     // If already initialized (by C++ during RemixAPI init), return success
     if (TextureProcessor::Instance().IsInitialized()) {
@@ -4284,7 +4282,7 @@ LUA_FUNCTION(LegacyTextureProcessor_ProcessAllMaterials) {
 
 LUA_FUNCTION(LegacyTextureProcessor_ProcessMaterialsBatch) {
     int maxBatch = 5; // Default batch size
-    if (LUA->IsType(1, Type::Number)) {
+    if (LUA->IsType(1, GarrysMod::Lua::Type::Number)) {
         maxBatch = (int)LUA->GetNumber(1);
     }
     
@@ -4294,7 +4292,7 @@ LUA_FUNCTION(LegacyTextureProcessor_ProcessMaterialsBatch) {
 }
 
 LUA_FUNCTION(LegacyTextureProcessor_SetAutoProcessing) {
-    if (!LUA->IsType(1, Type::Bool)) {
+    if (!LUA->IsType(1, GarrysMod::Lua::Type::Bool)) {
         LUA->ThrowError("Expected boolean for auto processing");
         return 0;
     }
@@ -4304,7 +4302,7 @@ LUA_FUNCTION(LegacyTextureProcessor_SetAutoProcessing) {
 }
 
 LUA_FUNCTION(LegacyTextureProcessor_SetDebugOutput) {
-    if (!LUA->IsType(1, Type::Bool)) {
+    if (!LUA->IsType(1, GarrysMod::Lua::Type::Bool)) {
         LUA->ThrowError("Expected boolean for debug output");
         return 0;
     }
@@ -4314,7 +4312,7 @@ LUA_FUNCTION(LegacyTextureProcessor_SetDebugOutput) {
 }
 
 LUA_FUNCTION(LegacyTextureProcessor_SetMetallicGeneration) {
-    if (!LUA->IsType(1, Type::Bool)) {
+    if (!LUA->IsType(1, GarrysMod::Lua::Type::Bool)) {
         LUA->ThrowError("Expected boolean for metallic generation");
         return 0;
     }
@@ -4339,7 +4337,7 @@ LUA_FUNCTION(LegacyTextureProcessor_IsMetallicGenerationEnabled) {
 }
 
 LUA_FUNCTION(LegacyTextureProcessor_SetAutoDiscover) {
-    if (!LUA->IsType(1, Type::Bool)) {
+    if (!LUA->IsType(1, GarrysMod::Lua::Type::Bool)) {
         LUA->ThrowError("Expected boolean for auto-discover");
         return 0;
     }
@@ -4363,7 +4361,7 @@ LUA_FUNCTION(LegacyTextureProcessor_IsAutoDiscoverEnabled) {
 }
 
 LUA_FUNCTION(LegacyTextureProcessor_SetParseCommentedProperties) {
-    if (!LUA->IsType(1, Type::Bool)) {
+    if (!LUA->IsType(1, GarrysMod::Lua::Type::Bool)) {
         LUA->ThrowError("Expected boolean for parse commented properties");
         return 0;
     }
@@ -4416,13 +4414,13 @@ LUA_FUNCTION(LegacyTextureProcessor_ClearCache) {
 }
 
 LUA_FUNCTION(LegacyTextureProcessor_ConvertTexture) {
-    if (!LUA->IsType(1, Type::String)) {
+    if (!LUA->IsType(1, GarrysMod::Lua::Type::String)) {
         LUA->ThrowError("Expected string for texture path");
         return 0;
     }
     
     const char* path = LUA->GetString(1);
-    bool isNormalMap = LUA->IsType(2, Type::Bool) ? LUA->GetBool(2) : false;
+    bool isNormalMap = LUA->IsType(2, GarrysMod::Lua::Type::Bool) ? LUA->GetBool(2) : false;
     
     uint64_t hash = TextureProcessor::Instance().ConvertAndUploadTexture(path, isNormalMap);
     
@@ -4435,7 +4433,7 @@ LUA_FUNCTION(LegacyTextureProcessor_ConvertTexture) {
 }
 
 LUA_FUNCTION(LegacyTextureProcessor_InspectMaterial) {
-    if (!LUA->IsType(1, Type::String)) {
+    if (!LUA->IsType(1, GarrysMod::Lua::Type::String)) {
         LUA->ThrowError("Expected string for material name");
         return 0;
     }
@@ -4726,7 +4724,7 @@ LUA_FUNCTION(LegacyTextureProcessor_InspectMaterial) {
 }
 
 LUA_FUNCTION(LegacyTextureProcessor_SetOutputDirectory) {
-    if (!LUA->IsType(1, Type::String)) {
+    if (!LUA->IsType(1, GarrysMod::Lua::Type::String)) {
         LUA->ThrowError("Expected string for output directory path");
         return 0;
     }
@@ -4742,7 +4740,7 @@ LUA_FUNCTION(LegacyTextureProcessor_GetOutputDirectory) {
 }
 
 LUA_FUNCTION(LegacyTextureProcessor_ProcessSingleMaterial) {
-    if (!LUA->IsType(1, Type::String)) {
+    if (!LUA->IsType(1, GarrysMod::Lua::Type::String)) {
         LUA->ThrowError("Expected string for material name");
         return 0;
     }
@@ -4795,7 +4793,7 @@ LUA_FUNCTION(LegacyTextureProcessor_AppendToUSDAAsync) {
 
 void InitializeLegacyTextureProcessorLuaBindings(GarrysMod::Lua::ILuaBase* LUA) {
     // Create LegacyTextureProcessor table
-    LUA->PushSpecial(SPECIAL_GLOB);
+    LUA->PushSpecial(GarrysMod::Lua::SPECIAL_GLOB);
     LUA->CreateTable();
     
     LUA->PushCFunction(LegacyTextureProcessor_Initialize);

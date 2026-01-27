@@ -18,8 +18,6 @@
 #include <algorithm>
 #include <cstdio>
 
-using namespace GarrysMod::Lua;
-
 // External globals
 extern IMaterialSystem* materials;
 
@@ -723,7 +721,7 @@ LUA_FUNCTION(AutoCat_SetEmissiveCategorisation) {
 
 LUA_FUNCTION(AutoCat_SetCategoryFlags) {
     uint64_t hash = 0;
-    if (LUA->IsType(1, Type::String)) {
+    if (LUA->IsType(1, GarrysMod::Lua::Type::String)) {
         const char* hashStr = LUA->GetString(1);
         hash = std::strtoull(hashStr, nullptr, 0);
     } else {
@@ -737,7 +735,7 @@ LUA_FUNCTION(AutoCat_SetCategoryFlags) {
 
 LUA_FUNCTION(AutoCat_GetCategoryFlags) {
     uint64_t hash = 0;
-    if (LUA->IsType(1, Type::String)) {
+    if (LUA->IsType(1, GarrysMod::Lua::Type::String)) {
         const char* hashStr = LUA->GetString(1);
         hash = std::strtoull(hashStr, nullptr, 0);
     } else {
@@ -780,7 +778,7 @@ LUA_FUNCTION(AutoCat_GetStats) {
 }
 
 void RegisterLuaBindings(GarrysMod::Lua::ILuaBase* LUA) {
-    LUA->PushSpecial(SPECIAL_GLOB);
+    LUA->PushSpecial(GarrysMod::Lua::SPECIAL_GLOB);
     LUA->CreateTable();
     
     LUA->PushCFunction(AutoCat_SetEnabled);

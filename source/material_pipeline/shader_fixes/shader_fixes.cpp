@@ -12,8 +12,6 @@
 #include <materialsystem/imaterialvar.h>
 #include <algorithm>
 
-using namespace GarrysMod::Lua;
-
 namespace MaterialPipeline {
 namespace ShaderFixes {
 
@@ -278,7 +276,7 @@ LUA_FUNCTION(ShaderFixes_Reset) {
 }
 
 void RegisterLuaBindings(GarrysMod::Lua::ILuaBase* LUA) {
-    LUA->PushSpecial(SPECIAL_GLOB);
+    LUA->PushSpecial(GarrysMod::Lua::SPECIAL_GLOB);
     LUA->CreateTable();
     
     LUA->PushCFunction(ShaderFixes_SetEnabled);
