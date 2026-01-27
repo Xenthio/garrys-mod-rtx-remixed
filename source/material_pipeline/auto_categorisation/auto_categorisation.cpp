@@ -661,16 +661,18 @@ int RetryPendingCategories() {
         if (result && result.value() != 0) {
             uint64_t hash = result.value();
             
-            // Apply without holding lock (use separate function)
-            // Actually we can do it inline since we have the lock
+            // Store mapping
             s_hashToCategoryFlags[hash] = it->categoryFlags;
             
             // Convert hash to string format for Remix API
             std::string hashStr = HashToString(hash);
             
-            // Apply to Remix API
+            // Apply to Remix API - all category types (same as ApplyToHash)
             if (it->categoryFlags & CategoryFlags::SKY) {
                 s_remix->AddTextureHash("rtx.skyBoxTextures", hashStr.c_str());
+            }
+            if (it->categoryFlags & CategoryFlags::IGNORED) {
+                s_remix->AddTextureHash("rtx.ignoreTextures", hashStr.c_str());
             }
             if (it->categoryFlags & CategoryFlags::PARTICLE) {
                 s_remix->AddTextureHash("rtx.particleTextures", hashStr.c_str());
@@ -678,13 +680,16 @@ int RetryPendingCategories() {
             if (it->categoryFlags & CategoryFlags::DECAL_STATIC) {
                 s_remix->AddTextureHash("rtx.decalTextures", hashStr.c_str());
             }
+            if (it->categoryFlags & CategoryFlags::ANIMATED_WATER) {
+                s_remix->AddTextureHash("rtx.animatedWaterTextures", hashStr.c_str());
+            }
             if (it->categoryFlags & CategoryFlags::EMISSIVE) {
                 s_remix->AddTextureHash("rtx.legacyEmissiveTextures", hashStr.c_str());
             }
             
             if (s_config.debugOutput) {
-                Msg("[AutoCategorisation] Retry succeeded for '%s' -> 0x%llX\n", 
-                    it->materialName.c_str(), hash);
+                Msg("[AutoCategorisation] Retry succeeded for '%s' -> hash 0x%llX, flags 0x%X\n", 
+                    it->materialName.c_str(), hash, it->categoryFlags);
             }
             
             // Release texture and remove from list
