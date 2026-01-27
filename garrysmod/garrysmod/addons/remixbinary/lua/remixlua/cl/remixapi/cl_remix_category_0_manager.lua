@@ -545,33 +545,61 @@ function RemixCategoryManager.AutoCategorizeMaterial(materialName)
     local category = nil
     local categoryName = nil
     
-    -- Check for particles (including sprites)
-    if enableParticles and RemixCategoryManager.IsMaterialParticle(materialName) then
-        category = RemixCategoryManager.CATEGORY.PARTICLE
-        categoryName = "PARTICLE"
+    -- Wrap in pcall to catch C++ exceptions
+    local success, result = pcall(function()
+        -- Check for particles (including sprites)
+        if enableParticles and RemixCategoryManager.IsMaterialParticle(materialName) then
+            return RemixCategoryManager.CATEGORY.PARTICLE, "PARTICLE"
+        
+        -- Check for decals
+        elseif enableDecals and RemixCategoryManager.IsMaterialDecal(materialName) then
+            return RemixCategoryManager.CATEGORY.DECAL_STATIC, "DECAL"
+        
+        -- Check for emissive
+        elseif enableEmissive and RemixCategoryManager.IsMaterialEmissive(materialName) then
+            return RemixCategoryManager.PRESET.EMISSIVE, "EMISSIVE"
+        end
+        
+        return nil, nil
+    end)
     
-    -- Check for decals
-    elseif enableDecals and RemixCategoryManager.IsMaterialDecal(materialName) then
-        category = RemixCategoryManager.CATEGORY.DECAL_STATIC
-        categoryName = "DECAL"
+    if not success then
+        -- C++ exception occurred, mark as processed to avoid retries
+        processedTextures[lowerName] = true
+        if debug then
+            MsgC(Color(255, 100, 100), string.format("[RemixCategoryManager] Exception checking material: %s\n", materialName))
+        end
+        return false
+    end
     
-    -- Check for emissive
-    elseif enableEmissive and RemixCategoryManager.IsMaterialEmissive(materialName) then
-        category = RemixCategoryManager.PRESET.EMISSIVE
-        categoryName = "EMISSIVE"
+    category, categoryName = result, categoryName
+    -- Unpack the results properly from pcall
+    if type(result) == "number" then
+        category = result
     end
     
     if category then
         -- Mark as processed
         processedTextures[lowerName] = true
         
-        -- Check if already categorized
-        local allHashes = RemixMaterial.GetAllTextureHashes and RemixMaterial.GetAllTextureHashes(materialName)
-        if allHashes and #allHashes > 0 then
+        -- Check if already categorized (with pcall protection)
+        local hashSuccess, allHashes = pcall(function()
+            if RemixMaterial.GetAllTextureHashes then
+                return RemixMaterial.GetAllTextureHashes(materialName)
+            end
+            return nil
+        end)
+        
+        if hashSuccess and allHashes and #allHashes > 0 then
             local alreadyCategorized = false
             for _, hashStr in ipairs(allHashes) do
-                local existing = RemixMaterial.GetHashCategory and RemixMaterial.GetHashCategory(hashStr)
-                if existing and existing ~= 0 then
+                local catSuccess, existing = pcall(function()
+                    if RemixMaterial.GetHashCategory then
+                        return RemixMaterial.GetHashCategory(hashStr)
+                    end
+                    return nil
+                end)
+                if catSuccess and existing and existing ~= 0 then
                     alreadyCategorized = true
                     break
                 end
@@ -579,16 +607,20 @@ function RemixCategoryManager.AutoCategorizeMaterial(materialName)
             
             if alreadyCategorized then
                 if debug then
-                    MsgC(Color(200, 200, 200), string.format("[RemixCategoryManager] %s already categorized: %s\n", categoryName, materialName))
+                    MsgC(Color(200, 200, 200), string.format("[RemixCategoryManager] %s already categorized: %s\n", categoryName or "UNKNOWN", materialName))
                 end
                 return false
             end
         end
         
-        -- Apply category
-        if RemixCategoryManager.SetMaterialCategory(materialName, category) then
+        -- Apply category (with pcall protection)
+        local setSuccess, setResult = pcall(function()
+            return RemixCategoryManager.SetMaterialCategory(materialName, category)
+        end)
+        
+        if setSuccess and setResult then
             if debug then
-                MsgC(Color(100, 255, 100), string.format("[RemixCategoryManager] Categorized as %s: %s\n", categoryName, materialName))
+                MsgC(Color(100, 255, 100), string.format("[RemixCategoryManager] Categorized as %s: %s\n", categoryName or "UNKNOWN", materialName))
             end
             return true
         end

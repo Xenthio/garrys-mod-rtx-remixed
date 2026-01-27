@@ -319,7 +319,16 @@ local function Stage2_Autocategorize(materialName)
     
     -- Defer to RemixCategoryManager's own autocategorization if available
     if RemixCategoryManager.AutoCategorizeMaterial then
-        local categorized = RemixCategoryManager.AutoCategorizeMaterial(materialName)
+        -- Wrap in pcall to catch any C++ exceptions
+        local success, categorized = pcall(function()
+            return RemixCategoryManager.AutoCategorizeMaterial(materialName)
+        end)
+        
+        if not success then
+            DebugPrint("Stage 2 EXCEPTION: ", materialName)
+            return true, false  -- Continue pipeline, but mark as not categorized
+        end
+        
         if categorized then
             State.stats.categorized = State.stats.categorized + 1
             DebugPrint("Stage 2 CATEGORIZED (via manager): ", materialName)
@@ -403,21 +412,33 @@ local function Stage3_ProcessWithToPBR(materialName)
         return true, false
     end
     
-    -- Make sure ToPBR is initialized
-    if processor.IsInitialized and not processor.IsInitialized() then
-        if processor.Initialize then
-            local success = processor.Initialize()
-            if not success then
-                DebugPrint("Stage 3 SKIP (ToPBR init failed): ", materialName)
-                return true, false
+    -- Make sure ToPBR is initialized (with pcall protection)
+    local initSuccess, initResult = pcall(function()
+        if processor.IsInitialized and not processor.IsInitialized() then
+            if processor.Initialize then
+                return processor.Initialize()
             end
         end
+        return true  -- Already initialized
+    end)
+    
+    if not initSuccess or not initResult then
+        DebugPrint("Stage 3 SKIP (ToPBR init failed): ", materialName)
+        return true, false
     end
     
-    -- Use ProcessSingleMaterial to immediately process this material
+    -- Use ProcessSingleMaterial to immediately process this material (with pcall protection)
     if processor.ProcessSingleMaterial then
-        local success = processor.ProcessSingleMaterial(materialName)
-        if success then
+        local procSuccess, procResult = pcall(function()
+            return processor.ProcessSingleMaterial(materialName)
+        end)
+        
+        if not procSuccess then
+            DebugPrint("Stage 3 EXCEPTION: ", materialName)
+            return true, false
+        end
+        
+        if procResult then
             State.stats.queuedForToPBR = State.stats.queuedForToPBR + 1
             DebugPrint("Stage 3 PROCESSED: ", materialName)
             hook.Run("RTX_MaterialPipelineStageComplete", materialName, "ToPBR")
