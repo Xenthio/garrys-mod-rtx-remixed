@@ -65,7 +65,11 @@ local State = {
     thinkHookActive = false,
     lastProcessTime = 0,
     luaProcessedMaterials = {},  -- Track which materials Lua fixers have processed
-    luaFixersRun = false
+    luaFixersRun = false,
+    -- Batched processing state to avoid freeze
+    pendingLuaMaterials = {},
+    luaBatchProcessing = false,
+    luaBatchIndex = 1
 }
 
 -- =============================================================================
@@ -183,24 +187,132 @@ local function ProcessWorldMaterials()
     end
 end
 
--- Process all existing entities
-local function ProcessAllEntities()
-    for _, ent in ipairs(ents.GetAll()) do
-        ProcessEntityMaterials(ent)
+-- Process all existing entities - returns list of materials
+local function CollectAllMaterials()
+    local materials = {}
+    
+    -- Collect world/BSP materials
+    local world = game.GetWorld()
+    if IsValid(world) then
+        local worldMats = world:GetMaterials()
+        if worldMats then
+            for _, matName in ipairs(worldMats) do
+                if matName and matName ~= "" then
+                    materials[matName] = true
+                end
+            end
+        end
     end
+    
+    -- Collect from NikNaks BSP if available
+    if NikNaks and NikNaks.CurrentMap then
+        local bsp = NikNaks.CurrentMap
+        if bsp and bsp.GetAllTextureNames then
+            local textures = bsp:GetAllTextureNames()
+            if textures then
+                for _, texName in ipairs(textures) do
+                    if texName and texName ~= "" then
+                        materials[texName] = true
+                    end
+                end
+            end
+        end
+    end
+    
+    -- Collect from all entities
+    for _, ent in ipairs(ents.GetAll()) do
+        if IsValid(ent) then
+            local modelMats = ent:GetMaterials()
+            if modelMats then
+                for _, matName in ipairs(modelMats) do
+                    if matName and matName ~= "" then
+                        materials[matName] = true
+                    end
+                end
+            end
+            
+            for i = 0, 31 do
+                local subMat = ent:GetSubMaterial(i)
+                if subMat and subMat ~= "" then
+                    materials[subMat] = true
+                end
+            end
+        end
+    end
+    
+    -- Convert to indexed table
+    local result = {}
+    for matName, _ in pairs(materials) do
+        table.insert(result, matName)
+    end
+    
+    return result
 end
 
--- Run all Lua fixers on existing materials
+-- Batch size for processing (materials per frame)
+local LUA_BATCH_SIZE = 50
+
+-- Process one batch of Lua fixers (called from Think hook)
+local function ProcessLuaFixersBatch()
+    if not State.luaBatchProcessing then return false end
+    if #State.pendingLuaMaterials == 0 then
+        State.luaBatchProcessing = false
+        return false
+    end
+    
+    local startIdx = State.luaBatchIndex
+    local endIdx = math.min(startIdx + LUA_BATCH_SIZE - 1, #State.pendingLuaMaterials)
+    
+    for i = startIdx, endIdx do
+        local matName = State.pendingLuaMaterials[i]
+        if matName then
+            RunLuaFixers(matName)
+        end
+    end
+    
+    State.luaBatchIndex = endIdx + 1
+    
+    -- Check if we're done
+    if State.luaBatchIndex > #State.pendingLuaMaterials then
+        local count = table.Count(State.luaProcessedMaterials)
+        InfoPrint(string.format("Lua fixers completed: %d materials processed", count))
+        State.luaBatchProcessing = false
+        State.luaFixersRun = true
+        State.pendingLuaMaterials = {}
+        return false
+    end
+    
+    return true  -- Still processing
+end
+
+-- Start running Lua fixers in batches (non-blocking)
 function RTXMaterialPipeline.RunLuaFixers()
-    InfoPrint("Running Lua fixers on all materials...")
+    if State.luaBatchProcessing then
+        InfoPrint("Lua fixers already running...")
+        return
+    end
+    
+    InfoPrint("Collecting materials for Lua fixers...")
+    
+    -- Collect all materials
+    State.pendingLuaMaterials = CollectAllMaterials()
+    State.luaBatchIndex = 1
+    State.luaBatchProcessing = true
+    
+    InfoPrint(string.format("Starting batched Lua fixers on %d materials (%d per frame)...", 
+        #State.pendingLuaMaterials, LUA_BATCH_SIZE))
+end
+
+-- Synchronous version for manual command (processes all at once)
+function RTXMaterialPipeline.RunLuaFixersSync()
+    InfoPrint("Running Lua fixers synchronously on all materials...")
     
     local startTime = SysTime()
+    local materials = CollectAllMaterials()
     
-    -- Process world/BSP materials first
-    ProcessWorldMaterials()
-    
-    -- Process all entities
-    ProcessAllEntities()
+    for _, matName in ipairs(materials) do
+        RunLuaFixers(matName)
+    end
     
     local elapsed = SysTime() - startTime
     local count = table.Count(State.luaProcessedMaterials)
@@ -217,6 +329,11 @@ local function OnThink()
     -- Check if pipeline is enabled
     if not GetConVar("rtx_mat_enabled"):GetBool() then
         return
+    end
+    
+    -- First, process any pending Lua fixers in batches (non-blocking)
+    if State.luaBatchProcessing then
+        ProcessLuaFixersBatch()
     end
     
     -- Check if C++ MaterialPipeline is available
@@ -372,6 +489,13 @@ concommand.Add("rtx_mat_status", function()
     
     local luaStats = RTXMaterialPipeline.GetLuaStats()
     print("\n--- Lua Fixers ---")
+    if State.luaBatchProcessing then
+        local progress = State.luaBatchIndex / math.max(1, #State.pendingLuaMaterials) * 100
+        print(string.format("Lua Fixers: PROCESSING... (%d/%d = %.0f%%)", 
+            State.luaBatchIndex, #State.pendingLuaMaterials, progress))
+    else
+        print("Lua Fixers: " .. (State.luaFixersRun and "Complete" or "Not started"))
+    end
     print("Lua Processed: " .. luaStats.luaProcessed)
     print("PBR Fixed: " .. luaStats.pbrFixed)
     print("Refract Fixed: " .. luaStats.refractFixed)
@@ -380,8 +504,8 @@ concommand.Add("rtx_mat_status", function()
 end, nil, "Show material pipeline status")
 
 concommand.Add("rtx_mat_process_all", function()
-    -- First run Lua fixers
-    RTXMaterialPipeline.RunLuaFixers()
+    -- First run Lua fixers synchronously (user requested, so blocking is OK)
+    RTXMaterialPipeline.RunLuaFixersSync()
     
     -- Then process through C++ pipeline
     if not RTXMaterialPipeline.IsAvailable() then
@@ -395,8 +519,9 @@ concommand.Add("rtx_mat_process_all", function()
 end, nil, "Process all tracked materials through the pipeline")
 
 concommand.Add("rtx_mat_run_lua_fixers", function()
-    RTXMaterialPipeline.RunLuaFixers()
-end, nil, "Run Lua material fixers on all materials")
+    -- Use sync version for manual command
+    RTXMaterialPipeline.RunLuaFixersSync()
+end, nil, "Run Lua material fixers on all materials (synchronous)")
 
 concommand.Add("rtx_mat_clear", function()
     RTXMaterialPipeline.ClearCache()
