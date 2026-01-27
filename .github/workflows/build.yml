@@ -47,7 +47,7 @@ jobs:
         }
         New-Item -ItemType Directory -Force -Path "artifacts\garrysmod\lua\bin"
         Copy-Item $sourcePath "artifacts\garrysmod\lua\bin\$artifactName"
-        Copy-Item "garrysmod\*" "artifacts\garrysmod\" -Recurse -Force
+        Copy-Item "garrysmod\*" "artifacts\" -Recurse -Force
       shell: pwsh
     
     - name: Upload artifacts
