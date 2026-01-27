@@ -304,48 +304,154 @@ void WriteOpaqueMaterial(std::ostream& stream,
     stream << "        }\n\n";  // Close material
 }
 
-bool WriteMaterialsUSDAFile(const std::string& modDir,
-                            const std::string& outputDirectory,
-                            const std::unordered_map<uint64_t, TextureProcessor::ProcessedMaterialInfo>& materialInfo,
-                            bool debugOutput) {
-    std::string materialsUsdaPath = modDir + "/materials.usda";
-    std::ofstream materialsUsda(materialsUsdaPath);
-    if (!materialsUsda.is_open()) {
-        Warning("[USDA] Failed to create materials.usda at %s\n", materialsUsdaPath.c_str());
-        return false;
-    }
+// Helper function to write fresh USDA content
+static void WriteFreshUSDAContent(std::ostream& stream,
+                                  const std::unordered_map<uint64_t, TextureProcessor::ProcessedMaterialInfo>& materialInfo,
+                                  const std::string& outputDirectory) {
+    stream << "#usda 1.0\n";
+    stream << "(\n";
+    stream << "    upAxis = \"Z\"\n";
+    stream << ")\n\n";
     
-    // Write USDA header
-    materialsUsda << "#usda 1.0\n";
-    materialsUsda << "(\n";
-    materialsUsda << "    upAxis = \"Z\"\n";
-    materialsUsda << ")\n\n";
-    
-    // Write material overrides
-    materialsUsda << "over \"RootNode\"\n";
-    materialsUsda << "{\n";
-    materialsUsda << "    over \"Looks\"\n";
-    materialsUsda << "    {\n";
+    stream << "over \"RootNode\"\n";
+    stream << "{\n";
+    stream << "    over \"Looks\"\n";
+    stream << "    {\n";
     
     for (const auto& pair : materialInfo) {
         const TextureProcessor::ProcessedMaterialInfo& info = pair.second;
         uint64_t hash = info.textureHash;
         
         if (info.isGlass) {
-            WriteGlassMaterial(materialsUsda, hash, info, outputDirectory);
+            WriteGlassMaterial(stream, hash, info, outputDirectory);
         } else {
-            WriteOpaqueMaterial(materialsUsda, hash, info, outputDirectory);
+            WriteOpaqueMaterial(stream, hash, info, outputDirectory);
         }
     }
     
-    materialsUsda << "    }\n";  // Close Looks
-    materialsUsda << "}\n";  // Close RootNode
+    stream << "    }\n";  // Close Looks
+    stream << "}\n";  // Close RootNode
+}
+
+bool WriteMaterialsUSDAFile(const std::string& modDir,
+                            const std::string& outputDirectory,
+                            const std::unordered_map<uint64_t, TextureProcessor::ProcessedMaterialInfo>& materialInfo,
+                            bool debugOutput) {
+    std::string materialsUsdaPath = modDir + "/materials.usda";
+    
+    // First, read existing file content to preserve it
+    std::string existingContent;
+    std::unordered_set<uint64_t> existingHashes;
+    bool fileExists = false;
+    
+    // Use LoadExistingHashes to get the hashes, then read full content separately
+    LoadExistingHashes(materialsUsdaPath, existingHashes, false);
+    
+    {
+        std::ifstream existingFile(materialsUsdaPath);
+        if (existingFile.is_open()) {
+            fileExists = true;
+            std::stringstream buffer;
+            buffer << existingFile.rdbuf();
+            existingContent = buffer.str();
+            existingFile.close();
+            
+            if (debugOutput && !existingHashes.empty()) {
+                Msg("[USDA] Preserving %d existing material entries from file\n", (int)existingHashes.size());
+            }
+        }
+    }
+    
+    // Count how many new materials we'll add
+    int newMaterialCount = 0;
+    for (const auto& pair : materialInfo) {
+        if (existingHashes.find(pair.first) == existingHashes.end()) {
+            newMaterialCount++;
+        }
+    }
+    
+    // If file exists and no new materials, skip writing
+    if (fileExists && newMaterialCount == 0) {
+        if (debugOutput) {
+            Msg("[USDA] No new materials to add, preserving existing file\n");
+        }
+        return true;
+    }
+    
+    std::ofstream materialsUsda(materialsUsdaPath);
+    if (!materialsUsda.is_open()) {
+        Warning("[USDA] Failed to create materials.usda at %s\n", materialsUsdaPath.c_str());
+        return false;
+    }
+    
+    // Decide whether to append or write fresh
+    bool shouldAppend = fileExists && !existingContent.empty() && newMaterialCount > 0;
+    
+    if (shouldAppend) {
+        // Find the closing pattern for Looks block: "    }\n}" at end of file
+        // We look for the last occurrence of "    }" followed by whitespace/newline and "}"
+        size_t closeLooksPos = existingContent.rfind("    }");
+        
+        // Verify this is actually the Looks closing bracket by checking what follows
+        bool validPosition = false;
+        if (closeLooksPos != std::string::npos) {
+            // Check that after "    }" we have newline(s) and then "}" for RootNode
+            size_t afterClose = closeLooksPos + 5; // Length of "    }"
+            while (afterClose < existingContent.length() && 
+                   (existingContent[afterClose] == '\n' || existingContent[afterClose] == '\r' || 
+                    existingContent[afterClose] == ' ')) {
+                afterClose++;
+            }
+            if (afterClose < existingContent.length() && existingContent[afterClose] == '}') {
+                validPosition = true;
+            }
+        }
+        
+        if (validPosition) {
+            // Write content up to the closing Looks bracket
+            materialsUsda << existingContent.substr(0, closeLooksPos);
+            
+            // Write new materials
+            for (const auto& pair : materialInfo) {
+                const TextureProcessor::ProcessedMaterialInfo& info = pair.second;
+                uint64_t hash = info.textureHash;
+                
+                // Skip if already in file
+                if (existingHashes.find(hash) != existingHashes.end()) {
+                    continue;
+                }
+                
+                if (info.isGlass) {
+                    WriteGlassMaterial(materialsUsda, hash, info, outputDirectory);
+                } else {
+                    WriteOpaqueMaterial(materialsUsda, hash, info, outputDirectory);
+                }
+            }
+            
+            // Write the closing brackets
+            materialsUsda << existingContent.substr(closeLooksPos);
+        } else {
+            // Fallback: couldn't find proper structure, write fresh
+            Warning("[USDA] Could not parse existing file structure, writing fresh\n");
+            shouldAppend = false;
+        }
+    }
+    
+    if (!shouldAppend) {
+        // Write fresh USDA file
+        WriteFreshUSDAContent(materialsUsda, materialInfo, outputDirectory);
+    }
     
     materialsUsda.close();
     
     if (debugOutput) {
-        Msg("[USDA] Wrote materials.usda with %d materials to %s\n", 
-            (int)materialInfo.size(), modDir.c_str());
+        if (fileExists && shouldAppend) {
+            Msg("[USDA] Appended %d new materials to materials.usda (total: %d existing + %d new)\n", 
+                newMaterialCount, (int)existingHashes.size(), newMaterialCount);
+        } else {
+            Msg("[USDA] Wrote materials.usda with %d materials to %s\n", 
+                (int)materialInfo.size(), modDir.c_str());
+        }
     }
     
     return true;
