@@ -328,6 +328,9 @@ LUA_FUNCTION(HashFixer_GetStats) {
 }
 
 // Lua: HashCollisionFixer.CheckSolidColor(texturePath, [debugOutput])
+// Returns: isSolid, r, g, b, a, width, height  (if solid color)
+// Returns: false, errorMessage  (if error)
+// Returns: false  (if not solid color)
 LUA_FUNCTION(HashFixer_CheckSolidColor) {
     const char* texturePath = LUA->CheckString(1);
     bool debug = LUA->IsType(2, GarrysMod::Lua::Type::Bool) ? LUA->GetBool(2) : false;
@@ -353,7 +356,9 @@ LUA_FUNCTION(HashFixer_CheckSolidColor) {
         LUA->PushNumber(result.g);
         LUA->PushNumber(result.b);
         LUA->PushNumber(result.a);
-        return 5;
+        LUA->PushNumber(result.width);
+        LUA->PushNumber(result.height);
+        return 7;  // isSolid, r, g, b, a, width, height
     }
     
     return 1;

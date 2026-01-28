@@ -78,9 +78,10 @@ end
 -- =============================================================================
 
 -- Create a unique texture for a solid-color material
--- The texture is 4x4 pixels (minimum for proper hashing) with the solid color
--- plus a tiny invisible variation in one pixel based on material hash
-local function CreateUniqueTexture(matName, r, g, b, a)
+-- The texture uses the same size as the original to ensure compatibility with toPBR
+-- and other systems that rely on texture hashing by D3D9 textures.
+-- We add a tiny invisible variation in one pixel based on material hash.
+local function CreateUniqueTexture(matName, r, g, b, a, width, height)
     -- Generate a unique name based on material
     local uniqueName = "rtx_solidcolor_" .. string.gsub(matName, "[^%w]", "_")
     
@@ -92,10 +93,12 @@ local function CreateUniqueTexture(matName, r, g, b, a)
     -- Generate hash from material name to create variation
     local hash = SimpleHash(matName)
     
-    -- Create a 4x4 render target
-    local texSize = 4
+    -- Use original texture size, with a minimum of 4x4 for proper hashing
+    local texWidth = math.max(width or 4, 4)
+    local texHeight = math.max(height or 4, 4)
+    
     local rtName = uniqueName .. "_rt"
-    local rt = GetRenderTargetEx(rtName, texSize, texSize, 
+    local rt = GetRenderTargetEx(rtName, texWidth, texHeight, 
         RT_SIZE_LITERAL, MATERIAL_RT_DEPTH_NONE, 0, 0, IMAGE_FORMAT_RGBA8888)
     
     if not rt then
@@ -128,7 +131,7 @@ local function CreateUniqueTexture(matName, r, g, b, a)
     local var2G = bit.bxor(g, bit.band(bit.rshift(hash2, 1), 1))
     
     surface.SetDrawColor(var2R, var2G, b, a)
-    surface.DrawRect(texSize - 1, texSize - 1, 1, 1)
+    surface.DrawRect(texWidth - 1, texHeight - 1, 1, 1)
     
     cam.End2D()
     render.PopRenderTarget()
@@ -136,8 +139,8 @@ local function CreateUniqueTexture(matName, r, g, b, a)
     -- Store the reference
     State.materialToTexture[matName] = rt
     
-    DebugPrint(string.format("Created unique texture for '%s' (color: %d,%d,%d,%d, hash: 0x%08X)", 
-        matName, r, g, b, a, hash))
+    DebugPrint(string.format("Created unique texture for '%s' (color: %d,%d,%d,%d, size: %dx%d, hash: 0x%08X)", 
+        matName, r, g, b, a, texWidth, texHeight, hash))
     
     return rt
 end
@@ -185,24 +188,27 @@ function RTXFixSolidColor.ProcessMaterial(matName)
     end
     
     -- Use C++ to check if this is a solid-color texture
-    local isSolid, r, g, b, a = HashCollisionFixer.CheckSolidColor(baseTexture, debug_mode:GetBool())
+    -- Returns: isSolid, r, g, b, a, width, height
+    local isSolid, r, g, b, a, width, height = HashCollisionFixer.CheckSolidColor(baseTexture, debug_mode:GetBool())
     
     if not isSolid then
         State.processedMaterials[matName] = false
         return false
     end
     
-    -- Default alpha if not returned
+    -- Default values if not returned
     r = r or 255
     g = g or 255
     b = b or 255
     a = a or 255
+    width = width or 4
+    height = height or 4
     
-    DebugPrint(string.format("Detected solid-color material: '%s' (color: %d,%d,%d,%d)", 
-        matName, r, g, b, a))
+    DebugPrint(string.format("Detected solid-color material: '%s' (color: %d,%d,%d,%d, size: %dx%d)", 
+        matName, r, g, b, a, width, height))
     
-    -- Create a unique texture for this material
-    local uniqueTex = CreateUniqueTexture(matName, r, g, b, a)
+    -- Create a unique texture for this material (same size as original)
+    local uniqueTex = CreateUniqueTexture(matName, r, g, b, a, width, height)
     
     if not uniqueTex then
         DebugPrint("Failed to create unique texture for: ", matName)
@@ -345,10 +351,11 @@ concommand.Add("rtx_fixsolidcolor_test", function(ply, cmd, args)
     end
     
     print("[RTX SolidColorFix] Testing texture: " .. texPath)
-    local isSolid, r, g, b, a = HashCollisionFixer.CheckSolidColor(texPath, true)
+    local isSolid, r, g, b, a, width, height = HashCollisionFixer.CheckSolidColor(texPath, true)
     
     if isSolid then
-        print(string.format("  Result: SOLID COLOR (RGBA: %d, %d, %d, %d)", r or 0, g or 0, b or 0, a or 255))
+        print(string.format("  Result: SOLID COLOR (RGBA: %d, %d, %d, %d) [%dx%d]", 
+            r or 0, g or 0, b or 0, a or 255, width or 0, height or 0))
     else
         print("  Result: NOT a solid color (or error)")
     end
