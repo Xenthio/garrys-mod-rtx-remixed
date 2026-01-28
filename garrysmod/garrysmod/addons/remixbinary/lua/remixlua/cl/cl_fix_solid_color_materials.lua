@@ -44,10 +44,6 @@ local State = {
     processedMaterials = {},  -- [matName] = true/false (success/fail)
     fixedCount = 0,
     
-    -- Cache of created unique textures
-    -- [colorKey] = { texture = ITexture, materials = { matName1, matName2, ... } }
-    uniqueTextures = {},
-    
     -- Material name to unique texture mapping
     materialToTexture = {},
 }
@@ -75,11 +71,6 @@ local function SimpleHash(str)
         hash = ((hash * 33) + string.byte(str, i)) % 0xFFFFFFFF
     end
     return hash
-end
-
--- Convert RGBA values to a color key string
-local function ColorKey(r, g, b, a)
-    return string.format("%02X%02X%02X%02X", r, g, b, a)
 end
 
 -- =============================================================================
@@ -112,15 +103,6 @@ local function CreateUniqueTexture(matName, r, g, b, a)
         return nil
     end
     
-    -- Create temporary materials for rendering
-    local fillMat = CreateMaterial(uniqueName .. "_fill", "UnlitGeneric", {
-        ["$basetexture"] = "color/white",
-        ["$vertexcolor"] = 1,
-        ["$vertexalpha"] = 1,
-        ["$ignorez"] = 1,
-        ["$nolod"] = 1,
-    })
-    
     -- Render the solid color with a tiny variation
     render.PushRenderTarget(rt)
     cam.Start2D()
@@ -128,30 +110,25 @@ local function CreateUniqueTexture(matName, r, g, b, a)
     -- Clear with the base solid color
     render.Clear(r, g, b, a)
     
-    -- Add a tiny invisible variation to one pixel based on the hash
+    -- Add a tiny invisible variation to pixels based on the hash
     -- This ensures each material gets a unique hash while looking identical
-    -- We modify the LSB of the red channel for one pixel
-    local varR = bit.band(r + bit.band(hash, 1), 255)
-    local varG = bit.band(g + bit.band(bit.rshift(hash, 1), 1), 255)
-    local varB = bit.band(b + bit.band(bit.rshift(hash, 2), 1), 255)
+    -- We use XOR to toggle the LSB without wrapping issues at color boundaries
+    local varR = bit.bxor(r, bit.band(hash, 1))
+    local varG = bit.bxor(g, bit.band(bit.rshift(hash, 1), 1))
+    local varB = bit.bxor(b, bit.band(bit.rshift(hash, 2), 1))
     
-    -- Only apply variation if it won't be noticeable (within 1 unit)
-    if math.abs(varR - r) <= 1 and math.abs(varG - g) <= 1 and math.abs(varB - b) <= 1 then
-        -- Draw a single pixel with the variation at position (0,0)
-        surface.SetDrawColor(varR, varG, varB, a)
-        surface.DrawRect(0, 0, 1, 1)
-    end
+    -- Draw a single pixel with the variation at position (0,0)
+    surface.SetDrawColor(varR, varG, varB, a)
+    surface.DrawRect(0, 0, 1, 1)
     
-    -- Add additional variation using other hash bits in other corners
-    -- This ensures more uniqueness without being visible
+    -- Add additional variation using other hash bits in the opposite corner
+    -- This provides more uniqueness
     local hash2 = bit.rshift(hash, 8)
-    local var2R = bit.band(r + bit.band(hash2, 1), 255)
-    local var2G = bit.band(g + bit.band(bit.rshift(hash2, 1), 1), 255)
+    local var2R = bit.bxor(r, bit.band(hash2, 1))
+    local var2G = bit.bxor(g, bit.band(bit.rshift(hash2, 1), 1))
     
-    if math.abs(var2R - r) <= 1 and math.abs(var2G - g) <= 1 then
-        surface.SetDrawColor(var2R, var2G, b, a)
-        surface.DrawRect(texSize - 1, texSize - 1, 1, 1)
-    end
+    surface.SetDrawColor(var2R, var2G, b, a)
+    surface.DrawRect(texSize - 1, texSize - 1, 1, 1)
     
     cam.End2D()
     render.PopRenderTarget()
@@ -287,7 +264,7 @@ function RTXFixSolidColor.GetStats()
     local stats = {
         fixed = State.fixedCount,
         cached = table.Count(State.processedMaterials),
-        uniqueTextures = table.Count(State.materialToTexture),
+        texturesCreated = table.Count(State.materialToTexture),
     }
     
     -- Add C++ stats if available
@@ -304,7 +281,6 @@ end
 -- Clear cache (useful on map change)
 function RTXFixSolidColor.ClearCache()
     State.processedMaterials = {}
-    State.uniqueTextures = {}
     State.materialToTexture = {}
     State.fixedCount = 0
     
@@ -334,7 +310,7 @@ concommand.Add("rtx_fixsolidcolor_stats", function()
     print("C++ Module Available: " .. (RTXFixSolidColor.IsAvailable() and "YES" or "NO"))
     print("Lua Materials Fixed: " .. stats.fixed)
     print("Cached Entries: " .. stats.cached)
-    print("Unique Textures Created: " .. stats.uniqueTextures)
+    print("Textures Created: " .. stats.texturesCreated)
     if stats.cppDetected then
         print("\n--- C++ HashCollisionFixer ---")
         print("Total Detected: " .. stats.cppDetected)

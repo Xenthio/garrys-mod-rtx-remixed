@@ -11,12 +11,13 @@
     - RTXFixRefract.ProcessMaterial()    → Fix Refract shader materials
     - RTXRemoveDetail.ProcessMaterial()  → Remove detail textures
     - RTXFixSolidColor.ProcessMaterial() → Fix solid-color texture hash collisions
+                                           (uses C++ HashCollisionFixer for detection)
     
     PHASE 2 - C++ PIPELINE (runs every frame via Think hook):
     =========================================================
     Processes textures AFTER D3D9 captures them:
     1. ShaderFixes        → Handle Refract shaders, proxies
-    2. HashCollisionFixer → Detect solid-color textures  
+    2. HashCollisionFixer → Detect solid-color textures (API for Lua fixer)
     3. AutoCategorisation → Classify particles, decals, emissive
     4. ToPBR              → VTF→DDS, PBR extraction, USDA output
     
