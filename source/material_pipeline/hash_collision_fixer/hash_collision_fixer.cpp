@@ -193,38 +193,41 @@ size_t GetPendingCount() {
     return pending;
 }
 
+} // namespace HashCollisionFixer
+} // namespace MaterialPipeline
+
 // =========================================================================
-// Lua Bindings
+// Filesystem Helper (file-scope, used by Lua bindings)
 // =========================================================================
 
-// Filesystem access - dynamically retrieved from Source Engine
-static IFileSystem* s_pFileSystem = nullptr;
+static IFileSystem* g_pHashCollisionFileSystem = nullptr;
 
-static IFileSystem* GetFileSystem() {
-    if (s_pFileSystem) return s_pFileSystem;
+static IFileSystem* GetFileSystemForHashCollision() {
+    if (g_pHashCollisionFileSystem) return g_pHashCollisionFileSystem;
     
-    // Get filesystem interface the same way as other modules
+    // Get filesystem interface from Source Engine
     HMODULE hModule = GetModuleHandleA("filesystem_stdio.dll");
+    if (!hModule) {
+        hModule = GetModuleHandleA("filesystem.dll");
+    }
+    
     if (hModule) {
         typedef void* (*CreateInterfaceFn)(const char* pName, int* pReturnCode);
         CreateInterfaceFn createInterface = (CreateInterfaceFn)GetProcAddress(hModule, "CreateInterface");
         if (createInterface) {
-            // Try different versions
-            s_pFileSystem = (IFileSystem*)createInterface("VFileSystem022", nullptr);
-            if (!s_pFileSystem) {
-                s_pFileSystem = (IFileSystem*)createInterface("VFileSystem021", nullptr);
+            // Try different versions of the filesystem interface
+            g_pHashCollisionFileSystem = (IFileSystem*)createInterface("VFileSystem022", nullptr);
+            if (!g_pHashCollisionFileSystem) {
+                g_pHashCollisionFileSystem = (IFileSystem*)createInterface("VFileSystem021", nullptr);
             }
-            if (!s_pFileSystem) {
-                s_pFileSystem = (IFileSystem*)createInterface("VFileSystem017", nullptr);
+            if (!g_pHashCollisionFileSystem) {
+                g_pHashCollisionFileSystem = (IFileSystem*)createInterface("VFileSystem017", nullptr);
             }
         }
     }
     
-    return s_pFileSystem;
+    return g_pHashCollisionFileSystem;
 }
-
-} // namespace HashCollisionFixer
-} // namespace MaterialPipeline
 
 // =========================================================================
 // Lua Bindings - Must be at global scope
@@ -236,7 +239,7 @@ LUA_FUNCTION(HashFixer_CheckMaterial) {
     const char* texturePath = LUA->CheckString(2);
     bool debug = LUA->IsType(3, GarrysMod::Lua::Type::Bool) ? LUA->GetBool(3) : false;
     
-    IFileSystem* fs = MaterialPipeline::HashCollisionFixer::GetFileSystem();
+    IFileSystem* fs = GetFileSystemForHashCollision();
     if (!fs) {
         LUA->PushBool(false);
         return 1;
@@ -329,7 +332,7 @@ LUA_FUNCTION(HashFixer_CheckSolidColor) {
     const char* texturePath = LUA->CheckString(1);
     bool debug = LUA->IsType(2, GarrysMod::Lua::Type::Bool) ? LUA->GetBool(2) : false;
     
-    IFileSystem* fs = MaterialPipeline::HashCollisionFixer::GetFileSystem();
+    IFileSystem* fs = GetFileSystemForHashCollision();
     if (!fs) {
         LUA->PushBool(false);
         LUA->PushString("Could not get filesystem interface");
