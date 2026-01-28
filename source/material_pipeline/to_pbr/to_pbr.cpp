@@ -975,16 +975,6 @@ bool TextureProcessor::ReadD3D9TexturePixelData(IDirect3DTexture9* texture,
     outWidth = desc.Width;
     outHeight = desc.Height;
     
-    // Lock the texture to read pixel data
-    D3DLOCKED_RECT lockedRect;
-    hr = texture->LockRect(0, &lockedRect, nullptr, D3DLOCK_READONLY);
-    if (FAILED(hr)) {
-        if (m_debugOutput) {
-            Warning("[MaterialPipeline::ToPBR] Failed to lock D3D9 texture: 0x%08X\n", hr);
-        }
-        return false;
-    }
-    
     // Validate texture size to prevent excessive memory allocation
     const uint32_t MAX_TEXTURE_SIZE = 4096;
     if (outWidth > MAX_TEXTURE_SIZE || outHeight > MAX_TEXTURE_SIZE) {
@@ -992,8 +982,82 @@ bool TextureProcessor::ReadD3D9TexturePixelData(IDirect3DTexture9* texture,
             Warning("[MaterialPipeline::ToPBR] D3D9 texture too large: %dx%d (max %dx%d)\n", 
                 outWidth, outHeight, MAX_TEXTURE_SIZE, MAX_TEXTURE_SIZE);
         }
-        texture->UnlockRect(0);
         return false;
+    }
+    
+    // Get the device from the texture
+    IDirect3DDevice9* pDevice = nullptr;
+    hr = texture->GetDevice(&pDevice);
+    if (FAILED(hr) || !pDevice) {
+        if (m_debugOutput) {
+            Warning("[MaterialPipeline::ToPBR] Failed to get D3D9 device from texture: 0x%08X\n", hr);
+        }
+        return false;
+    }
+    
+    // Try direct lock first (works for managed/system memory textures)
+    D3DLOCKED_RECT lockedRect;
+    hr = texture->LockRect(0, &lockedRect, nullptr, D3DLOCK_READONLY);
+    
+    // If direct lock fails (common for render targets in D3DPOOL_DEFAULT), 
+    // use GetRenderTargetData to copy to a system memory surface
+    IDirect3DSurface9* pSysSurface = nullptr;
+    IDirect3DSurface9* pTexSurface = nullptr;
+    bool usedRenderTargetCopy = false;
+    
+    if (FAILED(hr)) {
+        if (m_debugOutput) {
+            Msg("[MaterialPipeline::ToPBR] Direct lock failed (0x%08X), trying GetRenderTargetData...\n", hr);
+        }
+        
+        // Get the texture's surface
+        hr = texture->GetSurfaceLevel(0, &pTexSurface);
+        if (FAILED(hr)) {
+            if (m_debugOutput) {
+                Warning("[MaterialPipeline::ToPBR] Failed to get texture surface: 0x%08X\n", hr);
+            }
+            pDevice->Release();
+            return false;
+        }
+        
+        // Create a system memory surface to copy to
+        hr = pDevice->CreateOffscreenPlainSurface(
+            desc.Width, desc.Height, desc.Format,
+            D3DPOOL_SYSTEMMEM, &pSysSurface, nullptr);
+        if (FAILED(hr)) {
+            if (m_debugOutput) {
+                Warning("[MaterialPipeline::ToPBR] Failed to create system memory surface: 0x%08X\n", hr);
+            }
+            pTexSurface->Release();
+            pDevice->Release();
+            return false;
+        }
+        
+        // Copy render target data to system memory
+        hr = pDevice->GetRenderTargetData(pTexSurface, pSysSurface);
+        if (FAILED(hr)) {
+            if (m_debugOutput) {
+                Warning("[MaterialPipeline::ToPBR] GetRenderTargetData failed: 0x%08X\n", hr);
+            }
+            pSysSurface->Release();
+            pTexSurface->Release();
+            pDevice->Release();
+            return false;
+        }
+        
+        // Lock the system memory surface instead
+        hr = pSysSurface->LockRect(&lockedRect, nullptr, D3DLOCK_READONLY);
+        if (FAILED(hr)) {
+            if (m_debugOutput) {
+                Warning("[MaterialPipeline::ToPBR] Failed to lock system memory surface: 0x%08X\n", hr);
+            }
+            pSysSurface->Release();
+            pTexSurface->Release();
+            pDevice->Release();
+            return false;
+        }
+        
+        usedRenderTargetCopy = true;
     }
     
     // Allocate output buffer (RGBA8888)
@@ -1047,15 +1111,31 @@ bool TextureProcessor::ReadD3D9TexturePixelData(IDirect3DTexture9* texture,
             if (m_debugOutput) {
                 Warning("[MaterialPipeline::ToPBR] Unsupported D3D9 texture format: %d\n", desc.Format);
             }
-            texture->UnlockRect(0);
+            if (usedRenderTargetCopy) {
+                pSysSurface->UnlockRect();
+                pSysSurface->Release();
+                pTexSurface->Release();
+            } else {
+                texture->UnlockRect(0);
+            }
+            pDevice->Release();
             return false;
     }
     
-    // Unlock the texture
-    texture->UnlockRect(0);
+    // Cleanup
+    if (usedRenderTargetCopy) {
+        pSysSurface->UnlockRect();
+        pSysSurface->Release();
+        pTexSurface->Release();
+    } else {
+        texture->UnlockRect(0);
+    }
+    pDevice->Release();
     
     if (m_debugOutput) {
-        Msg("[MaterialPipeline::ToPBR] Read D3D9 texture: %dx%d, format %d\n", outWidth, outHeight, desc.Format);
+        Msg("[MaterialPipeline::ToPBR] Read D3D9 texture: %dx%d, format %d%s\n", 
+            outWidth, outHeight, desc.Format, 
+            usedRenderTargetCopy ? " (via GetRenderTargetData)" : "");
     }
     
     return true;

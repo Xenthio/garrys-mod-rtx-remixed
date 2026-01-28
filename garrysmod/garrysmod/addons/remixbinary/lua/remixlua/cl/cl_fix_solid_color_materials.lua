@@ -168,8 +168,7 @@ function RTXFixSolidColor.ProcessMaterial(matName)
     
     -- Check if C++ HashCollisionFixer detected this as a solid-color material
     if not HashCollisionFixer then
-        -- C++ module not loaded yet
-        State.processedMaterials[matName] = false
+        -- C++ module not loaded yet; don't cache result so we can retry later
         return false
     end
     
