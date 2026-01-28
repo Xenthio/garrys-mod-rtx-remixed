@@ -216,6 +216,13 @@ function RTXFixSolidColor.ProcessMaterial(matName)
         return false
     end
     
+    -- Invalidate the D3D9 texture cache for this material BEFORE changing the texture
+    -- This ensures the old texture is removed and the new one will be captured
+    if HashCollisionFixer.InvalidateMaterialCache then
+        local cleared = HashCollisionFixer.InvalidateMaterialCache(matName)
+        DebugPrint(string.format("Invalidated texture cache for '%s' (cleared %d textures)", matName, cleared or 0))
+    end
+    
     -- Apply the unique texture to the material
     mat:SetTexture("$basetexture", uniqueTex)
     

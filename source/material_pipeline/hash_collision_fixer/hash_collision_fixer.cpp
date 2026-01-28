@@ -9,6 +9,7 @@
 #include <Windows.h>
 #include "hash_collision_fixer.h"
 #include "../../vtf_parser.h"
+#include "../../d3d9_texture_tracker.h"
 #include <tier0/dbg.h>
 #include <filesystem.h>
 
@@ -364,6 +365,17 @@ LUA_FUNCTION(HashFixer_CheckSolidColor) {
     return 1;
 }
 
+// Lua: HashCollisionFixer.InvalidateMaterialCache(materialName)
+// Clears the D3D9 texture cache for a material, forcing it to be recaptured
+// Call this BEFORE changing a material's $basetexture so the new texture gets tracked
+LUA_FUNCTION(HashFixer_InvalidateMaterialCache) {
+    const char* materialName = LUA->CheckString(1);
+    
+    size_t count = D3D9TextureTracker::Instance().InvalidateMaterialCache(materialName);
+    LUA->PushNumber(static_cast<double>(count));
+    return 1;
+}
+
 namespace MaterialPipeline {
 namespace HashCollisionFixer {
 
@@ -406,6 +418,10 @@ void RegisterLuaBindings(GarrysMod::Lua::ILuaBase* LUA) {
     
     LUA->PushString("CheckSolidColor");
     LUA->PushCFunction(HashFixer_CheckSolidColor);
+    LUA->SetTable(-3);
+    
+    LUA->PushString("InvalidateMaterialCache");
+    LUA->PushCFunction(HashFixer_InvalidateMaterialCache);
     LUA->SetTable(-3);
     
     LUA->SetField(-2, "HashCollisionFixer");

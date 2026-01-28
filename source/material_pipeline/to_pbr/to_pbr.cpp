@@ -4,7 +4,6 @@
 #include "formats.h"
 #include "vtf.h"
 #include "usda.h"
-#include "../hash_collision_fixer/hash_collision_fixer.h"
 #include <tier0/dbg.h>
 #include <materialsystem/imaterialsystem.h>
 #include <materialsystem/imaterial.h>
@@ -949,6 +948,116 @@ uint64_t TextureProcessor::GenerateTextureHashWithPixelData(const std::string& p
     return hash;
 }
 
+
+// =========================================================================
+// D3D9 Texture Reading - Read pixel data directly from D3D9 textures
+// This is used for runtime textures (e.g., render targets) that don't have VTF files
+// =========================================================================
+
+bool TextureProcessor::ReadD3D9TexturePixelData(IDirect3DTexture9* texture, 
+                                                  std::vector<uint8_t>& outPixelData,
+                                                  uint32_t& outWidth, 
+                                                  uint32_t& outHeight) {
+    if (!texture) {
+        return false;
+    }
+    
+    // Get texture description
+    D3DSURFACE_DESC desc;
+    HRESULT hr = texture->GetLevelDesc(0, &desc);
+    if (FAILED(hr)) {
+        if (m_debugOutput) {
+            Warning("[MaterialPipeline::ToPBR] Failed to get D3D9 texture description: 0x%08X\n", hr);
+        }
+        return false;
+    }
+    
+    outWidth = desc.Width;
+    outHeight = desc.Height;
+    
+    // Lock the texture to read pixel data
+    D3DLOCKED_RECT lockedRect;
+    hr = texture->LockRect(0, &lockedRect, nullptr, D3DLOCK_READONLY);
+    if (FAILED(hr)) {
+        if (m_debugOutput) {
+            Warning("[MaterialPipeline::ToPBR] Failed to lock D3D9 texture: 0x%08X\n", hr);
+        }
+        return false;
+    }
+    
+    // Allocate output buffer (RGBA8888)
+    size_t pixelCount = static_cast<size_t>(outWidth) * outHeight;
+    outPixelData.resize(pixelCount * 4);
+    
+    // Convert based on format
+    const uint8_t* srcData = static_cast<const uint8_t*>(lockedRect.pBits);
+    
+    switch (desc.Format) {
+        case D3DFMT_A8R8G8B8:
+        case D3DFMT_X8R8G8B8:
+            // BGRA -> RGBA conversion
+            for (size_t y = 0; y < outHeight; y++) {
+                const uint8_t* srcRow = srcData + y * lockedRect.Pitch;
+                uint8_t* dstRow = outPixelData.data() + y * outWidth * 4;
+                for (size_t x = 0; x < outWidth; x++) {
+                    dstRow[x * 4 + 0] = srcRow[x * 4 + 2]; // R from B
+                    dstRow[x * 4 + 1] = srcRow[x * 4 + 1]; // G
+                    dstRow[x * 4 + 2] = srcRow[x * 4 + 0]; // B from R
+                    dstRow[x * 4 + 3] = (desc.Format == D3DFMT_X8R8G8B8) ? 255 : srcRow[x * 4 + 3]; // A
+                }
+            }
+            break;
+            
+        case D3DFMT_R8G8B8:
+            // RGB -> RGBA conversion
+            for (size_t y = 0; y < outHeight; y++) {
+                const uint8_t* srcRow = srcData + y * lockedRect.Pitch;
+                uint8_t* dstRow = outPixelData.data() + y * outWidth * 4;
+                for (size_t x = 0; x < outWidth; x++) {
+                    dstRow[x * 4 + 0] = srcRow[x * 3 + 2]; // R from B
+                    dstRow[x * 4 + 1] = srcRow[x * 3 + 1]; // G
+                    dstRow[x * 4 + 2] = srcRow[x * 3 + 0]; // B from R
+                    dstRow[x * 4 + 3] = 255;               // A
+                }
+            }
+            break;
+            
+        case D3DFMT_A8B8G8R8:
+            // RGBA - direct copy
+            for (size_t y = 0; y < outHeight; y++) {
+                const uint8_t* srcRow = srcData + y * lockedRect.Pitch;
+                uint8_t* dstRow = outPixelData.data() + y * outWidth * 4;
+                memcpy(dstRow, srcRow, outWidth * 4);
+            }
+            break;
+            
+        default:
+            // Unsupported format - try to read as BGRA anyway
+            if (m_debugOutput) {
+                Warning("[MaterialPipeline::ToPBR] Unsupported D3D9 texture format: %d, attempting BGRA read\n", desc.Format);
+            }
+            for (size_t y = 0; y < outHeight; y++) {
+                const uint8_t* srcRow = srcData + y * lockedRect.Pitch;
+                uint8_t* dstRow = outPixelData.data() + y * outWidth * 4;
+                for (size_t x = 0; x < outWidth; x++) {
+                    dstRow[x * 4 + 0] = srcRow[x * 4 + 2]; // R from B
+                    dstRow[x * 4 + 1] = srcRow[x * 4 + 1]; // G
+                    dstRow[x * 4 + 2] = srcRow[x * 4 + 0]; // B from R
+                    dstRow[x * 4 + 3] = srcRow[x * 4 + 3]; // A
+                }
+            }
+            break;
+    }
+    
+    // Unlock the texture
+    texture->UnlockRect(0);
+    
+    if (m_debugOutput) {
+        Msg("[MaterialPipeline::ToPBR] Read D3D9 texture: %dx%d, format %d\n", outWidth, outHeight, desc.Format);
+    }
+    
+    return true;
+}
 
 bool TextureProcessor::UploadTextureToRemix(const ConvertedTexture& texture, 
                                                 remixapi_TextureHandle* outHandle) {
@@ -3667,16 +3776,6 @@ int TextureProcessor::ProcessTrackedMaterialsBatch(int maxBatch) {
             continue;
         }
         
-        // Skip solid-color materials - they don't benefit from PBR conversion and
-        // can cause hash collision issues if multiple solid-color materials share the same hash
-        if (HashCollisionFixer::IsSolidColorMaterial(matName)) {
-            if (m_debugOutput) {
-                Msg("[MaterialPipeline::ToPBR] Skipping solid-color material: %s\n", matName.c_str());
-            }
-            m_processedMaterials.insert(matName);
-            continue;
-        }
-        
         // Extract PBR properties
         MaterialPBRProperties props;
         if (!ExtractMaterialPBR(matName, props)) {
@@ -3780,16 +3879,6 @@ bool TextureProcessor::ProcessSingleMaterial(const std::string& materialName) {
     
     // Skip internal materials
     if (materialName.find("__") == 0 || materialName.find("vgui") == 0) {
-        return false;
-    }
-    
-    // Skip solid-color materials - they don't benefit from PBR conversion and
-    // can cause hash collision issues if multiple solid-color materials share the same hash
-    if (HashCollisionFixer::IsSolidColorMaterial(materialName)) {
-        if (m_debugOutput) {
-            Msg("[MaterialPipeline::ToPBR] Skipping solid-color material: %s\n", materialName.c_str());
-        }
-        m_processedMaterials.insert(materialName);
         return false;
     }
     
@@ -4062,17 +4151,6 @@ bool TextureProcessor::ProcessMaterialOnWorker(const std::string& materialName) 
     
     // Skip internal materials
     if (materialName.find("__") == 0 || materialName.find("vgui") == 0) {
-        std::lock_guard<std::recursive_mutex> lock(m_mutex);
-        m_processedMaterials.insert(materialName);
-        return false;
-    }
-    
-    // Skip solid-color materials - they don't benefit from PBR conversion and
-    // can cause hash collision issues if multiple solid-color materials share the same hash
-    if (HashCollisionFixer::IsSolidColorMaterial(materialName)) {
-        if (m_debugOutput) {
-            Msg("[MaterialPipeline::ToPBR] Skipping solid-color material: %s\n", materialName.c_str());
-        }
         std::lock_guard<std::recursive_mutex> lock(m_mutex);
         m_processedMaterials.insert(materialName);
         return false;

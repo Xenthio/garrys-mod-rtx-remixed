@@ -49,6 +49,11 @@ public:
     // Get all texture variants for a material
     const std::vector<IDirect3DTexture9*>* GetTextureVariantsForMaterial(const char* materialName);
 
+    // Invalidate/clear cached textures for a specific material
+    // Call this when a material's $basetexture is changed at runtime (e.g., by Lua)
+    // Returns the number of textures cleared
+    size_t InvalidateMaterialCache(const char* materialName);
+
     // Clear the cache (useful for map changes)
     void ClearCache();
 
