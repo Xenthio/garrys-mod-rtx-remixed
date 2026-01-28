@@ -616,6 +616,10 @@ SolidColorResult CheckSolidColor(IFileSystem* fileSystem,
         return result;
     }
     
+    // Store texture dimensions in result (even if not solid color)
+    result.width = header.width;
+    result.height = header.height;
+    
     // Skip textures that are too large (for performance)
     if (header.width > MAX_SOLID_COLOR_CHECK_SIZE || header.height > MAX_SOLID_COLOR_CHECK_SIZE) {
         result.error = false;
@@ -637,8 +641,9 @@ SolidColorResult CheckSolidColor(IFileSystem* fileSystem,
     result.error = false;
     
     if (debugOutput && result.isSolidColor) {
-        Msg("[VTFParser] Solid color detected: %s = RGBA(%d, %d, %d, %d)\n",
-            texturePath.c_str(), result.r, result.g, result.b, result.a);
+        Msg("[VTFParser] Solid color detected: %s = RGBA(%d, %d, %d, %d) [%dx%d]\n",
+            texturePath.c_str(), result.r, result.g, result.b, result.a, 
+            result.width, result.height);
     }
     
     return result;

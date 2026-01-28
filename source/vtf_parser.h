@@ -112,6 +112,8 @@ struct TextureInfo {
 struct SolidColorResult {
     bool isSolidColor = false;
     uint8_t r = 0, g = 0, b = 0, a = 255;
+    uint32_t width = 0;   // Original texture width
+    uint32_t height = 0;  // Original texture height
     bool error = false;
     std::string errorMessage;
 };

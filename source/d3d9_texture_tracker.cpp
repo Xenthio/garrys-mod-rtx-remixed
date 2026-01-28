@@ -247,6 +247,65 @@ const std::vector<IDirect3DTexture9*>* D3D9TextureTracker::GetTextureVariantsFor
     return nullptr;
 }
 
+size_t D3D9TextureTracker::InvalidateMaterialCache(const char* materialName) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (!materialName || !materialName[0]) {
+        return 0;
+    }
+    
+    // Normalize lookup key (same as other parts of this tracker)
+    std::string lowerName = materialName;
+    std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), 
+        [](unsigned char c){ return std::tolower(c); });
+    
+    // Remove common prefixes/suffixes to match how names are stored in cache
+    if (lowerName.find("materials/") == 0) {
+        lowerName = lowerName.substr(10); // Remove "materials/"
+    }
+    if (lowerName.size() > 4 && lowerName.substr(lowerName.size() - 4) == ".vmt") {
+        lowerName = lowerName.substr(0, lowerName.size() - 4); // Remove ".vmt"
+    }
+    
+    size_t totalCount = 0;
+    
+    // Helper to invalidate a specific cache key (release textures and erase entry)
+    auto invalidateKey = [this, &totalCount](const std::string& key) {
+        auto it = m_textureCache.find(key);
+        if (it == m_textureCache.end()) {
+            return;
+        }
+
+        totalCount += it->second.size();
+
+        // Release texture references
+        for (auto* tex : it->second) {
+            if (tex) {
+                tex->Release();
+            }
+        }
+
+        // Remove from cache
+        m_textureCache.erase(it);
+    };
+
+    // Invalidate base material entry
+    invalidateKey(lowerName);
+
+    // Also invalidate displacement/stage1 variant, if present
+    std::string stage1Name = lowerName + "_stage1";
+    invalidateKey(stage1Name);
+
+    if (totalCount == 0) {
+        return 0;
+    }
+    
+    if (m_enableDebugOutput) {
+        Msg("[D3D9TextureTracker] Invalidated cache for '%s' and variants (%zu textures)\n", materialName, totalCount);
+    }
+    
+    return totalCount;
+}
+
 void D3D9TextureTracker::ClearCache() {
     std::lock_guard<std::mutex> lock(m_mutex);
     

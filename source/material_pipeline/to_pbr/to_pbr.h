@@ -21,6 +21,7 @@
 // Forward declarations
 class IMaterial;
 class IFileSystem;
+struct IDirect3DTexture9;
 
 // =========================================================================
 // Material Pipeline - ToPBR Module
@@ -397,6 +398,12 @@ private:
     
     // Read a VTF file from the Source Engine filesystem
     bool ReadVTFFile(const std::string& path, std::vector<uint8_t>& outData);
+    
+    // Read pixel data directly from a D3D9 texture (for runtime textures like render targets)
+    bool ReadD3D9TexturePixelData(IDirect3DTexture9* texture, 
+                                   std::vector<uint8_t>& outPixelData,
+                                   uint32_t& outWidth, 
+                                   uint32_t& outHeight);
     
     // Parse VTF header
     bool ParseVTFHeader(const std::vector<uint8_t>& fileData, VTFFileHeader& outHeader);

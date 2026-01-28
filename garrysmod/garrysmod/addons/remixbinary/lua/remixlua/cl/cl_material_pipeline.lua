@@ -7,15 +7,17 @@
     PHASE 1 - LUA FIXERS (run on InitPostEntity and new entities):
     ==============================================================
     These modify Source Engine IMaterial properties BEFORE D3D9 sees them:
-    - RTXFixPBR.ProcessMaterial()    → Fix ExoPBR/GPBR materials
-    - RTXFixRefract.ProcessMaterial() → Fix Refract shader materials
-    - RTXRemoveDetail.ProcessMaterial() → Remove detail textures
+    - RTXFixPBR.ProcessMaterial()        → Fix ExoPBR/GPBR materials
+    - RTXFixRefract.ProcessMaterial()    → Fix Refract shader materials
+    - RTXRemoveDetail.ProcessMaterial()  → Remove detail textures
+    - RTXFixSolidColor.ProcessMaterial() → Fix solid-color texture hash collisions
+                                           (uses C++ HashCollisionFixer for detection)
     
     PHASE 2 - C++ PIPELINE (runs every frame via Think hook):
     =========================================================
     Processes textures AFTER D3D9 captures them:
     1. ShaderFixes        → Handle Refract shaders, proxies
-    2. HashCollisionFixer → Detect solid-color textures  
+    2. HashCollisionFixer → Detect solid-color textures (API for Lua fixer)
     3. AutoCategorisation → Classify particles, decals, emissive
     4. ToPBR              → VTF→DDS, PBR extraction, USDA output
     
@@ -23,7 +25,7 @@
     =====
     InitPostEntity / Entity spawned:
       └── Lua discovers materials from entities/world
-          └── Lua fixers run (RTXFixPBR, RTXFixRefract, RTXRemoveDetail)
+          └── Lua fixers run (RTXFixPBR, RTXFixRefract, RTXRemoveDetail, RTXFixSolidColor)
     
     D3D9 Hook detects texture:
       └── Pipeline::OnNewMaterialDetected() adds to pending queue (C++)
@@ -33,7 +35,7 @@
           └── Runs C++ stages asynchronously
     
     AUTHORS: RTX Remix GMod Team
-    VERSION: 4.0 - Lua/C++ Hybrid Pipeline
+    VERSION: 4.1 - Lua/C++ Hybrid Pipeline with Solid Color Hash Collision Fixer
 ================================================================================
 ]]--
 
@@ -122,6 +124,14 @@ local function RunLuaFixers(matName)
         local fixed = RTXRemoveDetail.ProcessMaterial(matName)
         if fixed and debug then
             DebugPrint("Lua Stage 0c FIXED (Detail): ", matName)
+        end
+    end
+    
+    -- Stage 0d: Solid Color Hash Collision Fixer
+    if RTXFixSolidColor and RTXFixSolidColor.IsEnabled and RTXFixSolidColor.IsEnabled() then
+        local fixed = RTXFixSolidColor.ProcessMaterial(matName)
+        if fixed and debug then
+            DebugPrint("Lua Stage 0d FIXED (SolidColor): ", matName)
         end
     end
 end
@@ -459,6 +469,7 @@ function RTXMaterialPipeline.ClearCache()
     if RTXFixPBR and RTXFixPBR.ClearCache then RTXFixPBR.ClearCache() end
     if RTXFixRefract and RTXFixRefract.ClearCache then RTXFixRefract.ClearCache() end
     if RTXRemoveDetail and RTXRemoveDetail.ClearCache then RTXRemoveDetail.ClearCache() end
+    if RTXFixSolidColor and RTXFixSolidColor.ClearCache then RTXFixSolidColor.ClearCache() end
     
     -- Clear C++ cache
     if MaterialPipeline and MaterialPipeline.ClearCache then
@@ -484,7 +495,8 @@ function RTXMaterialPipeline.GetLuaStats()
         luaProcessed = table.Count(State.luaProcessedMaterials),
         pbrFixed = 0,
         refractFixed = 0,
-        detailRemoved = 0
+        detailRemoved = 0,
+        solidColorFixed = 0
     }
     
     if RTXFixPBR and RTXFixPBR.GetStats then
@@ -500,6 +512,11 @@ function RTXMaterialPipeline.GetLuaStats()
     if RTXRemoveDetail and RTXRemoveDetail.GetStats then
         local s = RTXRemoveDetail.GetStats()
         stats.detailRemoved = s.removed or 0
+    end
+    
+    if RTXFixSolidColor and RTXFixSolidColor.GetStats then
+        local s = RTXFixSolidColor.GetStats()
+        stats.solidColorFixed = s.fixed or 0
     end
     
     return stats
@@ -596,6 +613,7 @@ concommand.Add("rtx_mat_status", function()
     print("PBR Fixed: " .. luaStats.pbrFixed)
     print("Refract Fixed: " .. luaStats.refractFixed)
     print("Detail Removed: " .. luaStats.detailRemoved)
+    print("Solid Color Fixed: " .. luaStats.solidColorFixed)
     print("=====================================\n")
 end, nil, "Show material pipeline status")
 
@@ -660,9 +678,9 @@ end)
 -- =============================================================================
 
 print("\n========================================")
-print(" RTX Material Pipeline v4.0 Loaded")
+print(" RTX Material Pipeline v4.1 Loaded")
 print(" Lua/C++ Hybrid Pipeline")
-print(" Lua Fixers: PBR, Refract, Detail")
+print(" Lua Fixers: PBR, Refract, Detail, SolidColor")
 print(" C++ Stages: ShaderFix, Hash, Cat, ToPBR")
 print("========================================\n")
 
