@@ -56,3 +56,90 @@ jobs:
         name: windows-${{ matrix.platform }}
         path: artifacts/*
         if-no-files-found: error
+
+  create-nightly-release:
+    needs: build-windows
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/gh-actions')
+    permissions:
+      contents: write
+    
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+    
+    - name: Package nightly release
+      run: |
+        mkdir -p nightly-release/garrysmod/lua/bin
+        
+        # Copy Win32 DLL
+        if [ -d "artifacts/windows-Win32" ]; then
+          cp -r artifacts/windows-Win32/garrysmod/* nightly-release/garrysmod/ || true
+        fi
+        
+        # Copy x64 DLL
+        if [ -d "artifacts/windows-x64" ]; then
+          cp -r artifacts/windows-x64/garrysmod/* nightly-release/garrysmod/ || true
+        fi
+        
+        # Create zip
+        cd nightly-release
+        zip -r ../garrys-mod-rtx-remixed-nightly.zip .
+        cd ..
+    
+    - name: Delete existing nightly release
+      uses: actions/github-script@v7
+      continue-on-error: true
+      with:
+        script: |
+          const { owner, repo } = context.repo;
+          try {
+            const release = await github.rest.repos.getReleaseByTag({
+              owner,
+              repo,
+              tag: 'nightly'
+            });
+            await github.rest.repos.deleteRelease({
+              owner,
+              repo,
+              release_id: release.data.id
+            });
+            console.log('Deleted existing nightly release');
+          } catch (error) {
+            console.log('No existing nightly release to delete');
+          }
+    
+    - name: Delete existing nightly tag
+      uses: actions/github-script@v7
+      continue-on-error: true
+      with:
+        script: |
+          const { owner, repo } = context.repo;
+          try {
+            await github.rest.git.deleteRef({
+              owner,
+              repo,
+              ref: 'tags/nightly'
+            });
+            console.log('Deleted existing nightly tag');
+          } catch (error) {
+            console.log('No existing nightly tag to delete');
+          }
+    
+    - name: Create nightly release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: nightly
+        name: "Nightly Build"
+        body: |
+          Automated nightly build from commit ${{ github.sha }}
+          
+          **Commit:** ${{ github.event.head_commit.message }}
+          **Branch:** ${{ github.ref_name }}
+          **Build Date:** ${{ github.event.head_commit.timestamp }}
+          
+          ⚠️ This is an automated pre-release build and may be unstable.
+        prerelease: true
+        files: garrys-mod-rtx-remixed-nightly.zip
