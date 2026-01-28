@@ -132,7 +132,7 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
         tag_name: nightly
-        name: "Nightly Build"
+        name: "${{ github.sha }} - Nightly"
         body: |
           Automated nightly build from commit ${{ github.sha }}
           
