@@ -985,6 +985,17 @@ bool TextureProcessor::ReadD3D9TexturePixelData(IDirect3DTexture9* texture,
         return false;
     }
     
+    // Validate texture size to prevent excessive memory allocation
+    const uint32_t MAX_TEXTURE_SIZE = 4096;
+    if (outWidth > MAX_TEXTURE_SIZE || outHeight > MAX_TEXTURE_SIZE) {
+        if (m_debugOutput) {
+            Warning("[MaterialPipeline::ToPBR] D3D9 texture too large: %dx%d (max %dx%d)\n", 
+                outWidth, outHeight, MAX_TEXTURE_SIZE, MAX_TEXTURE_SIZE);
+        }
+        texture->UnlockRect(0);
+        return false;
+    }
+    
     // Allocate output buffer (RGBA8888)
     size_t pixelCount = static_cast<size_t>(outWidth) * outHeight;
     outPixelData.resize(pixelCount * 4);
@@ -995,7 +1006,7 @@ bool TextureProcessor::ReadD3D9TexturePixelData(IDirect3DTexture9* texture,
     switch (desc.Format) {
         case D3DFMT_A8R8G8B8:
         case D3DFMT_X8R8G8B8:
-            // BGRA -> RGBA conversion
+            // BGRA -> RGBA conversion (D3D stores as BGRA in memory)
             for (size_t y = 0; y < outHeight; y++) {
                 const uint8_t* srcRow = srcData + y * lockedRect.Pitch;
                 uint8_t* dstRow = outPixelData.data() + y * outWidth * 4;
@@ -1009,7 +1020,7 @@ bool TextureProcessor::ReadD3D9TexturePixelData(IDirect3DTexture9* texture,
             break;
             
         case D3DFMT_R8G8B8:
-            // RGB -> RGBA conversion
+            // BGR -> RGBA conversion (D3D stores as BGR in memory, despite the name)
             for (size_t y = 0; y < outHeight; y++) {
                 const uint8_t* srcRow = srcData + y * lockedRect.Pitch;
                 uint8_t* dstRow = outPixelData.data() + y * outWidth * 4;
@@ -1023,7 +1034,7 @@ bool TextureProcessor::ReadD3D9TexturePixelData(IDirect3DTexture9* texture,
             break;
             
         case D3DFMT_A8B8G8R8:
-            // RGBA - direct copy
+            // RGBA - direct copy (this format is already RGBA order)
             for (size_t y = 0; y < outHeight; y++) {
                 const uint8_t* srcRow = srcData + y * lockedRect.Pitch;
                 uint8_t* dstRow = outPixelData.data() + y * outWidth * 4;
@@ -1032,21 +1043,12 @@ bool TextureProcessor::ReadD3D9TexturePixelData(IDirect3DTexture9* texture,
             break;
             
         default:
-            // Unsupported format - try to read as BGRA anyway
+            // Unsupported format - return false instead of guessing
             if (m_debugOutput) {
-                Warning("[MaterialPipeline::ToPBR] Unsupported D3D9 texture format: %d, attempting BGRA read\n", desc.Format);
+                Warning("[MaterialPipeline::ToPBR] Unsupported D3D9 texture format: %d\n", desc.Format);
             }
-            for (size_t y = 0; y < outHeight; y++) {
-                const uint8_t* srcRow = srcData + y * lockedRect.Pitch;
-                uint8_t* dstRow = outPixelData.data() + y * outWidth * 4;
-                for (size_t x = 0; x < outWidth; x++) {
-                    dstRow[x * 4 + 0] = srcRow[x * 4 + 2]; // R from B
-                    dstRow[x * 4 + 1] = srcRow[x * 4 + 1]; // G
-                    dstRow[x * 4 + 2] = srcRow[x * 4 + 0]; // B from R
-                    dstRow[x * 4 + 3] = srcRow[x * 4 + 3]; // A
-                }
-            }
-            break;
+            texture->UnlockRect(0);
+            return false;
     }
     
     // Unlock the texture
