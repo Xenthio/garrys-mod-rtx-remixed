@@ -4,6 +4,7 @@
 #include "formats.h"
 #include "vtf.h"
 #include "usda.h"
+#include "../hash_collision_fixer/hash_collision_fixer.h"
 #include <tier0/dbg.h>
 #include <materialsystem/imaterialsystem.h>
 #include <materialsystem/imaterial.h>
@@ -3666,6 +3667,16 @@ int TextureProcessor::ProcessTrackedMaterialsBatch(int maxBatch) {
             continue;
         }
         
+        // Skip solid-color materials - they don't benefit from PBR conversion and
+        // can cause hash collision issues if multiple solid-color materials share the same hash
+        if (HashCollisionFixer::IsSolidColorMaterial(matName)) {
+            if (m_debugOutput) {
+                Msg("[MaterialPipeline::ToPBR] Skipping solid-color material: %s\n", matName.c_str());
+            }
+            m_processedMaterials.insert(matName);
+            continue;
+        }
+        
         // Extract PBR properties
         MaterialPBRProperties props;
         if (!ExtractMaterialPBR(matName, props)) {
@@ -3769,6 +3780,16 @@ bool TextureProcessor::ProcessSingleMaterial(const std::string& materialName) {
     
     // Skip internal materials
     if (materialName.find("__") == 0 || materialName.find("vgui") == 0) {
+        return false;
+    }
+    
+    // Skip solid-color materials - they don't benefit from PBR conversion and
+    // can cause hash collision issues if multiple solid-color materials share the same hash
+    if (HashCollisionFixer::IsSolidColorMaterial(materialName)) {
+        if (m_debugOutput) {
+            Msg("[MaterialPipeline::ToPBR] Skipping solid-color material: %s\n", materialName.c_str());
+        }
+        m_processedMaterials.insert(materialName);
         return false;
     }
     
@@ -4041,6 +4062,17 @@ bool TextureProcessor::ProcessMaterialOnWorker(const std::string& materialName) 
     
     // Skip internal materials
     if (materialName.find("__") == 0 || materialName.find("vgui") == 0) {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        m_processedMaterials.insert(materialName);
+        return false;
+    }
+    
+    // Skip solid-color materials - they don't benefit from PBR conversion and
+    // can cause hash collision issues if multiple solid-color materials share the same hash
+    if (HashCollisionFixer::IsSolidColorMaterial(materialName)) {
+        if (m_debugOutput) {
+            Msg("[MaterialPipeline::ToPBR] Skipping solid-color material: %s\n", materialName.c_str());
+        }
         std::lock_guard<std::recursive_mutex> lock(m_mutex);
         m_processedMaterials.insert(materialName);
         return false;
