@@ -20,13 +20,16 @@
       
 
 ## Installation
-- Ensure you've ran the vanilla game at least once, especially if you switched branches on Steam.
+- Switch to the `x86-64` branch of Garry's Mod on Steam (x32 works but not recommended)
+- Ensure you've ran the vanilla game at least once, especially if you switched branches.
 - Download [RTXLauncher](https://github.com/Xenthio/RTXLauncher/releases/latest).
 - **Windows**
    - Put `RTXLauncher.Avalonia.Windows.exe` in an empty folder, run it as an <ins>**Administrator**</ins>
    - Do not place in the same place as your vanilla game
    - Do not place it in a OneDrive synced folder (Documents, Desktop, etc), the game will not work correctly if you do so
 - **Linux**
+   - Ensure Steam Play is forced for Garry's Mod with either Proton Experimental or another recent Proton build.
+   - Run [GModPatchTool](https://github.com/solsticegamestudios/GModPatchTool)
    - Put `RTXLauncher.Avalonia.Linux` in an empty folder, run it via the terminal or double click it (make sure it's marked as executable `chmod +x ./RTXLauncher.Avalonia.Linux`)
 
 - Select the Fixes package type:
