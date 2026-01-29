@@ -94,12 +94,14 @@ jobs:
         zip -r ../garrys-mod-rtx-remixed-nightly.zip .
         cd ..
     
-    - name: Delete existing nightly release
+    - name: Delete existing nightly release and tag
       uses: actions/github-script@v7
       continue-on-error: true
       with:
         script: |
           const { owner, repo } = context.repo;
+          
+          // Delete release first
           try {
             const release = await github.rest.repos.getReleaseByTag({
               owner,
@@ -113,15 +115,13 @@ jobs:
             });
             console.log('Deleted existing nightly release');
           } catch (error) {
-            console.log('No existing nightly release to delete');
+            console.log('No existing nightly release to delete:', error.message);
           }
-    
-    - name: Delete existing nightly tag
-      uses: actions/github-script@v7
-      continue-on-error: true
-      with:
-        script: |
-          const { owner, repo } = context.repo;
+          
+          // Wait a moment for GitHub to process
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          
+          // Delete tag
           try {
             await github.rest.git.deleteRef({
               owner,
@@ -130,8 +130,11 @@ jobs:
             });
             console.log('Deleted existing nightly tag');
           } catch (error) {
-            console.log('No existing nightly tag to delete');
+            console.log('No existing nightly tag to delete:', error.message);
           }
+          
+          // Wait again to ensure deletion is complete
+          await new Promise(resolve => setTimeout(resolve, 1000));
     
     - name: Create nightly release
       uses: softprops/action-gh-release@v1
