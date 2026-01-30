@@ -156,7 +156,7 @@ bool TextureProcessor::Initialize(remix::Interface* remixInterface) {
     
     // Set default output directory for generated textures
     // The executable is at bin/win64/gmod.exe, we need to go up to the game root
-    // Output should be: GarrysModWithRTXAgain/rtx-remix/mods/gmod_topbr/textures/
+    // Output should be: GarrysModWithRTXAgain/rtx-remix/mods/~gmod_topbr/textures/
     char gamePath[MAX_PATH];
     if (GetModuleFileNameA(NULL, gamePath, MAX_PATH)) {
         std::string gameDir(gamePath);
@@ -174,7 +174,7 @@ bool TextureProcessor::Initialize(remix::Interface* remixInterface) {
                     gameDir = gameDir.substr(0, lastSlash);
                 }
             }
-            m_outputDirectory = gameDir + "\\rtx-remix\\mods\\gmod_topbr\\textures";
+            m_outputDirectory = gameDir + "\\rtx-remix\\mods\\~gmod_topbr\\textures";
         }
     }
     
