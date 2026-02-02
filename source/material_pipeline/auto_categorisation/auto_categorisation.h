@@ -28,7 +28,7 @@
 // Forward declarations
 class IMaterial;
 class IFileSystem;
-class IDirect3DTexture9;
+struct IDirect3DTexture9;
 
 namespace remix {
 class Interface;
@@ -120,6 +120,16 @@ void SetDebugOutput(bool enabled);
 uint32_t DetectAndApply(const std::string& materialName, 
                         IMaterial* material,
                         IDirect3DTexture9* texture);
+
+// Detect and apply categories for a material, trying ALL texture variants
+// This is more robust for animated textures where some variants may have hash=0
+// @param materialName - Name of the material (lowercase)
+// @param material - Source Engine IMaterial (can be null)
+// @param textureVariants - Vector of all texture variants for this material
+// @return Category flags that were applied (or queued for pending)
+uint32_t DetectAndApplyAllVariants(const std::string& materialName, 
+                                    IMaterial* material,
+                                    const std::vector<IDirect3DTexture9*>* textureVariants);
 
 // Detect category for a material without applying
 // @param materialName - Name of the material (lowercase)

@@ -452,9 +452,11 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
     // Periodically retry pending categorizations
     // We do this here because SetTexture is called frequently during rendering
     // This ensures categories are applied when texture hashes become available
+    // NOTE: Reduced from 500 to 100 calls for more aggressive retry, especially
+    // for particle effects that may have many texture variants with delayed hashing
     static int setTextureCallCount = 0;
     setTextureCallCount++;
-    if (setTextureCallCount % 500 == 0) {
+    if (setTextureCallCount % 100 == 0) {
         // Retry AutoCategorisation pending queue (from pipeline processing)
         MaterialPipeline::AutoCategorisation::RetryPendingCategories();
         

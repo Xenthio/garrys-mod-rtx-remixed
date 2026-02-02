@@ -512,6 +512,47 @@ uint32_t DetectAndApply(const std::string& materialName,
     return flags;
 }
 
+uint32_t DetectAndApplyAllVariants(const std::string& materialName, 
+                                    IMaterial* material,
+                                    const std::vector<IDirect3DTexture9*>* textureVariants) {
+    if (!s_remix || !textureVariants || textureVariants->empty()) return 0;
+    
+    uint32_t flags = DetectCategory(materialName, material);
+    if (flags == 0) return 0;
+    
+    bool anyApplied = false;
+    bool anyPending = false;
+    
+    // Try ALL texture variants - some may have valid hashes while others don't
+    for (IDirect3DTexture9* texture : *textureVariants) {
+        if (!texture) continue;
+        
+        auto result = s_remix->dxvk_GetTextureHash(texture);
+        if (!result) continue;
+        
+        uint64_t hash = result.value();
+        
+        if (hash != 0) {
+            // Got a valid hash - apply category
+            ApplyToHash(hash, flags, materialName);
+            anyApplied = true;
+        } else {
+            // Hash not ready - queue for retry (only queue first one to avoid duplicates)
+            if (!anyPending) {
+                AddPendingCategory(texture, materialName, flags);
+                anyPending = true;
+            }
+        }
+    }
+    
+    if (s_config.debugOutput && anyApplied) {
+        Msg("[AutoCategorisation] Applied flags 0x%X to '%s' (%zu variants)\n", 
+            flags, materialName.c_str(), textureVariants->size());
+    }
+    
+    return flags;
+}
+
 void ApplyToHash(uint64_t hash, uint32_t flags, const std::string& materialName) {
     if (!s_remix || hash == 0 || flags == 0) return;
     

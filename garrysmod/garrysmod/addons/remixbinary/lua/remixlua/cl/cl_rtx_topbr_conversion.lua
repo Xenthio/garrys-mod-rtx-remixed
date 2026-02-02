@@ -467,9 +467,66 @@ function RTXToPBR.SetDebugOutput(enabled)
     end
 end
 
--- NOTE: Continuous processing (StartContinuousProcessing, StopContinuousProcessing, IsContinuousProcessing)
--- has been REMOVED. All material discovery and continuous processing is now handled by RTXMaterialPipeline.
--- Use rtx_mat_continuous and rtx_mat_continuous_interval convars to control pipeline processing.
+--[[
+    Start continuous processing
+]]--
+function RTXToPBR.StartContinuousProcessing(interval)
+    interval = interval or GetConVarFloatSafe("rtx_topbr_continuous", 0)
+    
+    if interval <= 0 then
+        MsgC(Color(255, 200, 100), "[RTX ToPBR] Invalid interval. Use a value > 0 (seconds)\n")
+        return false
+    end
+    
+    -- Stop any existing continuous timer
+    RTXToPBR.StopContinuousProcessing()
+    
+    -- Create repeating timer
+    timer.Create("RTXToPBR_Continuous", interval, 0, function()
+        if not GetConVarBoolSafe("rtx_topbr_enabled", true) then
+            return
+        end
+        
+        -- Process pending materials through the pipeline (runs quick stages: ShaderFixes, HashCollision, AutoCategorisation)
+        -- This is critical for auto-categorization of particles, decals, emissives, etc.
+        if MaterialPipeline and MaterialPipeline.ProcessPendingMaterials then
+            local pendingProcessed = MaterialPipeline.ProcessPendingMaterials()
+            if pendingProcessed > 0 and GetConVarBoolSafe("rtx_topbr_debug", false) then
+                MsgC(Color(150, 150, 150), string.format("[RTX ToPBR] Continuous: processed %d pending materials (auto-categorisation)\n", pendingProcessed))
+            end
+        end
+        
+        -- Process silently (no console spam) - uses background thread
+        local count = RTXToPBR.ProcessAllMaterials(true)
+        
+        -- Only log if debug is enabled and materials were queued
+        if count > 0 and GetConVarBoolSafe("rtx_topbr_debug", false) then
+            MsgC(Color(150, 150, 150), string.format("[RTX ToPBR] Continuous: queued %d new materials\n", count))
+        end
+    end)
+    
+    MsgC(Color(100, 255, 100), string.format("[RTX ToPBR] Continuous processing started (every %.1f seconds)\n", interval))
+    return true
+end
+
+--[[
+    Stop continuous processing
+]]--
+function RTXToPBR.StopContinuousProcessing()
+    if timer.Exists("RTXToPBR_Continuous") then
+        timer.Remove("RTXToPBR_Continuous")
+        MsgC(Color(100, 200, 255), "[RTX ToPBR] Continuous processing stopped\n")
+        return true
+    end
+    return false
+end
+
+--[[
+    Check if continuous processing is active
+]]--
+function RTXToPBR.IsContinuousProcessing()
+    return timer.Exists("RTXToPBR_Continuous")
+end
 
 -- Console Commands
 concommand.Add("rtx_topbr_inspect", function(ply, cmd, args)
@@ -638,9 +695,51 @@ PBR metallic surfaces reflect their base color.
     MsgC(Color(100, 200, 255), string.rep("=", 60) .. "\n\n")
 end, nil, "Show ToPBR help information")
 
--- NOTE: Auto-processing and continuous processing hooks have been REMOVED.
--- All material discovery and processing timing is now handled by RTXMaterialPipeline.
--- ToPBR is called as Stage 3 of the unified pipeline.
+-- Auto-process on map load
+hook.Add("InitPostEntity", "RTXToPBR_AutoProcess", function()
+    if not GetConVarBoolSafe("rtx_topbr_enabled", true) then
+        return
+    end
+    
+    if not GetConVarBoolSafe("rtx_topbr_auto", true) then
+        return
+    end
+    
+    local delay = GetConVarFloatSafe("rtx_topbr_delay", 5)
+    
+    -- Clear any existing timer
+    if autoProcessTimer then
+        timer.Remove("RTXToPBR_AutoProcess")
+    end
+    
+    -- Schedule auto-processing
+    timer.Create("RTXToPBR_AutoProcess", delay, 1, function()
+        MsgC(Color(100, 200, 255), "[RTX ToPBR] Running auto-process...\n")
+        
+        -- Process pending materials through the pipeline (runs quick stages: ShaderFixes, HashCollision, AutoCategorisation)
+        -- This ensures particles, decals, emissives are categorized before ToPBR processing
+        if MaterialPipeline and MaterialPipeline.ProcessPendingMaterials then
+            MaterialPipeline.ProcessPendingMaterials()
+        end
+        
+        RTXToPBR.ProcessAllMaterials()
+        
+        -- Start continuous processing if configured
+        local continuousInterval = GetConVarFloatSafe("rtx_topbr_continuous", 0)
+        if continuousInterval > 0 then
+            RTXToPBR.StartContinuousProcessing(continuousInterval)
+        end
+    end)
+end)
+
+-- Clear cache on map cleanup
+hook.Add("PostCleanupMap", "RTXToPBR_MapCleanup", function()
+    if timer.Exists("RTXToPBR_AutoProcess") then
+        timer.Remove("RTXToPBR_AutoProcess")
+    end
+    -- Stop continuous processing on map cleanup
+    RTXToPBR.StopContinuousProcessing()
+end)
 
 -- Startup message
 MsgC(Color(100, 255, 100), "[RTX ToPBR] Runtime PBR Converter loaded.\n")

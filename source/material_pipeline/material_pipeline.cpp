@@ -350,7 +350,19 @@ void Pipeline::ProcessMaterialStages(const std::string& materialName,
     // STAGE 3: AutoCategorisation
     // -------------------------------------------------------------------------
     // Classify material as particle, decal, emissive, sky, water, etc.
-    if (texture) {
+    // Use ALL texture variants for better hash coverage (animated textures have many variants,
+    // some may have hash=0 while others have valid hashes)
+    const std::vector<IDirect3DTexture9*>* textureVariants = 
+        D3D9TextureTracker::Instance().GetTextureVariantsForMaterial(materialName.c_str());
+    
+    if (textureVariants && !textureVariants->empty()) {
+        uint32_t categoryFlags = AutoCategorisation::DetectAndApplyAllVariants(materialName, material, textureVariants);
+        if (categoryFlags != 0 && m_config.debugOutput) {
+            Msg("[MaterialPipeline] Stage 3 (AutoCategorisation): %s - flags 0x%X (%zu variants)\n", 
+                materialName.c_str(), categoryFlags, textureVariants->size());
+        }
+    } else if (texture) {
+        // Fallback to single texture if variants not available
         uint32_t categoryFlags = AutoCategorisation::DetectAndApply(materialName, material, texture);
         if (categoryFlags != 0 && m_config.debugOutput) {
             Msg("[MaterialPipeline] Stage 3 (AutoCategorisation): %s - flags 0x%X\n", 
