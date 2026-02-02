@@ -201,6 +201,19 @@ size_t GetPendingCount();
 int RescanAllMaterials();
 
 // =========================================================================
+// Hash Export/Import
+// =========================================================================
+
+// Export all categorized hashes to a conf file for RTX Remix to load
+// @param filepath - Path to write the conf file (e.g., "rtx-remix/rtx_auto_hashes.conf")
+// @return Number of hashes exported, or -1 on error
+int ExportHashesToFile(const std::string& filepath);
+
+// Get all categorized hashes grouped by category
+// @return Map of category name to list of hashes
+std::unordered_map<std::string, std::vector<uint64_t>> GetCategorizedHashes();
+
+// =========================================================================
 // Statistics
 // =========================================================================
 struct Stats {
