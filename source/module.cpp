@@ -22,7 +22,8 @@
 #include <remix/remix_c.h>
 #include "remixapi/remixapi.h"
 #include "d3d9_texture_tracker.h"
-// HashCollisionFixer is now initialized via MaterialPipeline - no direct include needed
+#include "patch_manager.h"
+#include "culling_patches.h"
 #endif // _WIN64
 
 #include "prop_fixes.h" 
@@ -39,6 +40,7 @@ extern IMaterialSystem* materials = NULL;
 #ifdef _WIN64
 // Global pointers for Remix and Source Engine interfaces
 extern IMaterialSystem* materials;
+extern IMaterialSystem* materials;
 remix::Interface* g_remix = nullptr;
 IDirect3DDevice9Ex* g_d3dDevice = nullptr;
 
@@ -50,6 +52,7 @@ static void __stdcall RemixPresentCallback() {
         g_pfnAutoInstancePersistentLights();
     }
 }
+
 #endif
 
 using namespace GarrysMod::Lua;
@@ -227,6 +230,10 @@ GMOD_MODULE_OPEN() {
         configManager.SetConfigVariable("rtx.enableAdvancedMode", "1");
         configManager.SetConfigVariable("rtx.fallbackLightMode", "0");
 
+        // Register and apply runtime culling patches
+        InitCullingPatches();
+        RegisterCullingPatchLuaFunctions(LUA);
+
         // Set resource limits
         RemixAPI::RemixAPI::Instance().GetResourceManager().SetMemoryLimits(256, 1024);
 
@@ -281,6 +288,9 @@ GMOD_MODULE_CLOSE() {
         Msg("[gmRTX - Binary Module] Shutting down module...\n");
 
 #ifdef _WIN64
+        // Restore all runtime patches before shutdown
+        PatchManager::Instance().RestoreAll();
+
         RemixAPI::RemixAPI::Instance().Shutdown();
         g_d3dDevice = nullptr;
 #endif // _WIN64

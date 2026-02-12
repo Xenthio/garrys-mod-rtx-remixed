@@ -43,37 +43,30 @@ hook.Add( "PopulateToolMenu", "RTXOptionsClient_Performance", function()
     spawnmenu.AddToolMenuOption( "Utilities", "RTX Remix", "RTX_Client_Performance", "#Performance", "", "", function( panel )
         panel:ClearControls()   
         
-        local sprCheckbox = panel:CheckBox("Use SPR for Static Props", "rtx_spr_enable")
-        panel:ControlHelp("Disables engine rendering of static props and replaces it with a lua-based renderer. Potentially large performance boost on dense maps.")
-        panel:ControlHelp("")
-        panel:ControlHelp("This breaks remix mesh replacements for engine rendered static props.")
+        panel:AddControl("Header", {Description = "PVS Culling:"})
+        panel:CheckBox("Static Props", "rtx_spr_use_pvs")
+        panel:ControlHelp("Enables Potentially Visible Set culling for static props. Improves performance but may cause some props to cull incorrectly.")
+        panel:NumSlider("PVS Safety Distance", "rtx_spr_pvs_safety_distance", 0, 8192, 0)
+        panel:ControlHelp("Props within this distance always render, bypassing PVS checks. Increase if props cull in front of you. Saved per-map. (Default: 0)")
 
-        local pvsDebugCheckbox = panel:CheckBox("Show SPR PVS Debug HUD", "rtx_render_debug")
+        panel:AddControl("Header", {Description = "Entities:"})
+        panel:CheckBox("Entity Anti-Culling", "rtx_rearview_enabled")
+        panel:ControlHelp("Spawns a RT camera that renders almost every dynamic entity in the map. Prevents culling of engine rendered entities. This can severely impact performance.")
+        panel:NumSlider("Distance (units)", "rtx_rearview_off_forward", 100, 5000, 0)
 
-        local pvsCheckbox = panel:CheckBox("Use PVS Culling", "rtx_spr_use_pvs")
-        panel:ControlHelp("Enables Potentially Visible Set culling for static prop renderer. Improves performance but may cause some props to cull incorrectly.")
-        
-        local pvsSlider = panel:NumSlider("PVS Safety Distance", "rtx_spr_pvs_safety_distance", 0, 8192, 0)
-        panel:ControlHelp("Distance within which PVS culling is disabled (prevents close-range culling bugs).")
-        panel:ControlHelp("Saves value per map")
-        
-        -- Update PVS controls based on SPR enabled state
-        local function UpdatePVSControls()
-            local sprEnabled = GetConVar("rtx_spr_enable"):GetBool()
-            if pvsCheckbox then pvsCheckbox:SetEnabled(sprEnabled) end
-            if pvsSlider then pvsSlider:SetEnabled(sprEnabled) end
-            if pvsDebugCheckbox then pvsDebugCheckbox:SetEnabled(sprEnabled) end
-        end
-        
-        -- Set initial state
-        UpdatePVSControls()
-        
-        -- Update when SPR checkbox changes
-        if sprCheckbox then
-            sprCheckbox.OnChange = function(self, value)
-                UpdatePVSControls()
-            end
-        end
+        panel:CheckBox("Custom Rendering", "rtx_custom_render")
+        panel:ControlHelp("Enables custom world renderers to replace engine rendered world geometry.")
+
+        panel:AddControl("Header", {Description = "Engine Patches:"})
+
+	    panel:CheckBox("Disable Engine Frustum Culling", "rtx_patch_frustumcull_engine")
+        panel:CheckBox("Force Brush Entity Backfaces", "rtx_patch_brush_backfaces")
+        panel:CheckBox("Force World Backfaces #1", "rtx_patch_world_backfaces1")
+        panel:CheckBox("Force World Backfaces #2", "rtx_patch_world_backfaces2")
+        panel:CheckBox("Disable BSP Culling", "rtx_patch_cullnode")
+        panel:CheckBox("Disable Client Frustum Culling", "rtx_patch_frustumcull_client")
+        panel:CheckBox("Force NoVis (Disable PVS)", "rtx_patch_forcenovis")
+
     end )
 end )
 

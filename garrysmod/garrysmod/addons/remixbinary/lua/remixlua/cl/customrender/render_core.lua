@@ -370,6 +370,8 @@ do
 
     function RemixRenderCore.FlushPass(translucent)
         if not frameState.began then return end
+        -- Suppress engine lighting to prevent lightmap rendering on custom meshes
+        render.SuppressEngineLighting(true)
         if debugEnabled:GetBool() then
             trackAllocStart(translucent and "FlushPass_Translucent" or "FlushPass_Opaque")
             local startTime = SysTime()
@@ -390,6 +392,7 @@ do
                 flushQueue(queues.opaque, false)
             end
         end
+        render.SuppressEngineLighting(false)
     end
 
     -- ============================

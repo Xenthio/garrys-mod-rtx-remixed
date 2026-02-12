@@ -960,50 +960,19 @@ concommand.Add("rtx_spr_reload", function()
     timer.Simple(0.1, CacheMapStaticProps)
 end)
 
--- Manage engine static prop rendering based on SPR enable state
-local function UpdateEngineStaticProps()
-    -- If SPR is enabled, disable engine rendering
-    -- If SPR is disabled, enable engine rendering (unless capture mode is on)
-    local sprEnabled = convar_Enable:GetBool()
-    
-    if sprEnabled then
-        RunConsoleCommand("r_drawstaticprops", "0")
-    else
-        -- Only re-enable if not in capture mode
-        local captureMode = GetConVar("rtx_capture_mode")
-        if captureMode and captureMode:GetBool() then
-            -- Capture mode is on, keep static props disabled
-            RunConsoleCommand("r_drawstaticprops", "0")
-        else
-            RunConsoleCommand("r_drawstaticprops", "1")
-        end
-    end
+-- Disable engine props only if custom renderer is enabled
+if convar_Enable:GetBool() then
+    RunConsoleCommand("r_drawstaticprops", "0")
 end
 
--- Initial setup
-UpdateEngineStaticProps()
-
--- Watch for SPR enable/disable changes
-cvars.AddChangeCallback("rtx_spr_enable", function(convar, oldValue, newValue)
-    UpdateEngineStaticProps()
-    
-    local enabled = (newValue == "1")
-    if enabled then
-        print("[Custom Static Renderer] Enabled - engine static props disabled")
-        -- If enabling and data isn't ready yet, start caching now
-        if not isDataReady and not isCachingInProgress then
-            timer.Simple(0.1, CacheMapStaticProps)
-        end
+-- ConVar Changes
+cvars.AddChangeCallback("rtx_spr_enable", function(_, _, new)
+    if tobool(new) then
+        RunConsoleCommand("r_drawstaticprops", "0")
     else
-        print("[Custom Static Renderer] Disabled - engine static props enabled")
+        RunConsoleCommand("r_drawstaticprops", "1")
     end
-end, "SPR_EnginePropsToggle")
-
--- Also watch for capture mode changes to handle conflicts
-cvars.AddChangeCallback("rtx_capture_mode", function(convar, oldValue, newValue)
-    -- Give capture mode priority, but respect SPR state when capture is off
-    UpdateEngineStaticProps()
-end, "SPR_CaptureModeSync")
+end, "RTXStaticPropEnable")
 
 print("[Custom Static Renderer] Loaded.")
 
