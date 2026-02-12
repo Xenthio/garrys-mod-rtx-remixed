@@ -471,6 +471,18 @@ function RTXToPBR.SetDebugOutput(enabled)
 end
 
 --[[
+    Process all tracked materials through the ToPBR converter
+    Uses MaterialPipeline.ToPBR.ProcessAllMaterials (C++ ToPBR batch processor)
+]]--
+function RTXToPBR.ProcessAllMaterials(silent)
+    local processor = MaterialPipeline and MaterialPipeline.ToPBR
+    if processor and processor.ProcessAllMaterials then
+        return processor.ProcessAllMaterials()
+    end
+    return 0
+end
+
+--[[
     Start continuous processing
 ]]--
 function RTXToPBR.StartContinuousProcessing(interval)

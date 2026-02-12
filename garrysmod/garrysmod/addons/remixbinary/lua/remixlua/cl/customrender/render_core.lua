@@ -1220,7 +1220,7 @@ do
         allocTracking.frameStart = collectgarbage("count")
         print("[ALLOC] Allocation tracking counters cleared.")
     end)
-
+    
     -- Centralized flush hooks: begin frame on PreDrawOpaque, flush on PostDraw* passes
     RemixRenderCore.Register("PreDrawOpaqueRenderables", "RemixFrame-Begin", { fn = function(bDrawingDepth, bDrawingSkybox)
         RemixRenderCore.BeginFrame(bDrawingDepth, bDrawingSkybox)
