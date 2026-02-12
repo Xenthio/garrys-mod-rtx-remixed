@@ -33,6 +33,16 @@ local function ApplyCustomRenderPreset(enable)
     RunConsoleCommand("rtx_mwr_enable", enable and "1" or "0")
     RunConsoleCommand("rtx_spr_enable", enable and "1" or "0")
     RunConsoleCommand("rtx_dpr_enable", enable and "1" or "0")
+
+    -- Engine patches: when custom rendering is on, only keep frustum culling + BSP culling patches
+    -- When off, enable all patches since engine rendering needs them for RTX
+    RunConsoleCommand("rtx_patch_frustumcull_engine", "1")
+    RunConsoleCommand("rtx_patch_cullnode", "1")
+    RunConsoleCommand("rtx_patch_brush_backfaces", enable and "0" or "1")
+    RunConsoleCommand("rtx_patch_world_backfaces1", enable and "0" or "1")
+    RunConsoleCommand("rtx_patch_world_backfaces2", enable and "0" or "1")
+    RunConsoleCommand("rtx_patch_frustumcull_client", enable and "0" or "1")
+    RunConsoleCommand("rtx_patch_forcenovis", enable and "0" or "1")
 end
 
 cvars.AddChangeCallback("rtx_custom_render", function(name, oldValue, newValue)

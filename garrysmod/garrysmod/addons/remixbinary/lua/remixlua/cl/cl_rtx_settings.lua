@@ -43,29 +43,100 @@ hook.Add( "PopulateToolMenu", "RTXOptionsClient_Performance", function()
     spawnmenu.AddToolMenuOption( "Utilities", "RTX Remix", "RTX_Client_Performance", "#Performance", "", "", function( panel )
         panel:ClearControls()   
         
-        panel:AddControl("Header", {Description = "PVS Culling:"})
-        panel:CheckBox("Static Props", "rtx_spr_use_pvs")
-        panel:ControlHelp("Enables Potentially Visible Set culling for static props. Improves performance but may cause some props to cull incorrectly.")
-        panel:NumSlider("PVS Safety Distance", "rtx_spr_pvs_safety_distance", 0, 8192, 0)
-        panel:ControlHelp("Props within this distance always render, bypassing PVS checks. Increase if props cull in front of you. Saved per-map. (Default: 0)")
+        panel:CheckBox("Performance Mode", "rtx_custom_render")
+        panel:ControlHelp("Enables custom renderers to replace engine rendered world geometry and static props. Also controls engine culling patches. This will break mesh replacements in Remix when enabled.")
 
-        panel:AddControl("Header", {Description = "Entities:"})
-        panel:CheckBox("Entity Anti-Culling", "rtx_rearview_enabled")
-        panel:ControlHelp("Spawns a RT camera that renders almost every dynamic entity in the map. Prevents culling of engine rendered entities. This can severely impact performance.")
-        panel:NumSlider("Distance (units)", "rtx_rearview_off_forward", 100, 5000, 0)
+        -- PVS Culling settings (only relevant when custom rendering is enabled)
+        local pvsCategory = vgui.Create("DCollapsibleCategory", panel)
+        pvsCategory:SetLabel("PVS Culling")
+        pvsCategory:SetExpanded(false)
+        pvsCategory:Dock(TOP)
+        pvsCategory:DockMargin(0, 8, 0, 0)
 
-        panel:CheckBox("Custom Rendering", "rtx_custom_render")
-        panel:ControlHelp("Enables custom world renderers to replace engine rendered world geometry.")
+        local pvsList = vgui.Create("DPanelList", pvsCategory)
+        pvsList:SetAutoSize(true)
+        pvsList:SetSpacing(4)
+        pvsList:DockPadding(8, 4, 8, 4)
+        pvsCategory:SetContents(pvsList)
 
-        panel:AddControl("Header", {Description = "Engine Patches:"})
+        local pvsCb = vgui.Create("DCheckBoxLabel")
+        pvsCb:SetText("Static Props")
+        pvsCb:SetConVar("rtx_spr_use_pvs")
+        pvsCb:SetTextColor(Color(0, 0, 0))
+        pvsCb:SizeToContents()
+        pvsList:AddItem(pvsCb)
 
-	    panel:CheckBox("Disable Engine Frustum Culling", "rtx_patch_frustumcull_engine")
-        panel:CheckBox("Force Brush Entity Backfaces", "rtx_patch_brush_backfaces")
-        panel:CheckBox("Force World Backfaces #1", "rtx_patch_world_backfaces1")
-        panel:CheckBox("Force World Backfaces #2", "rtx_patch_world_backfaces2")
-        panel:CheckBox("Disable BSP Culling", "rtx_patch_cullnode")
-        panel:CheckBox("Disable Client Frustum Culling", "rtx_patch_frustumcull_client")
-        panel:CheckBox("Force NoVis (Disable PVS)", "rtx_patch_forcenovis")
+        local pvsHelp = vgui.Create("DLabel")
+        pvsHelp:SetText("Enables PVS culling for static props. May cause some props to cull incorrectly.")
+        pvsHelp:SetWrap(true)
+        pvsHelp:SetAutoStretchVertical(true)
+        pvsHelp:SetTextColor(Color(0, 0, 0))
+        pvsList:AddItem(pvsHelp)
+
+        local pvsSlider = vgui.Create("DNumSlider")
+        pvsSlider:SetText("PVS Safety Distance")
+        pvsSlider:SetConVar("rtx_spr_pvs_safety_distance")
+        pvsSlider:SetMin(0)
+        pvsSlider:SetMax(8192)
+        pvsSlider:SetDecimals(0)
+        if pvsSlider.Label then pvsSlider.Label:SetTextColor(Color(0, 0, 0)) end
+        pvsList:AddItem(pvsSlider)
+
+        local pvsSliderHelp = vgui.Create("DLabel")
+        pvsSliderHelp:SetText("Props within this distance always render, bypassing PVS. (Default: 0)")
+        pvsSliderHelp:SetWrap(true)
+        pvsSliderHelp:SetAutoStretchVertical(true)
+        pvsSliderHelp:SetTextColor(Color(0, 0, 0))
+        pvsList:AddItem(pvsSliderHelp)
+
+        -- Track all PVS child controls for graying out
+        local pvsControls = { pvsCb, pvsSlider }
+
+        -- Gray out PVS section when custom rendering is disabled
+        local cv_custom = GetConVar("rtx_custom_render")
+        local colorEnabled = Color(0, 0, 0)
+        local colorDisabled = Color(140, 140, 140)
+        pvsCategory.Think = function(self)
+            local enabled = cv_custom and cv_custom:GetBool() or false
+            self:SetEnabled(enabled)
+            self:SetAlpha(enabled and 255 or 128)
+            local col = enabled and colorEnabled or colorDisabled
+            pvsCb:SetTextColor(col)
+            if pvsSlider.Label then pvsSlider.Label:SetTextColor(col) end
+        end
+
+        panel:AddItem(pvsCategory)
+
+        local patchCategory = vgui.Create("DCollapsibleCategory", panel)
+        patchCategory:SetLabel("Advanced: Engine Patches")
+        patchCategory:SetExpanded(false)
+        patchCategory:Dock(TOP)
+        patchCategory:DockMargin(0, 8, 0, 0)
+
+        local patchList = vgui.Create("DPanelList", patchCategory)
+        patchList:SetAutoSize(true)
+        patchList:SetSpacing(2)
+        patchList:DockPadding(8, 4, 8, 4)
+        patchCategory:SetContents(patchList)
+
+        local function AddPatchCheckBox(label, cvar)
+            local cb = vgui.Create("DCheckBoxLabel")
+            cb:SetText(label)
+            cb:SetConVar(cvar)
+            cb:SetTextColor(Color(0, 0, 0))
+            cb:SizeToContents()
+            patchList:AddItem(cb)
+        end
+
+        AddPatchCheckBox("Disable Engine Frustum Culling", "rtx_patch_frustumcull_engine")
+        AddPatchCheckBox("Force Brush Entity Backfaces", "rtx_patch_brush_backfaces")
+        AddPatchCheckBox("Force World Backfaces #1", "rtx_patch_world_backfaces1")
+        AddPatchCheckBox("Force World Backfaces #2", "rtx_patch_world_backfaces2")
+        AddPatchCheckBox("Disable BSP Culling", "rtx_patch_cullnode")
+        AddPatchCheckBox("Disable Client Frustum Culling", "rtx_patch_frustumcull_client")
+        AddPatchCheckBox("Force NoVis (Disable Engine PVS)", "rtx_patch_forcenovis")
+
+        panel:AddItem(patchCategory)
 
     end )
 end )
