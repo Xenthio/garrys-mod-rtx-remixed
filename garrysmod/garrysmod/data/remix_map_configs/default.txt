@@ -8,7 +8,21 @@
 # To add new Source cvars to track: Add them as "src:cvar_name = value"
 # Use "rtx_conf_reload_tracked_params" console command to reload after editing this file.
 
-# RTX Remix Settings
+## For API Lights
+rtx:rtx.neeCache.enableAnalyticalLight = False
+rtx:rtx.risLightSampleCount = 32
+rtx:rtx.di.initialSampleCount = 32
+rtx:rtx.di.spatialSamples = 4
+rtx:rtx.di.enableBestLightSampling = True
+rtx:rtx.di.maxHistoryLength = 1
+rtx:rtx.di.enableRayTracedBiasCorrection = True
+rtx:rtx.di.enableSpatialReuse = True
+rtx:rtx.di.enableDenoiserConfidence = True
+rtx:rtx.di.enableDenoiserGradient = True
+rtx:rtx.denoiseDirectAndIndirectLightingSeparately = True
+
+rtx:rtx.suppressLightKeeping = True
+
 rtx:rtx.hideInstanceTextures = 41C11B59983BC9E7
 
 # Source Engine Settings
