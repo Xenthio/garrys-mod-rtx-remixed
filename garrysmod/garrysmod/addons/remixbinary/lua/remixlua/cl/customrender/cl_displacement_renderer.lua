@@ -154,6 +154,68 @@ local function CreateMeshBatchWithAlpha(vertices, material, maxVertsPerMesh)
     return meshes
 end
 
+-- Accumulate face normals from a displacement grid into global normal accumulators keyed by position.
+-- Called once per grid in pass 1; normals are averaged and written back in pass 1.5.
+local function AccumulateGridNormals(grid, posKeyFn, gnx, gny, gnz)
+    if not grid or #grid == 0 then return end
+    local count = #grid
+    local width = math.sqrt(count)
+    if width ~= math.floor(width) or width <= 1 then return end
+    local height = count / width
+
+    for i = 1, height - 1 do
+        for j = 1, width - 1 do
+            local idx1 = (i - 1) * width + j
+            local idx2 = i * width + j
+            local idx3 = i * width + j + 1
+            local idx4 = (i - 1) * width + j + 1
+
+            local p1 = grid[idx1].pos
+            local p2 = grid[idx2].pos
+            local p3 = grid[idx3].pos
+            local p4 = grid[idx4].pos
+
+            -- Triangle 1: idx1, idx2, idx3
+            local e1x, e1y, e1z = p2.x - p1.x, p2.y - p1.y, p2.z - p1.z
+            local e2x, e2y, e2z = p3.x - p1.x, p3.y - p1.y, p3.z - p1.z
+            local fn1x = e1y * e2z - e1z * e2y
+            local fn1y = e1z * e2x - e1x * e2z
+            local fn1z = e1x * e2y - e1y * e2x
+
+            local k1 = posKeyFn(p1)
+            local k2 = posKeyFn(p2)
+            local k3 = posKeyFn(p3)
+            gnx[k1] = (gnx[k1] or 0) + fn1x  gny[k1] = (gny[k1] or 0) + fn1y  gnz[k1] = (gnz[k1] or 0) + fn1z
+            gnx[k2] = (gnx[k2] or 0) + fn1x  gny[k2] = (gny[k2] or 0) + fn1y  gnz[k2] = (gnz[k2] or 0) + fn1z
+            gnx[k3] = (gnx[k3] or 0) + fn1x  gny[k3] = (gny[k3] or 0) + fn1y  gnz[k3] = (gnz[k3] or 0) + fn1z
+
+            -- Triangle 2: idx1, idx3, idx4
+            local e3x, e3y, e3z = p3.x - p1.x, p3.y - p1.y, p3.z - p1.z
+            local e4x, e4y, e4z = p4.x - p1.x, p4.y - p1.y, p4.z - p1.z
+            local fn2x = e3y * e4z - e3z * e4y
+            local fn2y = e3z * e4x - e3x * e4z
+            local fn2z = e3x * e4y - e3y * e4x
+
+            local k4 = posKeyFn(p4)
+            gnx[k1] = gnx[k1] + fn2x  gny[k1] = gny[k1] + fn2y  gnz[k1] = gnz[k1] + fn2z
+            gnx[k3] = gnx[k3] + fn2x  gny[k3] = gny[k3] + fn2y  gnz[k3] = gnz[k3] + fn2z
+            gnx[k4] = (gnx[k4] or 0) + fn2x  gny[k4] = (gny[k4] or 0) + fn2y  gnz[k4] = (gnz[k4] or 0) + fn2z
+        end
+    end
+end
+
+-- Apply globally averaged normals back to a grid's vertices.
+local function ApplyAveragedNormals(grid, posKeyFn, avgNormals)
+    if not grid or not avgNormals then return end
+    for i = 1, #grid do
+        local k = posKeyFn(grid[i].pos)
+        local n = avgNormals[k]
+        if n then
+            grid[i].normal = n
+        end
+    end
+end
+
 -- Triangulate a displacement grid (width x height) into a flat triangle vertex list, copying per-vertex alpha
 local function GridToTriangles(grid, alphas)
     local tri = {}
@@ -436,6 +498,25 @@ local function BuildDisplacementMeshes(cancelToken)
         end
         DebugPrint(string.format("Averaged %d shared vertex positions (%.1f%% of total)", sharedVertices, (sharedVertices / math.max(1, table.Count(normalizedSumByKey))) * 100))
 
+        -- Pass 1.5: compute smooth normals across all displacement faces globally
+        -- Accumulate face normals by position key so shared edge vertices get averaged normals
+        local gnx, gny, gnz = {}, {}, {}
+        for i = 1, #faceRecords do
+            AccumulateGridNormals(faceRecords[i].grid, posKey, gnx, gny, gnz)
+        end
+        -- Normalize accumulated normals
+        local avgNormals = {}
+        local math_sqrt = math.sqrt
+        for k, x in pairs(gnx) do
+            local y, z = gny[k], gnz[k]
+            local len = math_sqrt(x * x + y * y + z * z)
+            if len > 0.0001 then
+                avgNormals[k] = Vector(x / len, y / len, z / len)
+            end
+        end
+        gnx, gny, gnz = nil, nil, nil -- free accumulator memory
+        DebugPrint(string.format("Computed %d globally averaged vertex normals", table.Count(avgNormals)))
+
         -- Pass 2: stream triangles using averaged normalized alphas into chunk/material groups
         for i = 1, #faceRecords do
             local rec = faceRecords[i]
@@ -452,6 +533,7 @@ local function BuildDisplacementMeshes(cancelToken)
                     alphas[gi] = math.Clamp((rawAlpha - alphaMin) / alphaScale, 0, 1)
                 end
             end
+            ApplyAveragedNormals(grid, posKey, avgNormals)
             local triangles = GridToTriangles(grid, alphas)
 
             local chunkKey = rec.chunkKey
