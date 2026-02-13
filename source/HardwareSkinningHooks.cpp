@@ -3,7 +3,7 @@
 
 #define HWSKIN_PATCHES
 
-#ifdef HWSKIN_PATCHES
+#if defined(HWSKIN_PATCHES) && defined(_WIN64)
 
 #include "HardwareSkinningHooks.h"
 #include "e_utils.h"  
@@ -1273,4 +1273,4 @@ void HardwareSkinningHooks::Shutdown() {
     }
 }
 
-#endif // HWSKIN_PATCHES
+#endif // HWSKIN_PATCHES && _WIN64

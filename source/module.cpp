@@ -241,10 +241,9 @@ GMOD_MODULE_OPEN() {
         GlobalConvars::InitialiseConVars();
 #endif //_WIN64
 
-#ifdef HWSKIN_PATCHES
+#if defined(HWSKIN_PATCHES) && defined(_WIN64)
         HardwareSkinningHooks::Instance().Initialize();
-
-#endif //HWSKIN_PATCHES
+#endif
 
         ModelRenderHooks::Instance().Initialize();
         ModelLoadHooks::Instance().Initialize();
@@ -296,9 +295,9 @@ GMOD_MODULE_CLOSE() {
         g_d3dDevice = nullptr;
 #endif // _WIN64
 
-#ifdef HWSKIN_PATCHES
+#if defined(HWSKIN_PATCHES) && defined(_WIN64)
         HardwareSkinningHooks::Instance().Shutdown();
-#endif //HWSKIN_PATCHES
+#endif
 
        ModelRenderHooks::Instance().Shutdown();
        ModelLoadHooks::Instance().Shutdown();
