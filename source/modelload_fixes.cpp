@@ -128,6 +128,7 @@ struct OptimizedModelFileHeader_t
 // Forward declare helper functions, will implement after the hook
 int GetVtxFileChecksum(void* fs, const char* filename, const char* pathID, void* openFunc);
 int GetMdlFileChecksum(void* fs, const char* filename, const char* pathID, void* openFunc);
+int GetMdlBoneCount(void* fs, const char* vtxFilename, const char* pathID, void* openFunc);
 
 // Modified hook with recursion prevention and checksum verification
 Define_method_Hook(FileHandle_t, IFileSystem_OpenEx, void*, const char* pFileName,
@@ -168,6 +169,24 @@ Define_method_Hook(FileHandle_t, IFileSystem_OpenEx, void*, const char* pFileNam
                 // If filename ends with this extension (case insensitive)
                 if (filename_len > ext_len &&
                     _stricmp(pFileName + filename_len - ext_len, vtx_ext) == 0) {
+
+                    // Check if this is a skinned model (has >1 bone)
+                    // Skinned models need HW vertex data for proper bone animation in RTX Remix
+                    int boneCount = GetMdlBoneCount(_this, pFileName, pathID, (void*)IFileSystem_OpenEx_trampoline());
+                    
+                    // Always log for debugging
+                    static int vtxLogCount = 0;
+                    if (vtxLogCount < 50) {
+                        Msg("[gmRTX - VTX Load] %s -> boneCount=%d\n", pFileName, boneCount);
+                        vtxLogCount++;
+                    }
+                    
+                    if (boneCount > 1) {
+                        // This is a skinned model - keep using HW vertex data (.dx90.vtx)
+                        // for proper bone animation support in RTX Remix
+                        Msg("[gmRTX - Model Load] KEEPING HW vertex data for skinned model (%d bones): %s\n", boneCount, pFileName);
+                        break; // Skip SW redirection, use original HW file
+                    }
 
                     // Create SW VTX path
                     char* sw_path = (char*)malloc(filename_len + 1);
@@ -329,6 +348,64 @@ int GetMdlFileChecksum(void* fs, const char* filename, const char* pathID, void*
     ((IFileSystem*)fs)->Close(file);
 
     return checksum;
+}
+
+// Helper to get bone count from MDL file - used to determine if model is skinned
+// Returns -1 on error, otherwise the number of bones
+int GetMdlBoneCount(void* fs, const char* vtxFilename, const char* pathID, void* openFunc)
+{
+    // Extract base MDL path from VTX filename
+    std::string mdlPath = vtxFilename;
+
+    // Replace VTX extension with MDL extension
+    const char* extensions[] = { ".dx90.vtx", ".dx80.vtx", ".dx70.vtx", ".sw.vtx" };
+    bool foundExt = false;
+    for (const char* ext : extensions) {
+        size_t pos = mdlPath.rfind(ext);
+        if (pos != std::string::npos) {
+            mdlPath.replace(pos, strlen(ext), ".mdl");
+            foundExt = true;
+            break;
+        }
+    }
+    
+    if (!foundExt) {
+        // Couldn't find VTX extension to replace
+        return -1;
+    }
+
+    OpenExFunc openExFn = (OpenExFunc)openFunc;
+
+    // Open the MDL file using the trampoline
+    FileHandle_t file = openExFn(fs, mdlPath.c_str(), "rb", 0, pathID, NULL);
+    if (!file) {
+        // Debug: log failed MDL opens (first few only)
+        static int failLogCount = 0;
+        if (failLogCount < 10) {
+            Msg("[gmRTX - VTX Load] Failed to open MDL: %s\n", mdlPath.c_str());
+            failLogCount++;
+        }
+        return -1;
+    }
+
+    // studiohdr_t::numbones is at offset 0x9C (156) in the MDL file
+    // This is consistent across Source engine versions
+    const int NUMBONES_OFFSET = 0x9C;
+    
+    ((IFileSystem*)fs)->Seek(file, NUMBONES_OFFSET, FILESYSTEM_SEEK_HEAD);
+
+    int numbones = 0;
+    size_t bytesRead = ((IFileSystem*)fs)->Read(&numbones, sizeof(numbones), file);
+    ((IFileSystem*)fs)->Close(file);
+
+    if (bytesRead != sizeof(numbones))
+        return -1;
+
+    // Sanity check - bone count should be reasonable
+    if (numbones < 0 || numbones > 1024)
+        return -1;
+
+    return numbones;
 }
 
 

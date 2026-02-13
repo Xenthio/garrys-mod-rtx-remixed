@@ -1,4 +1,5 @@
-//#define HWSKIN_PATCHES
+// Hardware skinning patches - enable to force HW skinning and bone export for RTX Remix
+#define HWSKIN_PATCHES
 
 #define DELAYIMP_INSECURE_WRITABLE_HOOKS
 #ifdef _WIN32
@@ -296,14 +297,14 @@ GMOD_MODULE_CLOSE() {
 #endif // _WIN64
 
 #ifdef HWSKIN_PATCHES
-        //HardwareSkinningHooks::Instance().Shutdown();
+        HardwareSkinningHooks::Instance().Shutdown();
 #endif //HWSKIN_PATCHES
 
        ModelRenderHooks::Instance().Shutdown();
        ModelLoadHooks::Instance().Shutdown();
        //ModelDrawHook::Instance().Shutdown();
 
-#ifdef _WIN64^
+#ifdef _WIN64
         if (g_remix) {
             delete g_remix;
             g_remix = nullptr;
