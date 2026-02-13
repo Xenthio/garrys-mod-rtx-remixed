@@ -24,9 +24,6 @@ CreateClientConVar("rtx_topbr_debug", "0", true, false, "Enable debug output")
 CreateClientConVar("rtx_topbr_metallic", "0", true, false, "Enable experimental metallic generation from base texture brightness (may cause black materials)")
 CreateClientConVar("rtx_topbr_autodiscover", "1", true, false, "Auto-discover companion textures (_normal, _mask, _spec) not explicitly referenced in VMT")
 CreateClientConVar("rtx_topbr_parse_commented_properties", "1", true, false, "Parse commented-out VMT properties (e.g., //$envmap) - useful for maps where they were disabled for vanilla Source")
-CreateClientConVar("rtx_topbr_continuous", "1", true, false, "Continuous processing interval in seconds (0 = disabled, >0 = process every N seconds)")
-CreateClientConVar("rtx_topbr_batch_size", "3", true, false, "Number of materials to process per batch (reduces stutter)")
-CreateClientConVar("rtx_autocat_export_auto", "1", true, false, "Automatically export categorized hashes on map change/shutdown")
 
 -- Module table
 RTXToPBR = RTXToPBR or {}
@@ -470,78 +467,9 @@ function RTXToPBR.SetDebugOutput(enabled)
     end
 end
 
---[[
-    Process all tracked materials through the ToPBR converter
-    Uses MaterialPipeline.ToPBR.ProcessAllMaterials (C++ ToPBR batch processor)
-]]--
-function RTXToPBR.ProcessAllMaterials(silent)
-    local processor = MaterialPipeline and MaterialPipeline.ToPBR
-    if processor and processor.ProcessAllMaterials then
-        return processor.ProcessAllMaterials()
-    end
-    return 0
-end
-
---[[
-    Start continuous processing
-]]--
-function RTXToPBR.StartContinuousProcessing(interval)
-    interval = interval or GetConVarFloatSafe("rtx_topbr_continuous", 0)
-    
-    if interval <= 0 then
-        MsgC(Color(255, 200, 100), "[RTX ToPBR] Invalid interval. Use a value > 0 (seconds)\n")
-        return false
-    end
-    
-    -- Stop any existing continuous timer
-    RTXToPBR.StopContinuousProcessing()
-    
-    -- Create repeating timer
-    timer.Create("RTXToPBR_Continuous", interval, 0, function()
-        if not GetConVarBoolSafe("rtx_topbr_enabled", true) then
-            return
-        end
-        
-        -- Process pending materials through the pipeline (runs quick stages: ShaderFixes, HashCollision, AutoCategorisation)
-        -- This is critical for auto-categorization of particles, decals, emissives, etc.
-        if MaterialPipeline and MaterialPipeline.ProcessPendingMaterials then
-            local pendingProcessed = MaterialPipeline.ProcessPendingMaterials()
-            if pendingProcessed > 0 and GetConVarBoolSafe("rtx_topbr_debug", false) then
-                MsgC(Color(150, 150, 150), string.format("[RTX ToPBR] Continuous: processed %d pending materials (auto-categorisation)\n", pendingProcessed))
-            end
-        end
-        
-        -- Process silently (no console spam) - uses background thread
-        local count = RTXToPBR.ProcessAllMaterials(true)
-        
-        -- Only log if debug is enabled and materials were queued
-        if count > 0 and GetConVarBoolSafe("rtx_topbr_debug", false) then
-            MsgC(Color(150, 150, 150), string.format("[RTX ToPBR] Continuous: queued %d new materials\n", count))
-        end
-    end)
-    
-    MsgC(Color(100, 255, 100), string.format("[RTX ToPBR] Continuous processing started (every %.1f seconds)\n", interval))
-    return true
-end
-
---[[
-    Stop continuous processing
-]]--
-function RTXToPBR.StopContinuousProcessing()
-    if timer.Exists("RTXToPBR_Continuous") then
-        timer.Remove("RTXToPBR_Continuous")
-        MsgC(Color(100, 200, 255), "[RTX ToPBR] Continuous processing stopped\n")
-        return true
-    end
-    return false
-end
-
---[[
-    Check if continuous processing is active
-]]--
-function RTXToPBR.IsContinuousProcessing()
-    return timer.Exists("RTXToPBR_Continuous")
-end
+-- NOTE: Continuous processing (StartContinuousProcessing, StopContinuousProcessing, IsContinuousProcessing)
+-- has been REMOVED. All material discovery and continuous processing is now handled by RTXMaterialPipeline.
+-- Use rtx_mat_continuous and rtx_mat_continuous_interval convars to control pipeline processing.
 
 -- Console Commands
 concommand.Add("rtx_topbr_inspect", function(ply, cmd, args)
@@ -659,70 +587,6 @@ concommand.Add("rtx_topbr_parse_commented_properties", function(ply, cmd, args)
     end
 end, nil, "Enable/disable parsing of commented-out VMT properties (WARNING: may cause unexpected results)")
 
-concommand.Add("rtx_topbr_continuous", function(ply, cmd, args)
-    if not args[1] or args[1] == "" then
-        -- Show current status
-        if RTXToPBR.IsContinuousProcessing() then
-            local interval = GetConVarFloatSafe("rtx_topbr_continuous", 0)
-            MsgC(Color(100, 255, 100), string.format("[RTX ToPBR] Continuous processing is ACTIVE (%.1fs interval)\n", interval))
-        else
-            MsgC(Color(200, 200, 200), "[RTX ToPBR] Continuous processing is INACTIVE\n")
-        end
-        MsgC(Color(200, 200, 200), "Usage: rtx_topbr_continuous <interval>\n")
-        MsgC(Color(200, 200, 200), "  interval = 0: stop continuous processing\n")
-        MsgC(Color(200, 200, 200), "  interval > 0: start/restart with interval in seconds\n")
-        return
-    end
-    
-    local interval = tonumber(args[1])
-    if not interval then
-        MsgC(Color(255, 100, 100), "[RTX ToPBR] Invalid interval (must be a number)\n")
-        return
-    end
-    
-    RunConsoleCommand("rtx_topbr_continuous", tostring(interval))
-    
-    if interval <= 0 then
-        RTXToPBR.StopContinuousProcessing()
-    else
-        RTXToPBR.StartContinuousProcessing(interval)
-    end
-end, nil, "Start/stop continuous material processing. Usage: rtx_topbr_continuous <seconds> (0 = stop)")
-
--- Auto-export helper function
-local function AutoExportHashes(silent)
-    if not MaterialPipeline or not MaterialPipeline.AutoCategorisation then
-        return false
-    end
-    
-    -- Export to game root directory where RTX Remix loads conf files
-    local filepath = "rtx_auto_hashes.conf"
-    local count = MaterialPipeline.AutoCategorisation.ExportHashes(filepath)
-    
-    if count > 0 then
-        if not silent then
-            MsgC(Color(100, 255, 100), string.format("[RTX AutoCat] Exported %d categorized hashes to %s\n", count, filepath))
-        end
-        return true
-    end
-    
-    return false
-end
-
-concommand.Add("rtx_autocat_export", function()
-    if not MaterialPipeline or not MaterialPipeline.AutoCategorisation then
-        MsgC(Color(255, 100, 100), "[RTX AutoCat] AutoCategorisation module not available\n")
-        return
-    end
-    
-    local result = AutoExportHashes(false)
-    if result then
-        MsgC(Color(200, 200, 200), "[RTX AutoCat] Restart the game or reload RTX Remix config to apply\n")
-    else
-        MsgC(Color(255, 200, 100), "[RTX AutoCat] No hashes to export (none categorized yet)\n")
-    end
-end, nil, "Export auto-categorized texture hashes to rtx_auto_hashes.conf")
-
 concommand.Add("rtx_topbr_help", function()
     MsgC(Color(100, 200, 255), "\n[RTX ToPBR] Runtime PBR Material Converter\n")
     MsgC(Color(100, 200, 255), string.rep("=", 70) .. "\n")
@@ -774,72 +638,9 @@ PBR metallic surfaces reflect their base color.
     MsgC(Color(100, 200, 255), string.rep("=", 60) .. "\n\n")
 end, nil, "Show ToPBR help information")
 
--- Auto-export on map change
-hook.Add("ShutDown", "RTXToPBR_AutoExport", function()
-    if GetConVarBoolSafe("rtx_autocat_export_auto", true) then
-        AutoExportHashes(true)
-    end
-end)
-
--- Auto-export when changing maps
-local lastMap = game.GetMap()
-hook.Add("Think", "RTXToPBR_MapChangeExport", function()
-    if not GetConVarBoolSafe("rtx_autocat_export_auto", true) then
-        return
-    end
-    
-    local currentMap = game.GetMap()
-    if currentMap ~= lastMap then
-        AutoExportHashes(true)
-        lastMap = currentMap
-    end
-end)
-
--- Auto-process on map load
-hook.Add("InitPostEntity", "RTXToPBR_AutoProcess", function()
-    if not GetConVarBoolSafe("rtx_topbr_enabled", true) then
-        return
-    end
-    
-    if not GetConVarBoolSafe("rtx_topbr_auto", true) then
-        return
-    end
-    
-    local delay = GetConVarFloatSafe("rtx_topbr_delay", 5)
-    
-    -- Clear any existing timer
-    if autoProcessTimer then
-        timer.Remove("RTXToPBR_AutoProcess")
-    end
-    
-    -- Schedule auto-processing
-    timer.Create("RTXToPBR_AutoProcess", delay, 1, function()
-        MsgC(Color(100, 200, 255), "[RTX ToPBR] Running auto-process...\n")
-        
-        -- Process pending materials through the pipeline (runs quick stages: ShaderFixes, HashCollision, AutoCategorisation)
-        -- This ensures particles, decals, emissives are categorized before ToPBR processing
-        if MaterialPipeline and MaterialPipeline.ProcessPendingMaterials then
-            MaterialPipeline.ProcessPendingMaterials()
-        end
-        
-        RTXToPBR.ProcessAllMaterials()
-        
-        -- Start continuous processing if configured
-        local continuousInterval = GetConVarFloatSafe("rtx_topbr_continuous", 0)
-        if continuousInterval > 0 then
-            RTXToPBR.StartContinuousProcessing(continuousInterval)
-        end
-    end)
-end)
-
--- Clear cache on map cleanup
-hook.Add("PostCleanupMap", "RTXToPBR_MapCleanup", function()
-    if timer.Exists("RTXToPBR_AutoProcess") then
-        timer.Remove("RTXToPBR_AutoProcess")
-    end
-    -- Stop continuous processing on map cleanup
-    RTXToPBR.StopContinuousProcessing()
-end)
+-- NOTE: Auto-processing and continuous processing hooks have been REMOVED.
+-- All material discovery and processing timing is now handled by RTXMaterialPipeline.
+-- ToPBR is called as Stage 3 of the unified pipeline.
 
 -- Startup message
 MsgC(Color(100, 255, 100), "[RTX ToPBR] Runtime PBR Converter loaded.\n")
