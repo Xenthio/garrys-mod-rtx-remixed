@@ -357,8 +357,22 @@ Define_method_Hook(IMaterial*, R_StudioSetupSkinAndLighting, void*, IMatRenderCo
         lighting = 0; // LIGHTING_HARDWARE
         g_desiredLightingForMesh = 0;
     } else {
-        // Multi-bone model or error - keep trampoline's lighting decision
-        g_desiredLightingForMesh = lighting;
+        // Multi-bone model (skinned)
+        // Check if r_forcehwskin is enabled - if so, force hardware lighting for skinned models
+        // This ensures the engine uses the HW skinning code path
+        bool forceHwSkinning = GlobalConvars::r_forcehwskin && GlobalConvars::r_forcehwskin->GetBool();
+        if (forceHwSkinning) {
+#if PROP_FIXES_DEBUG_LOGGING
+            if (lighting != 0 && g_debugCallCount % 200 == 0) {
+                DBG_PRINT("[PropFixes] Overriding lighting %d -> 0 for SKINNED model (bones=%d, r_forcehwskin=1)\n", lighting, boneCount);
+            }
+#endif
+            lighting = 0; // LIGHTING_HARDWARE - forces HW skinning path
+            g_desiredLightingForMesh = 0;
+        } else {
+            // Keep trampoline's lighting decision
+            g_desiredLightingForMesh = lighting;
+        }
     }
 #else
     g_desiredLightingForMesh = lighting;
@@ -391,7 +405,7 @@ Define_method_Hook(int*, R_StudioDrawDynamicMesh, void*, IMatRenderContext* pRen
 #ifdef _WIN64
 	// Also check convar override
 	if (GlobalConvars::r_forcehwlight && GlobalConvars::r_forcehwlight->GetBool()) {
-		actualLighting = 0; // LIGHTING_HARDWARE
+			actualLighting = 0; // LIGHTING_HARDWARE
 	}
 #endif
 

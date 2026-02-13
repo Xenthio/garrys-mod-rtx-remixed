@@ -15,39 +15,47 @@ ConVar* GlobalConvars::c_frustumcull;
 ConVar* GlobalConvars::r_worldnodenocull;
 ConVar* GlobalConvars::r_forcehwlight;
 ConVar* GlobalConvars::rtx_force_static_lighting;
+ConVar* GlobalConvars::r_forcehwskin;
+ConVar* GlobalConvars::r_hwskin_debug;
+ConVar* GlobalConvars::r_hwskin_setbones;
+ConVar* GlobalConvars::r_hwskin_transform_chain;
+ConVar* GlobalConvars::r_hwskin_transpose;
+ConVar* GlobalConvars::r_hwskin_clear;
+// Helper: try ILuaConVars first, fall back to cvar->FindVar()
+static ConVar* CreateOrFindConVar(const char* name, const char* defaultVal, const char* help, int flags = FCVAR_ARCHIVE) {
+	ConVar* cv = nullptr;
+
+	if (m_pLuaConVars) {
+		cv = m_pLuaConVars->CreateConVar(name, defaultVal, help, flags);
+	}
+
+	if (!cv && cvar) {
+		cv = cvar->FindVar(name);
+	}
+
+	if (cv) {
+		Msg("[RTX Fixes 2] %s convar ready\n", name);
+	} else {
+		Warning("[RTX Fixes 2] Failed to create or find convar '%s'\n", name);
+	}
+	return cv;
+}
 
 void GlobalConvars::InitialiseConVars() {
 	m_pLuaConVars = loader_lua_shared.GetInterface<GarrysMod::Lua::ILuaConVars>(GMOD_LUACONVARS_INTERFACE);
 	if (!m_pLuaConVars) {
-		Error("[RTX Fixes 2] Failed to get ILuaConVars interface\n");
-		return;
+		Warning("[RTX Fixes 2] Failed to get ILuaConVars interface, will try cvar->FindVar() fallback\n");
 	}
 
-	r_forcenovis = m_pLuaConVars->CreateConVar("r_forcenovis", "1", "Force disable vis", FCVAR_ARCHIVE);
-	if (!r_forcenovis) { r_forcenovis = cvar->FindVar("r_forcenovis"); }
-	if (!r_forcenovis) { Error("[RTX Fixes 2] Failed to create r_forcenovis convar\n"); }
-	else { Msg("[RTX Fixes 2] r_forcenovis convar created\n"); }
-
-
-	c_frustumcull = m_pLuaConVars->CreateConVar("c_frustumcull", "0", "Force frustum culling", FCVAR_ARCHIVE);
-	if (!c_frustumcull) { c_frustumcull = cvar->FindVar("c_frustumcull"); }
-	if (!c_frustumcull) { Error("[RTX Fixes 2] Failed to create c_frustumcull convar\n"); }
-	else { Msg("[RTX Fixes 2] c_frustumcull convar created\n"); }
-
-
-	r_worldnodenocull = m_pLuaConVars->CreateConVar("r_worldnodenocull", "0", "Force world node nocull", FCVAR_ARCHIVE);
-	if (!r_worldnodenocull) { r_worldnodenocull = cvar->FindVar("r_worldnodenocull"); }
-	if (!r_worldnodenocull) { Error("[RTX Fixes 2] Failed to create r_worldnodenocull convar\n"); }
-	else { Msg("[RTX Fixes 2] r_worldnodenocull convar created\n"); }
-
-
-	r_forcehwlight = m_pLuaConVars->CreateConVar("r_forcehwlight", "0", "Force LIGHTING_HARDWARE", FCVAR_ARCHIVE);
-	if (!r_forcehwlight) { r_forcehwlight = cvar->FindVar("r_forcehwlight"); }
-	if (!r_forcehwlight) { Error("[RTX Fixes 2] Failed to create r_forcehwlight convar\n"); }
-	else { Msg("[RTX Fixes 2] r_forcehwlight convar created\n"); }
-
-	rtx_force_static_lighting = m_pLuaConVars->CreateConVar("rtx_force_static_lighting", "1", "Force all models to use static lighting for RTX", FCVAR_ARCHIVE);
-	if (!rtx_force_static_lighting) { rtx_force_static_lighting = cvar->FindVar("rtx_force_static_lighting"); }
-	if (!rtx_force_static_lighting) { Error("[RTX Fixes 2] Failed to create rtx_force_static_lighting convar\n"); }
-	else { Msg("[RTX Fixes 2] rtx_force_static_lighting convar created\n"); }
+	r_forcenovis = CreateOrFindConVar("r_forcenovis", "1", "Force disable vis");
+	c_frustumcull = CreateOrFindConVar("c_frustumcull", "0", "Force frustum culling");
+	r_worldnodenocull = CreateOrFindConVar("r_worldnodenocull", "0", "Force world node nocull");
+	r_forcehwlight = CreateOrFindConVar("r_forcehwlight", "0", "Force LIGHTING_HARDWARE");
+	rtx_force_static_lighting = CreateOrFindConVar("rtx_force_static_lighting", "1", "Force all models to use static lighting for RTX");
+	r_forcehwskin = CreateOrFindConVar("r_forcehwskin", "1", "Force hardware skinning for all models (RTX Remix)");
+	r_hwskin_debug = CreateOrFindConVar("r_hwskin_debug", "0", "Enable debug logging for hardware skinning");
+	r_hwskin_setbones = CreateOrFindConVar("r_hwskin_setbones", "1", "Enable D3D9 bone matrix setting (set to 0 to disable for debugging)");
+	r_hwskin_transform_chain = CreateOrFindConVar("r_hwskin_transform_chain", "0", "Use full poseToBone transform chain (0 = direct passthrough, 1 = full chain)");
+	r_hwskin_transpose = CreateOrFindConVar("r_hwskin_transpose", "1", "Transpose matrices for D3D9 (0 = no transpose, 1 = transpose)");
+	r_hwskin_clear = CreateOrFindConVar("r_hwskin_clear", "1", "Clear matrices to identity before setting (0 = no, 1 = yes)");
 }

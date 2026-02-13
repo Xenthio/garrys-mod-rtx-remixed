@@ -20,6 +20,9 @@ hook.Add( "PopulateToolMenu", "RTXOptionsClient_BaseOptions", function()
         panel:CheckBox( "Pseudoweapon Enabled", "rtx_pseudoweapon" )
         panel:ControlHelp( "Similar to above, but for the weapon you're holding." )
 
+        panel:CheckBox( "Hardware Skinning", "r_forcehwskin" )
+        panel:ControlHelp( "Enables hardware skinning, allows for dynamic mesh replacements for Remix to work." )
+
         panel:CheckBox( "Fix Skybox Leaking", "rtx_sbr_enable" )
         panel:ControlHelp( "Hides geometry behind the skybox to prevent it from leaking through, doesn't allow light_enviornment entities to pass through though." )
         panel:ControlHelp( "Also breaks HDRIs.")
