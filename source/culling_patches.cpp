@@ -88,13 +88,17 @@ static void RegisterCullingPatches() {
 	}
 	{
 		// world backfaces #1
-		static const char sig[] = "7E 52 44 8B D3";
+		// PATCH DOCS: in R_DrawLeaf, search for "CBitVec invalid set bitNum" string 
+		// Working as of 2026-02-14, cross reference gmod as of that date if you need to refind
+		static const char sig[] = "7E ? 8B EF";
 		pm.RegisterPatch("rtx_patch_world_backfaces1", "engine.dll",
 			sig, sizeof(sig) - 1, 0, {0xEB}); // jmp (unconditional)
 	}
 	{
 		// world backfaces #2
-		static const char sig[] = "75 3C 49 8B 42 04";
+		// PATCH DOCS: in R_DrawLeaf, search for "CBitVec invalid set bitNum" string, but a little lower in the function
+		// Working as of 2026-02-14, cross reference gmod as of that date if you need to refind
+		static const char sig[] = "75 ? 48 8B 45 ? F3 0F 10 15";
 		pm.RegisterPatch("rtx_patch_world_backfaces2", "engine.dll",
 			sig, sizeof(sig) - 1, 0, {0xEB}); // jmp (unconditional)
 	}

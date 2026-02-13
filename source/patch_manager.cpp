@@ -58,11 +58,23 @@ void PatchManager::ResolveAll() {
 
 bool PatchManager::ApplyPatch(const std::string& name) {
 	PatchEntry* patch = FindPatch(name);
-	if (!patch || !patch->patchAddress || patch->applied)
+	if (!patch) {
+		Warning("[PatchManager] Failed to apply patch: '%s' not found\n", name.c_str());
 		return false;
+	}
+	if (!patch->patchAddress) {
+		Warning("[PatchManager] Failed to apply patch: '%s' address not resolved\n", name.c_str());
+		return false;
+	}
+	if (patch->applied) {
+		Warning("[PatchManager] Failed to apply patch: '%s' already applied\n", name.c_str());
+		return false;
+	}
 
-	if (!WriteBytes(patch->patchAddress, patch->patchBytes.data(), patch->patchBytes.size()))
+	if (!WriteBytes(patch->patchAddress, patch->patchBytes.data(), patch->patchBytes.size())) {
+		Warning("[PatchManager] Failed to apply patch: '%s' WriteBytes failed\n", name.c_str());
 		return false;
+	}
 
 	patch->applied = true;
 	Msg("[PatchManager] Applied patch: %s\n", name.c_str());
@@ -71,14 +83,28 @@ bool PatchManager::ApplyPatch(const std::string& name) {
 
 bool PatchManager::RestorePatch(const std::string& name) {
 	PatchEntry* patch = FindPatch(name);
-	if (!patch || !patch->patchAddress || !patch->applied)
+	if (!patch) {
+		Warning("[PatchManager] Failed to restore patch: '%s' not found\n", name.c_str());
 		return false;
+	}
+	if (!patch->patchAddress) {
+		Warning("[PatchManager] Failed to restore patch: '%s' address not resolved\n", name.c_str());
+		return false;
+	}
+	if (!patch->applied) {
+		Warning("[PatchManager] Failed to restore patch: '%s' not currently applied\n", name.c_str());
+		return false;
+	}
 
-	if (patch->originalBytes.empty())
+	if (patch->originalBytes.empty()) {
+		Warning("[PatchManager] Failed to restore patch: '%s' no original bytes saved\n", name.c_str());
 		return false;
+	}
 
-	if (!WriteBytes(patch->patchAddress, patch->originalBytes.data(), patch->originalBytes.size()))
+	if (!WriteBytes(patch->patchAddress, patch->originalBytes.data(), patch->originalBytes.size())) {
+		Warning("[PatchManager] Failed to restore patch: '%s' WriteBytes failed\n", name.c_str());
 		return false;
+	}
 
 	patch->applied = false;
 	Msg("[PatchManager] Restored patch: %s\n", name.c_str());
