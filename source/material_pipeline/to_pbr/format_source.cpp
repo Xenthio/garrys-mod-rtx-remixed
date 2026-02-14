@@ -882,9 +882,10 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
                         // Use uint64_t to prevent overflow for large textures
                         // (a 4K texture has 16M pixels; 255 * 16M > uint32_t max)
                         uint64_t totalR = 0, totalG = 0, totalB = 0;
-                        uint64_t pixelCount = static_cast<uint64_t>(envmapTex.width) * envmapTex.height;
+                        uint64_t pixelCount = static_cast<uint64_t>(envmapTex.width) * static_cast<uint64_t>(envmapTex.height);
                         
                         for (uint64_t i = 0; i < pixelCount; i++) {
+                            // Cast is safe: if pixelData was loaded successfully, it fits in memory and size_t
                             size_t idx = static_cast<size_t>(i * 4);
                             totalR += envmapTex.pixelData[idx + 0];
                             totalG += envmapTex.pixelData[idx + 1];
