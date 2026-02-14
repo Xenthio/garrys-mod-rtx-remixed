@@ -44,6 +44,16 @@ local projtex_fov_half_angle = CreateClientConVar("rtx_api_map_lights_projtex_fo
 local projtex_dir_basis = CreateClientConVar("rtx_api_map_lights_projtex_dir_basis", "0", true, false, "Angles basis for env_projectedtexture: 0=F,1=-F,2=U,3=-U,4=R,5=-R")
 local projtex_invert_pitch = CreateClientConVar("rtx_api_map_lights_projtex_invert_pitch", "1", true, false, "Invert pitch sign parsed from angles for env_projectedtexture")
 
+-- VRAD-accurate conversion constant: converts Source Engine VRAD intensity units to Remix radiance.
+-- This replaces the old ad-hoc envBaseline=0.2 and sqrt() compression with a single linear constant
+-- matching how VRAD's LightForString() actually processes light_environment brightness.
+-- Formula: radiance = pow(C/255, 2.2) * I * hdrScale * vrad_scale * env_brightness_mult
+local env_vrad_scale = CreateClientConVar("rtx_api_map_lights_env_vrad_scale", "0.001", true, false, "Source-to-Remix conversion constant for env light intensity (VRAD-accurate)")
+
+-- Ambient sky light controls (from light_environment _ambient/_ambientHDR)
+local env_ambient_to_sky = CreateClientConVar("rtx_api_map_lights_env_ambient_to_sky", "1", true, false, "Apply light_environment ambient values to Remix sky brightness")
+local env_ambient_scale = CreateClientConVar("rtx_api_map_lights_env_ambient_scale", "0.005", true, false, "Scale factor for converting ambient intensity to rtx.skyBrightness")
+
 -- Auto-spawn controls
 local autospawn = CreateClientConVar("rtx_api_map_lights_autospawn", "1", true, false, "Automatically convert map lights on map start")
 local autospawn_delay = CreateClientConVar("rtx_api_map_lights_autospawn_delay", "1.5", true, false, "Delay (seconds) before auto-processing after map start")
@@ -328,6 +338,12 @@ local function srgbToLinear(c)
     return (c <= 0.04045) and (c / 12.92) or math.pow((c + 0.055) / 1.055, 2.4)
 end
 
+-- VRAD-accurate gamma decode: pow(c/255, 2.2) matching Source Engine's LightForString()
+-- Returns [0..1] range (VRAD internally uses *255 but we keep normalized and fold into intensity)
+local function vradGammaToLinear(c)
+    return math.pow(c / 255.0, 2.2)
+end
+
 -- Helper function to estimate appropriate light size based on brightness
 -- Returns: finalSize, baseSizeBeforeMultipliers
 local function estimateLightSize(brightness, entitySize, lightType)
@@ -372,52 +388,58 @@ local function getLightProperties(entity)
         shapingEnabled = false
     }
     
-    -- Extract color information from the _light property if available
-    -- Format: "R G B I" or sometimes just "R G B" (defaults intensity to 255)
-    if entity._light then
-        -- Try parsing 4 values first (R G B I)
-        local r, g, b, i = string.match(entity._light or "", "([%+%-]?%d+)%s+([%+%-]?%d+)%s+([%+%-]?%d+)%s+([%+%-]?%d+)")
+    -- Extract color and brightness from entity light keyvalues.
+    -- VRAD priority: try _lightHDR first (preferred for physically accurate values),
+    -- fall back to _light if HDR is missing or is a sentinel (negative values).
+    -- This matches VRAD's ParseLightGeneric() behavior exactly.
+    
+    -- Helper: parse "R G B [I]" string into color and brightness.
+    -- Returns true, Color, brightness on success; false on failure (negative values = sentinel).
+    -- Matches VRAD's LightForString() which returns false if any value is negative.
+    local function parseLightString(lightStr)
+        if not lightStr then return false, nil, nil end
+        -- Try 4 values: R G B I
+        local r, g, b, i = string.match(tostring(lightStr), "([%+%-]?[%.%d]+)%s+([%+%-]?[%.%d]+)%s+([%+%-]?[%.%d]+)%s+([%+%-]?[%.%d]+)")
         if r and g and b and i then
             r, g, b, i = tonumber(r), tonumber(g), tonumber(b), tonumber(i)
-            -- Clamp negative values to 0 (some maps have malformed data)
-            if r < 0 then r = 0 end
-            if g < 0 then g = 0 end
-            if b < 0 then b = 0 end
-            if i < 0 then i = 255 end
-            color = Color(r, g, b)
-            brightness = i
-        else
-            -- Try parsing 3 values (R G B), default intensity to 200
-            r, g, b = string.match(entity._light or "", "([%+%-]?%d+)%s+([%+%-]?%d+)%s+([%+%-]?%d+)")
-            if r and g and b then
-                r, g, b = tonumber(r), tonumber(g), tonumber(b)
-                -- Clamp negative values
-                if r < 0 then r = 0 end
-                if g < 0 then g = 0 end
-                if b < 0 then b = 0 end
-                color = Color(r, g, b)
-                brightness = 200  -- Default intensity when not specified (matches Source Engine's vrad)
+            -- VRAD treats any negative value as invalid (sentinel)
+            if r < 0 or g < 0 or b < 0 or i < 0 then
+                return false, nil, nil
             end
+            return true, Color(r, g, b), i
+        end
+        -- Try 3 values: R G B (default I to 255, matching VRAD when scaler is omitted)
+        r, g, b = string.match(tostring(lightStr), "([%+%-]?[%.%d]+)%s+([%+%-]?[%.%d]+)%s+([%+%-]?[%.%d]+)")
+        if r and g and b then
+            r, g, b = tonumber(r), tonumber(g), tonumber(b)
+            if r < 0 or g < 0 or b < 0 then
+                return false, nil, nil
+            end
+            return true, Color(r, g, b), 255
+        end
+        return false, nil, nil
+    end
+    
+    -- VRAD priority: _lightHDR first, then _light fallback
+    local gotLight = false
+    local lightHDRStr = entity._lightHDR or entity.lightHDR
+    if lightHDRStr then
+        local ok, c, i = parseLightString(lightHDRStr)
+        if ok then
+            color = c
+            brightness = i
+            gotLight = true
         end
     end
     
-    -- Check _lightHDR for sentinel value (indicates "use SDR values")
-    -- Sentinel formats: "-1 -1 -1 1" or any negative RGB with negative intensity
-    if entity._lightHDR then
-        local hr, hg, hb, hi = string.match(entity._lightHDR or "", "([%+%-]?%d+)%s+([%+%-]?%d+)%s+([%+%-]?%d+)%s+([%+%-]?%d+)")
-        if hr and hg and hb and hi then
-            hr, hg, hb, hi = tonumber(hr), tonumber(hg), tonumber(hb), tonumber(hi)
-            local hasNegativeRGB = (hr < 0 or hg < 0 or hb < 0)
-            local hasNegativeIntensity = (hi and hi < 0)
-            -- If NOT a sentinel (no negative values), use HDR values instead
-            if not ((hr < 0 and hg < 0 and hb < 0) or (hasNegativeRGB and hasNegativeIntensity)) then
-                -- Valid HDR color, use it
-                if hr >= 0 and hg >= 0 and hb >= 0 and hi >= 0 then
-                    color = Color(hr, hg, hb)
-                    brightness = hi
-                end
+    if not gotLight then
+        local lightStr = entity._light
+        if lightStr then
+            local ok, c, i = parseLightString(lightStr)
+            if ok then
+                color = c
+                brightness = i
             end
-            -- Otherwise it's a sentinel, keep using SDR values from above
         end
     end
     
@@ -464,6 +486,60 @@ local function getLightProperties(entity)
         lightProps.angularDiameter = spread or 0.53
         -- Store HDR brightness scale for use in intensity calculation
         lightProps._lightscaleHDR = tonumber(entity._lightscaleHDR or entity.lightscaleHDR or 1.0)
+        
+        -- Parse ambient light values (VRAD creates emit_skyambient from these)
+        -- Priority: _ambientHDR (in HDR mode) > _ambient > fallback to 50% of sun intensity
+        -- Format: "R G B I" same as _light
+        local ambientColor, ambientBrightness = nil, nil
+        local ambientSource = "none"
+        
+        -- Try _ambientHDR first (preferred for physically accurate values)
+        local ambientHDR = entity._ambientHDR or entity.ambientHDR
+        if ambientHDR then
+            local ar, ag, ab, ai = string.match(tostring(ambientHDR), "([%+%-]?%d+)%s+([%+%-]?%d+)%s+([%+%-]?%d+)%s*([%+%-]?%d*)")
+            if ar and ag and ab then
+                ar, ag, ab = tonumber(ar), tonumber(ag), tonumber(ab)
+                ai = tonumber(ai) or 255
+                -- Check for sentinel (negative values = "use _ambient")
+                if ar >= 0 and ag >= 0 and ab >= 0 and ai >= 0 then
+                    ambientColor = Color(ar, ag, ab)
+                    ambientBrightness = ai
+                    ambientSource = "_ambientHDR"
+                end
+            end
+        end
+        
+        -- Fall back to _ambient
+        if not ambientColor then
+            local ambient = entity._ambient or entity.ambient
+            if ambient then
+                local ar, ag, ab, ai = string.match(tostring(ambient), "([%+%-]?%d+)%s+([%+%-]?%d+)%s+([%+%-]?%d+)%s*([%+%-]?%d*)")
+                if ar and ag and ab then
+                    ar, ag, ab = tonumber(ar), tonumber(ag), tonumber(ab)
+                    ai = tonumber(ai) or 255
+                    if ar >= 0 and ag >= 0 and ab >= 0 then
+                        ambientColor = Color(math.max(0, ar), math.max(0, ag), math.max(0, ab))
+                        ambientBrightness = math.max(0, ai)
+                        ambientSource = "_ambient"
+                    end
+                end
+            end
+        end
+        
+        -- Apply _AmbientScaleHDR if present
+        local ambientScaleHDR = tonumber(entity._AmbientScaleHDR or entity.AmbientScaleHDR or 1.0)
+        
+        -- Store ambient data for later use
+        lightProps.ambientColor = ambientColor
+        lightProps.ambientBrightness = ambientBrightness
+        lightProps.ambientScaleHDR = ambientScaleHDR
+        lightProps.ambientSource = ambientSource
+        
+        -- Store raw BSP values for debug diagnostics
+        lightProps._raw_light = entity._light
+        lightProps._raw_lightHDR = entity._lightHDR or entity.lightHDR
+        lightProps._raw_ambient = entity._ambient or entity.ambient
+        lightProps._raw_ambientHDR = entity._ambientHDR or entity.ambientHDR
         -- Derive directional angles (reuse robust parser)
         local a, src = ParseEntityAngles(entity)
         if debug_mode:GetBool() then
@@ -1297,51 +1373,52 @@ local function createRemixLight(pos, color, brightness, size, lightType, lightPr
     local typeBrightnessMult = (kind == "env") and env_brightness_mult:GetFloat()
         or ((kind == "spot") and spot_brightness_mult:GetFloat() or point_brightness_mult:GetFloat())
     
-    -- Compute intensity using Source engine's formula
-    -- Source: intensity = (color_linear) * (brightness / 255.0) * lightscale
-    -- where color_linear = pow(color/255, 2.2) * 255 (but srgbToLinear already does this)
-    -- brightness is the 4th value in _light field (0-255 range for LDR, >255 for bright lights)
-    local baseScale = 1.0
-    local brightBoost = 1.0
+    -- Compute radiance based on light kind
+    local radiance = { x = 0, y = 0, z = 0 }
     
     if kind == "env" then
-        -- For light_environment, apply a baseline scale then multiply by mapper's HDR Brightness Scale
-        -- Use square root scaling to compress brightness range (prevents extreme lights from dominating)
+        -- VRAD-accurate formula for light_environment (directional/sun light).
+        -- Source Engine's LightForString() computes: pow(C/255, 2.2) * I * lightscale * _lightscaleHDR
+        -- We replicate this exactly, then apply a single conversion constant (env_vrad_scale)
+        -- to map from Source's arbitrary intensity units to Remix's radiance space.
+        -- This is LINEAR in brightness I, preserving correct relative brightness between maps.
         local hdrScale = tonumber(lightProps._lightscaleHDR or 1.0)
+        local vradScale = env_vrad_scale:GetFloat()
         
-        -- Normalize brightness to a baseline, then apply sqrt to compress range
-        -- Baseline of 200: sqrt(200/200) = 1.0x, sqrt(560/200) = 1.67x, sqrt(1000/200) = 2.24x
-        -- Clamp minimum to 0.9 to prevent very dim lights (50) from being over-bright
-        local brightnessNormalized = math.max(0.9, math.sqrt(appliedBrightness / 200.0))
-        local envBaseline = 0.2  -- Base multiplier (tuned for brightness ~200)
+        -- Per-channel radiance = pow(C/255, 2.2) * I * hdrScale * vradScale * userMult
+        local envIntensity = appliedBrightness * hdrScale * vradScale * typeBrightnessMult
         
-        baseScale = envBaseline * brightnessNormalized * hdrScale
-        -- No brightBoost for environment lights - HDR scale handles intensity variation
+        if initiallyDark then envIntensity = 0.0 end
+        
+        radiance = {
+            x = vradGammaToLinear(color.r) * envIntensity,
+            y = vradGammaToLinear(color.g) * envIntensity,
+            z = vradGammaToLinear(color.b) * envIntensity,
+        }
     else
-        -- Point/spot lights need ~100x boost to compensate for missing radiosity calculations
-        baseScale = 100.0
+        -- Point/spot lights: keep existing formula (sRGB linearization + intensity scaling)
+        local baseScale = 100.0
+        local brightBoost = 1.0
         
         -- Apply extra boost for high brightness values (>255) to compensate for lack of HDR tone mapping
         if appliedBrightness > 255 then
-            -- Scale: 256-2000 -> 2x-20x boost, >2000 -> clamp at 20x
             brightBoost = math.min(20.0, 1.0 + (appliedBrightness - 255) / 92.0)
         end
-    end
-    
-    local intensity = (appliedBrightness / 255.0) * baseScale * typeBrightnessMult * brightBoost
-    
-    -- Force intensity to 0 if light should start disabled
-    if initiallyDark then
-        intensity = 0.0
+        
+        local intensity = (appliedBrightness / 255.0) * baseScale * typeBrightnessMult * brightBoost
+        
+        if initiallyDark then intensity = 0.0 end
+        
+        radiance = {
+            x = srgbToLinear(color.r) * intensity,
+            y = srgbToLinear(color.g) * intensity,
+            z = srgbToLinear(color.b) * intensity,
+        }
     end
     
     local base = {
         hash = tonumber(util.CRC(string.format("maplight_%s", posKey))) or entityId,
-        radiance = { 
-            x = srgbToLinear(color.r) * intensity, 
-            y = srgbToLinear(color.g) * intensity, 
-            z = srgbToLinear(color.b) * intensity 
-        },
+        radiance = radiance,
         isDynamic = true,
     }
 
@@ -1467,6 +1544,69 @@ local function addPositionOffset(pos)
     return pos + offset
 end
 
+-- Apply light_environment ambient values to Remix sky brightness.
+-- In Source's VRAD, light_environment creates two lights:
+--   1. emit_skylight (directional sun) -- handled by createRemixLight
+--   2. emit_skyambient (ambient sky fill) -- handled here via rtx.skyBrightness
+-- Priority: _ambientHDR * _AmbientScaleHDR > _ambient > 50% of sun intensity
+local function applyAmbientToSkyBrightness(bspLights)
+    if not env_ambient_to_sky:GetBool() then return end
+    
+    -- Find the first light_environment (VRAD only uses the first one)
+    local envLight = nil
+    for _, light in ipairs(bspLights) do
+        if light.classname == "light_environment" then
+            envLight = light
+            break
+        end
+    end
+    
+    if not envLight or not envLight.lightProps then return end
+    local props = envLight.lightProps
+    
+    local ambientColor = props.ambientColor
+    local ambientBrightness = props.ambientBrightness
+    local ambientScaleHDR = props.ambientScaleHDR or 1.0
+    local ambientSource = props.ambientSource or "none"
+    
+    -- Fallback: if no _ambient was found, use 50% of sun intensity (matches VRAD behavior)
+    if not ambientColor or not ambientBrightness then
+        ambientColor = envLight.color
+        ambientBrightness = (envLight.brightness or 200) * 0.5
+        ambientScaleHDR = 1.0
+        ambientSource = "fallback_50pct_sun"
+    end
+    
+    -- Compute ambient intensity using VRAD formula:
+    -- pow(C/255, 2.2) * I * _AmbientScaleHDR
+    -- Then convert to a scalar sky brightness using perceptual luminance weights
+    local ambR = vradGammaToLinear(ambientColor.r) * ambientBrightness * ambientScaleHDR
+    local ambG = vradGammaToLinear(ambientColor.g) * ambientBrightness * ambientScaleHDR
+    local ambB = vradGammaToLinear(ambientColor.b) * ambientBrightness * ambientScaleHDR
+    
+    -- Perceptual luminance (Rec. 709)
+    local luminance = 0.2126 * ambR + 0.7152 * ambG + 0.0722 * ambB
+    
+    -- Scale to Remix sky brightness range
+    local scale = env_ambient_scale:GetFloat()
+    local skyBrightness = luminance * scale
+    
+    -- Clamp to reasonable range
+    skyBrightness = math.Clamp(skyBrightness, 0.0, 100.0)
+    
+    if skyBrightness > 0 and RemixConfig and RemixConfig.SetConfigVariable then
+        local skyStr = string.format("%.4f", skyBrightness)
+        RemixConfig.SetConfigVariable("rtx.skyBrightness", skyStr)
+        print(string.format("[Light2RTX] Applied ambient sky brightness: %.4f (from %s: R=%d G=%d B=%d I=%.0f scale=%.2f)",
+            skyBrightness, ambientSource,
+            ambientColor.r, ambientColor.g, ambientColor.b,
+            ambientBrightness, ambientScaleHDR))
+    else
+        DebugPrint(string.format("Ambient sky: luminance=%.2f skyBrightness=%.4f (source=%s) - RemixConfig not available or brightness=0",
+            luminance, skyBrightness, ambientSource))
+    end
+end
+
 -- Create RTX lights for all the lights we found
 local function batchCreateRTXLights()
     -- Reset entity ID counter and position tracking
@@ -1476,6 +1616,9 @@ local function batchCreateRTXLights()
     -- Get lights from BSP
     local bspLights = findLightsInBSP()
     print("[Light2RTX] Found " .. #bspLights .. " lights in BSP data")
+    
+    -- Apply ambient sky brightness from light_environment before creating lights
+    applyAmbientToSkyBrightness(bspLights)
     
     -- Skip duplicate positions in advance by using a position map
     local uniqueLightsByPosition = {}
@@ -1643,45 +1786,51 @@ local function updateEntryRuntime(entry)
     end
     local amult = tonumber(entry.animMul or 1.0) or 1.0
     
-    -- Compute intensity using Source engine's formula
-    -- Source: intensity = (color_linear) * (brightness / 255.0) * lightscale
-    -- where color_linear = pow(color/255, 2.2) * 255 (but srgbToLinear already does this)
-    -- brightness is the 4th value in _light field (0-255 range for LDR, >255 for bright lights)
-    local baseScale = 1.0
-    local brightBoost = 1.0
+    -- Compute radiance based on light kind
+    local radiance = { x = 0, y = 0, z = 0 }
     
     if kind == "env" then
-        -- For light_environment, apply same formula as creation: baseline * sqrt(brightness) * hdrScale
+        -- VRAD-accurate formula: pow(C/255, 2.2) * I * hdrScale * vradScale * userMult * animMul
         local hdrScale = tonumber(entry.hdrScale or 1.0)
-        local brightnessNormalized = math.max(0.9, math.sqrt(baseBright / 200.0))
-        local envBaseline = 0.2
-        baseScale = envBaseline * brightnessNormalized * hdrScale
-        -- No brightBoost for environment lights
-    else
-        -- Point/spot lights need ~100x boost to compensate for missing radiosity calculations
-        baseScale = 100.0
+        local vradScale = env_vrad_scale:GetFloat()
+        local envIntensity = baseBright * hdrScale * vradScale * bmult * amult
         
-        -- Apply extra boost for high brightness values (>255) to compensate for lack of HDR tone mapping
+        -- Force radiance to 0 if light is disabled
+        if not entry.animEnabled or amult <= 0.0 then
+            envIntensity = 0.0
+        end
+        
+        radiance = {
+            x = vradGammaToLinear(entry.color.r) * envIntensity,
+            y = vradGammaToLinear(entry.color.g) * envIntensity,
+            z = vradGammaToLinear(entry.color.b) * envIntensity,
+        }
+    else
+        -- Point/spot lights: keep existing formula
+        local baseScale = 100.0
+        local brightBoost = 1.0
+        
         if baseBright > 255 then
-            -- Scale: 256-2000 -> 2x-20x boost, >2000 -> clamp at 20x
             brightBoost = math.min(20.0, 1.0 + (baseBright - 255) / 92.0)
         end
-    end
-    
-    local intensity = (baseBright / 255.0) * baseScale * bmult * amult * brightBoost
-    
-    -- Force radiance to 0 if light is disabled (for compatibility with HDRI editor)
-    if not entry.animEnabled or amult <= 0.0 then
-        intensity = 0.0
+        
+        local intensity = (baseBright / 255.0) * baseScale * bmult * amult * brightBoost
+        
+        -- Force radiance to 0 if light is disabled
+        if not entry.animEnabled or amult <= 0.0 then
+            intensity = 0.0
+        end
+        
+        radiance = {
+            x = srgbToLinear(entry.color.r) * intensity,
+            y = srgbToLinear(entry.color.g) * intensity,
+            z = srgbToLinear(entry.color.b) * intensity,
+        }
     end
     
     local base = {
         hash = tonumber(util.CRC("upd_" .. tostring(entry.id))) or entry.entityId,
-        radiance = { 
-            x = srgbToLinear(entry.color.r) * intensity, 
-            y = srgbToLinear(entry.color.g) * intensity, 
-            z = srgbToLinear(entry.color.b) * intensity 
-        },
+        radiance = radiance,
         isDynamic = true,
     }
     -- Helper to compute direction for distant/spot from stored angles if available
@@ -1784,6 +1933,8 @@ if cvars and cvars.AddChangeCallback then
     cvars.AddChangeCallback("rtx_api_map_lights_max_size", function() refreshAllLights() end, "rtx_maplights_max_size")
     -- Flip callback: re-evaluate env directions from stored angles when toggled
     cvars.AddChangeCallback("rtx_api_map_lights_env_dir_flip", function() updateAllOfKind("env") end, "rtx_maplights_env_flip")
+    -- VRAD scale callback: update env lights when the Source-to-Remix conversion constant changes
+    cvars.AddChangeCallback("rtx_api_map_lights_env_vrad_scale", function() updateAllOfKind("env") end, "rtx_maplights_env_vrad_scale")
 end
 
 -- Toggle light visibility
@@ -1952,6 +2103,174 @@ end)
 concommand.Add("rtx_api_map_lights_refresh", function()
     refreshAllLights()
     print("[Light2RTX] Refreshed all lights with current multipliers")
+end)
+
+-- Debug diagnostics command: shows raw BSP values and final radiance for light_environment
+concommand.Add("rtx_api_map_lights_debug_env", function()
+    print("====================================================================")
+    print("[Light2RTX] light_environment Diagnostic Report")
+    print("====================================================================")
+    
+    if not NikNaks or not NikNaks.CurrentMap then
+        print("  ERROR: NikNaks/BSP data not available")
+        return
+    end
+    
+    local bsp = NikNaks.CurrentMap
+    local envCount = 0
+    
+    for _, ent in pairs(bsp:GetEntities()) do
+        if ent.classname == "light_environment" then
+            envCount = envCount + 1
+            print(string.format("\n--- light_environment #%d ---", envCount))
+            
+            -- Raw BSP keyvalues
+            print("  Raw BSP keyvalues:")
+            print("    _light         = " .. tostring(ent._light or "(nil)"))
+            print("    _lightHDR      = " .. tostring(ent._lightHDR or ent.lightHDR or "(nil)"))
+            print("    _lightscaleHDR = " .. tostring(ent._lightscaleHDR or ent.lightscaleHDR or "(nil, default 1.0)"))
+            print("    _ambient       = " .. tostring(ent._ambient or ent.ambient or "(nil)"))
+            print("    _ambientHDR    = " .. tostring(ent._ambientHDR or ent.ambientHDR or "(nil)"))
+            print("    _AmbientScaleHDR = " .. tostring(ent._AmbientScaleHDR or ent.AmbientScaleHDR or "(nil, default 1.0)"))
+            print("    SunSpreadAngle = " .. tostring(ent.sunspreadangle or ent._sunspreadangle or "(nil, default 0.53)"))
+            print("    angles         = " .. tostring(ent.angles or ent._angles or "(nil)"))
+            print("    pitch          = " .. tostring(ent.pitch or ent._pitch or "(nil)"))
+            
+            -- Parse using same logic as getLightProperties
+            local color, brightness = Color(255, 255, 255), 100
+            
+            -- HDR-first parsing (matching VRAD)
+            local lightSource = "default"
+            local lightHDRStr = ent._lightHDR or ent.lightHDR
+            if lightHDRStr then
+                local r, g, b, i = string.match(tostring(lightHDRStr), "([%+%-]?[%.%d]+)%s+([%+%-]?[%.%d]+)%s+([%+%-]?[%.%d]+)%s+([%+%-]?[%.%d]+)")
+                if r and g and b and i then
+                    r, g, b, i = tonumber(r), tonumber(g), tonumber(b), tonumber(i)
+                    if r >= 0 and g >= 0 and b >= 0 and i >= 0 then
+                        color = Color(r, g, b)
+                        brightness = i
+                        lightSource = "_lightHDR"
+                    else
+                        lightSource = "_lightHDR (sentinel, falling back)"
+                    end
+                end
+            end
+            if lightSource ~= "_lightHDR" then
+                local lightStr = ent._light
+                if lightStr then
+                    local r, g, b, i = string.match(tostring(lightStr), "([%+%-]?[%.%d]+)%s+([%+%-]?[%.%d]+)%s+([%+%-]?[%.%d]+)%s*([%+%-]?[%.%d]*)")
+                    if r and g and b then
+                        r, g, b = tonumber(r), tonumber(g), tonumber(b)
+                        i = tonumber(i) or 255
+                        if r >= 0 and g >= 0 and b >= 0 then
+                            color = Color(math.max(0, r), math.max(0, g), math.max(0, b))
+                            brightness = math.max(0, i)
+                            lightSource = "_light"
+                        end
+                    end
+                end
+            end
+            
+            local hdrScale = tonumber(ent._lightscaleHDR or ent.lightscaleHDR or 1.0)
+            
+            print("\n  Parsed sun values (source: " .. lightSource .. "):")
+            print(string.format("    Color: R=%d G=%d B=%d, Brightness(I): %.1f", color.r, color.g, color.b, brightness))
+            print(string.format("    HDR scale: %.2f", hdrScale))
+            
+            -- VRAD-equivalent linear intensity per channel
+            local vrad_r = math.pow(color.r / 255.0, 2.2) * brightness * hdrScale
+            local vrad_g = math.pow(color.g / 255.0, 2.2) * brightness * hdrScale
+            local vrad_b = math.pow(color.b / 255.0, 2.2) * brightness * hdrScale
+            print(string.format("    VRAD linear intensity: R=%.2f G=%.2f B=%.2f", vrad_r, vrad_g, vrad_b))
+            
+            -- Final Remix radiance with current settings
+            local vradScale = env_vrad_scale:GetFloat()
+            local envBMult = env_brightness_mult:GetFloat()
+            local remix_r = math.pow(color.r / 255.0, 2.2) * brightness * hdrScale * vradScale * envBMult
+            local remix_g = math.pow(color.g / 255.0, 2.2) * brightness * hdrScale * vradScale * envBMult
+            local remix_b = math.pow(color.b / 255.0, 2.2) * brightness * hdrScale * vradScale * envBMult
+            print(string.format("    Remix radiance (current): R=%.6f G=%.6f B=%.6f", remix_r, remix_g, remix_b))
+            print(string.format("    Settings: env_vrad_scale=%.6f, env_brightness_mult=%.2f", vradScale, envBMult))
+            
+            -- Ambient analysis
+            print("\n  Ambient sky analysis:")
+            local ambientColor, ambientBrightness = nil, nil
+            local ambientSource = "none"
+            
+            local ambientHDR = ent._ambientHDR or ent.ambientHDR
+            if ambientHDR then
+                local ar, ag, ab, ai = string.match(tostring(ambientHDR), "([%+%-]?%d+)%s+([%+%-]?%d+)%s+([%+%-]?%d+)%s*([%+%-]?%d*)")
+                if ar and ag and ab then
+                    ar, ag, ab = tonumber(ar), tonumber(ag), tonumber(ab)
+                    ai = tonumber(ai) or 255
+                    if ar >= 0 and ag >= 0 and ab >= 0 and ai >= 0 then
+                        ambientColor = Color(ar, ag, ab)
+                        ambientBrightness = ai
+                        ambientSource = "_ambientHDR"
+                    end
+                end
+            end
+            if not ambientColor then
+                local ambient = ent._ambient or ent.ambient
+                if ambient then
+                    local ar, ag, ab, ai = string.match(tostring(ambient), "([%+%-]?%d+)%s+([%+%-]?%d+)%s+([%+%-]?%d+)%s*([%+%-]?%d*)")
+                    if ar and ag and ab then
+                        ar, ag, ab = tonumber(ar), tonumber(ag), tonumber(ab)
+                        ai = tonumber(ai) or 255
+                        if ar >= 0 and ag >= 0 and ab >= 0 then
+                            ambientColor = Color(ar, ag, ab)
+                            ambientBrightness = ai
+                            ambientSource = "_ambient"
+                        end
+                    end
+                end
+            end
+            if not ambientColor then
+                ambientColor = color
+                ambientBrightness = brightness * 0.5
+                ambientSource = "fallback (50% of sun)"
+            end
+            
+            local ambScale = tonumber(ent._AmbientScaleHDR or ent.AmbientScaleHDR or 1.0)
+            print(string.format("    Source: %s", ambientSource))
+            print(string.format("    Color: R=%d G=%d B=%d, Brightness: %.1f, AmbientScaleHDR: %.2f",
+                ambientColor.r, ambientColor.g, ambientColor.b, ambientBrightness, ambScale))
+            
+            local ambR = math.pow(ambientColor.r / 255.0, 2.2) * ambientBrightness * ambScale
+            local ambG = math.pow(ambientColor.g / 255.0, 2.2) * ambientBrightness * ambScale
+            local ambB = math.pow(ambientColor.b / 255.0, 2.2) * ambientBrightness * ambScale
+            local luminance = 0.2126 * ambR + 0.7152 * ambG + 0.0722 * ambB
+            local skyBrightness = luminance * env_ambient_scale:GetFloat()
+            print(string.format("    VRAD ambient intensity: R=%.2f G=%.2f B=%.2f (luminance=%.2f)", ambR, ambG, ambB, luminance))
+            print(string.format("    Suggested Remix skyBrightness: %.4f (with env_ambient_scale=%.4f)", skyBrightness, env_ambient_scale:GetFloat()))
+            
+            -- Suggest env_brightness_mult for a "target" radiance
+            local targetRadiance = 0.5
+            local maxChannel = math.max(remix_r, remix_g, remix_b)
+            if maxChannel > 0 then
+                local suggestedMult = targetRadiance / maxChannel * envBMult
+                print(string.format("\n  Suggestion: for radiance ~%.1f, try env_brightness_mult = %.2f", targetRadiance, suggestedMult))
+            end
+            
+            if envCount == 1 then
+                print("\n  NOTE: VRAD only uses the FIRST light_environment entity.")
+            end
+        end
+    end
+    
+    if envCount == 0 then
+        print("  No light_environment entities found in BSP!")
+    end
+    
+    -- Also show currently created env lights
+    local createdEnvCount = 0
+    for _, entry in ipairs(createdLights) do
+        if entry.classname == "light_environment" then
+            createdEnvCount = createdEnvCount + 1
+        end
+    end
+    print(string.format("\n  Currently active env lights: %d (created from BSP)", createdEnvCount))
+    print("====================================================================")
 end)
 
 -- Add context menu for lights
