@@ -79,6 +79,9 @@ void ExtractProperties(const VMTParseResult& vmt, MaterialPBRProperties& props) 
         props.envMapMaskPath = vmt.envMapMask;
         props.hasEnvMapMask = true;
     }
+    if (!vmt.envMap.empty()) {
+        props.envMapPath = vmt.envMap;
+    }
     if (!vmt.phongExponentTexture.empty()) {
         props.phongExponentTexturePath = vmt.phongExponentTexture;
         props.hasPhongExponentTexture = true;
@@ -838,6 +841,99 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
         }
     }
     result.metallicConstant = props.metallic;
+    
+    // =========================================================================
+    // Special case: Materials with $envmap but NO $basetexture
+    // These are chrome-like materials (e.g., Half-Life 1 Barney's helmet)
+    // that use only environment reflection with a custom envmap texture.
+    // 
+    // For these materials:
+    // 1. Load the envmap texture and sample its average color
+    // 2. Generate an albedo texture tinted with the envmap color
+    // 3. Set metallic to 1.0 (fully metallic)
+    // 4. Set roughness to low value (chrome-like)
+    // =========================================================================
+    if (props.baseTexturePath.empty() && props.hasEnvMap && !props.envMapPath.empty()) {
+        if (ctx.debugOutput) {
+            Msg("[Source] [Chrome] Detected envmap-only material (no basetexture)\n");
+            Msg("[Source] [Chrome]   Envmap texture: %s\n", props.envMapPath.c_str());
+        }
+        
+        // Load the envmap texture to sample its color
+        std::vector<uint8_t> envmapFileData;
+        if (ctx.readVTFFile(props.envMapPath, envmapFileData)) {
+            VTFFileHeader envmapHeader;
+            if (ctx.parseVTFHeader(envmapFileData, envmapHeader)) {
+                ConvertedTexture envmapTex;
+                if (ctx.extractPixelData(envmapFileData, envmapHeader, envmapTex, false)) {
+                    // Calculate average color of envmap
+                    uint64_t totalR = 0, totalG = 0, totalB = 0;
+                    uint32_t pixelCount = envmapTex.width * envmapTex.height;
+                    
+                    for (uint32_t i = 0; i < pixelCount; i++) {
+                        size_t idx = i * 4;
+                        totalR += envmapTex.pixelData[idx + 0];
+                        totalG += envmapTex.pixelData[idx + 1];
+                        totalB += envmapTex.pixelData[idx + 2];
+                    }
+                    
+                    uint8_t avgR = static_cast<uint8_t>(totalR / pixelCount);
+                    uint8_t avgG = static_cast<uint8_t>(totalG / pixelCount);
+                    uint8_t avgB = static_cast<uint8_t>(totalB / pixelCount);
+                    
+                    if (ctx.debugOutput) {
+                        Msg("[Source] [Chrome] Envmap average color: RGB(%d, %d, %d)\n", avgR, avgG, avgB);
+                    }
+                    
+                    // Generate a solid color albedo texture tinted with envmap color
+                    // Use a small 64x64 texture to save memory/disk space
+                    ConvertedTexture albedoTex;
+                    albedoTex.width = 64;
+                    albedoTex.height = 64;
+                    albedoTex.mipLevels = 1;
+                    albedoTex.format = REMIXAPI_FORMAT_R8G8B8A8_UNORM;
+                    albedoTex.isNormalMap = false;
+                    albedoTex.pixelData.resize(64 * 64 * 4);
+                    
+                    // Fill with the tinted color
+                    for (uint32_t i = 0; i < 64 * 64; i++) {
+                        size_t idx = i * 4;
+                        albedoTex.pixelData[idx + 0] = avgR;
+                        albedoTex.pixelData[idx + 1] = avgG;
+                        albedoTex.pixelData[idx + 2] = avgB;
+                        albedoTex.pixelData[idx + 3] = 255;
+                    }
+                    
+                    // Write the albedo texture
+                    uint64_t albedoHash = ctx.generateHash(props.envMapPath + "_chrome_albedo", 64, 64);
+                    std::string albedoPath = ctx.generateOutputPath(albedoHash, "_albedo");
+                    
+                    if (ctx.fileExists(albedoPath)) {
+                        result.albedoPath = albedoPath;
+                        result.skippedCount++;
+                        if (ctx.debugOutput) {
+                            Msg("[Source] [Chrome] Chrome albedo already exists (skipped): %s\n", albedoPath.c_str());
+                        }
+                    } else if (ctx.writeDDS(albedoTex, albedoPath)) {
+                        result.albedoPath = albedoPath;
+                        if (ctx.debugOutput) {
+                            Msg("[Source] [Chrome] Wrote chrome albedo: %s\n", albedoPath.c_str());
+                        }
+                    }
+                    
+                    // Set material properties for chrome-like appearance
+                    result.metallicConstant = 1.0f;  // Fully metallic
+                    result.roughnessConstant = 0.05f;  // Very smooth (chrome-like)
+                    
+                    if (ctx.debugOutput) {
+                        Msg("[Source] [Chrome] Set metallic=1.0, roughness=0.05 for chrome appearance\n");
+                    }
+                }
+            }
+        } else if (ctx.debugOutput) {
+            Msg("[Source] [Chrome] Warning: Could not load envmap texture: %s\n", props.envMapPath.c_str());
+        }
+    }
     
     // =========================================================================
     // Metallic extraction from envmap mask + base texture brightness

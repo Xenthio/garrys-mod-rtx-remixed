@@ -103,6 +103,7 @@ struct VMTParseResult {
     std::string baseTexture;
     std::string bumpMap;
     std::string envMapMask;
+    std::string envMap;             // $envmap texture path
     std::string phongExponentTexture;
     
     // Common properties

@@ -138,6 +138,7 @@ struct MaterialPBRProperties {
     float envMapTint[3];            // $envmaptint - tints the environment map
     bool hasEnvMapTint;
     bool hasEnvMap;                 // $envmap - has environment mapping
+    std::string envMapPath;         // $envmap texture path (used for chrome-like materials without basetexture)
     float baseMapAlphaPhongMask;    // $basemapalphaphongmask - use base texture alpha as phong mask
     bool hasBaseMapAlphaPhongMask;
     bool hasBaseAlphaEnvMapMask;    // $basealphaenvmapmask - use base texture alpha as envmap mask (LightmappedGeneric)

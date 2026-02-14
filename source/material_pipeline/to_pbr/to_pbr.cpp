@@ -2873,6 +2873,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     // Get $envmap - prefer VMT-parsed value
     if (hasVMTParsed && vmtParsed.hasEnvMap) {
         outProps.hasEnvMap = true;
+        outProps.envMapPath = vmtParsed.envMap;
         if (m_debugOutput) {
             Msg("[MaterialPipeline::ToPBR] %s: $envmap (from VMT) = %s\n", materialName.c_str(), vmtParsed.envMap.c_str());
         }
@@ -2890,6 +2891,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
             }
             if (strVal && strVal[0] != '\0' && !isUndefined) {
                 outProps.hasEnvMap = true;
+                outProps.envMapPath = strVal;
                 if (m_debugOutput) {
                     Msg("[MaterialPipeline::ToPBR] %s: $envmap = %s\n", materialName.c_str(), strVal);
                 }
