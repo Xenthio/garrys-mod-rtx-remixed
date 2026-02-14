@@ -885,8 +885,9 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
                         uint64_t pixelCount = static_cast<uint64_t>(envmapTex.width) * static_cast<uint64_t>(envmapTex.height);
                         
                         for (uint64_t i = 0; i < pixelCount; i++) {
-                            // Cast is safe: if pixelData was loaded successfully, it fits in memory and size_t
-                            size_t idx = static_cast<size_t>(i * 4);
+                            // Compute index safely: cast i to size_t before multiplying
+                            // (if pixelData was loaded successfully, it fits in memory and size_t)
+                            size_t idx = static_cast<size_t>(i) * 4;
                             totalR += envmapTex.pixelData[idx + 0];
                             totalG += envmapTex.pixelData[idx + 1];
                             totalB += envmapTex.pixelData[idx + 2];
