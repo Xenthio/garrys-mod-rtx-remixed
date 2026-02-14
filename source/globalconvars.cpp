@@ -21,16 +21,29 @@ ConVar* GlobalConvars::r_hwskin_setbones;
 ConVar* GlobalConvars::r_hwskin_transform_chain;
 ConVar* GlobalConvars::r_hwskin_transpose;
 ConVar* GlobalConvars::r_hwskin_clear;
-// Helper: try ILuaConVars first, fall back to cvar->FindVar()
+ConVar* GlobalConvars::r_hwskin_force_flag;
+ConVar* GlobalConvars::r_hwskin_ubyte4;
+ConVar* GlobalConvars::r_hwskin_vtx_hw;
+// Helper: try ILuaConVars first, then construct + register directly via ICvar
 static ConVar* CreateOrFindConVar(const char* name, const char* defaultVal, const char* help, int flags = FCVAR_ARCHIVE) {
 	ConVar* cv = nullptr;
 
+	// Prefer ILuaConVars if available (creates + registers in one step)
 	if (m_pLuaConVars) {
 		cv = m_pLuaConVars->CreateConVar(name, defaultVal, help, flags);
 	}
 
+	// Fallback: check if already registered (e.g. from a previous load)
 	if (!cv && cvar) {
 		cv = cvar->FindVar(name);
+	}
+
+	// Last resort: construct a new ConVar and register it manually.
+	// ConVar constructor won't auto-register in a binary module because
+	// ConVar_Register was never called (s_pAccessor is null).
+	if (!cv && cvar) {
+		cv = new ConVar(name, defaultVal, flags, help);
+		cvar->RegisterConCommand(cv);
 	}
 
 	if (cv) {
@@ -58,4 +71,7 @@ void GlobalConvars::InitialiseConVars() {
 	r_hwskin_transform_chain = CreateOrFindConVar("r_hwskin_transform_chain", "0", "Use full poseToBone transform chain (0 = direct passthrough, 1 = full chain)");
 	r_hwskin_transpose = CreateOrFindConVar("r_hwskin_transpose", "1", "Transpose matrices for D3D9 (0 = no transpose, 1 = transpose)");
 	r_hwskin_clear = CreateOrFindConVar("r_hwskin_clear", "1", "Clear matrices to identity before setting (0 = no, 1 = yes)");
+	r_hwskin_force_flag = CreateOrFindConVar("r_hwskin_force_flag", "0", "Force MESHGROUP_IS_HWSKINNED flag on multi-bone models at load time");
+	r_hwskin_ubyte4 = CreateOrFindConVar("r_hwskin_ubyte4", "1", "Apply UBYTE4 vertex declaration patch for bone indices during skinned model creation");
+	r_hwskin_vtx_hw = CreateOrFindConVar("r_hwskin_vtx_hw", "1", "Keep HW vertex data (.dx90.vtx) instead of SW redirect for skinned models");
 }

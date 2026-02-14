@@ -630,6 +630,21 @@ static HRESULT STDMETHODCALLTYPE Hook_DrawIndexedPrimitive(
 }
 
 // ============================================================================
+// Helpers: enable/disable UBYTE4 patch around skinned model creation.
+// Separated into their own functions because MSVC forbids C++ object unwinding
+// (std::string temporaries) in functions that use SEH (__try/__except).
+//
+// The UBYTE4 patch is only active during CreateSingleMesh for multi-bone
+// models, so only their vertex declarations get UBYTE4. All other models
+// keep D3DCOLOR and render normally through Source Engine shaders.
+static void EnableUBYTE4Patch() {
+    g_MemoryPatcher.EnablePatch("HWSkin_BlendIndices_UBYTE4");
+}
+static void DisableUBYTE4Patch() {
+    g_MemoryPatcher.DisablePatch("HWSkin_BlendIndices_UBYTE4");
+}
+
+// ============================================================================
 // Hook: R_StudioCreateSingleMesh
 // Forces MESHGROUP_IS_HWSKINNED flag on mesh groups during creation
 // ============================================================================
@@ -649,23 +664,38 @@ Define_method_Hook(void*, R_StudioCreateSingleMesh, void*,
         s_firstCallLogged = true;
     }
     
-    // Call original first to let it set up the mesh groups
+    // NOTE: CreateSingleMesh is only called when models are FIRST loaded.
+    // Each sub-patch has its own convar (gated behind r_forcehwskin master switch).
+    bool forcehwskin = GlobalConvars::r_forcehwskin && GlobalConvars::r_forcehwskin->GetBool();
+    bool wantFlag   = forcehwskin && GlobalConvars::r_hwskin_force_flag && GlobalConvars::r_hwskin_force_flag->GetBool();
+    bool wantUBYTE4 = forcehwskin && GlobalConvars::r_hwskin_ubyte4 && GlobalConvars::r_hwskin_ubyte4->GetBool();
+    bool needUBYTE4 = (numBones > 1 && wantUBYTE4);
+    
+    // Enable UBYTE4 patch ONLY during mesh creation for skinned models.
+    // This scopes the patch so only multi-bone models get UBYTE4 in their
+    // vertex declarations. All other models keep D3DCOLOR and render normally.
+    if (needUBYTE4) {
+        EnableUBYTE4Patch();
+    }
+    
+    // Call original to create the mesh (vertex declarations are created here)
     void* result = nullptr;
     __try {
         result = R_StudioCreateSingleMesh_trampoline()(_this, pStudioHdr, pStudioLodData, pMesh, pVtxMesh, numBones, pMeshData, pColorMeshID);
     }
     __except(EXCEPTION_EXECUTE_HANDLER) {
         HWSKIN_DBG_ALWAYS("[HWSkin] CRASH in CreateSingleMesh trampoline!\n");
+        if (needUBYTE4) DisableUBYTE4Patch();
         return nullptr;
     }
     
-    // NOTE: CreateSingleMesh is only called when models are FIRST loaded
-    // If r_forcehwskin wasn't enabled when the model loaded, we can't force the flag retroactively
-    // For this reason, we ALWAYS force the flag when numBones > 1, regardless of convar
-    // The convar will control whether we actually SET the bone transforms in DrawGroupHWSkin
+    // Disable UBYTE4 patch after mesh creation
+    if (needUBYTE4) {
+        DisableUBYTE4Patch();
+    }
     
-    // Force MESHGROUP_IS_HWSKINNED flag on mesh groups with bones
-    if (numBones > 1) {
+    // Force MESHGROUP_IS_HWSKINNED flag on mesh groups with bones (only when enabled)
+    if (numBones > 1 && wantFlag) {
         __try {
             if (!pMeshData) {
                 HWSKIN_DBG("[HWSkin] CreateSingleMesh: pMeshData is null!\n");
@@ -720,7 +750,6 @@ Define_method_Hook(void*, R_StudioCreateSingleMesh, void*,
     return result;
 }
 
-// ============================================================================
 // Hook: R_StudioDrawGroupHWSkin
 // GMod version takes 9 parameters (different from Source SDK's 5)
 // Sets bone transforms via D3D9 fixed-function API for Remix to capture
@@ -1090,27 +1119,26 @@ void HardwareSkinningHooks::Initialize() {
         // so every vertex gets mapped to the wrong bones. UBYTE4 reads
         // the 4 bytes as-is without swizzle.
         //
-        // This must happen before models are loaded (vertex declarations
-        // are created at model load time).
+        // The patch is created here (to capture original bytes) but kept
+        // DISABLED. It is only enabled briefly during CreateSingleMesh for
+        // multi-bone models, so only their vertex declarations get UBYTE4.
+        // All other models keep D3DCOLOR and render normally.
         // ====================================================================
 #ifdef _WIN64
         HMODULE shaderApiDll = GetModuleHandleA("shaderapidx9.dll");
         if (shaderApiDll) {
-            // Signature for the BLENDINDICES element setup in ComputeVertexSpec:
-            //   mov word ptr [rdi+rax*8+5], 0x200   ; Method=0, Usage=BLENDINDICES(2)
-            //   mov byte ptr [rdi+rax*8+7], dl       ; UsageIndex=0
-            //   mov byte ptr [rdi+rax*8+4], 4        ; Type=D3DDECLTYPE_D3DCOLOR <-- patch this
-            // The last byte (04) of this pattern is the immediate value to change to 05 (UBYTE4).
             static const char blendIndicesTypeSig[] = "66 C7 44 C7 05 00 02 88 54 C7 07 C6 44 C7 04 04";
             void* sigAddr = g_MemoryPatcher.FindPatternWildcard(shaderApiDll, blendIndicesTypeSig);
             if (sigAddr) {
-                // Patch byte at offset +15: D3DDECLTYPE_D3DCOLOR(4) -> D3DDECLTYPE_UBYTE4(5)
                 void* patchAddr = (void*)((uintptr_t)sigAddr + 15);
                 if (g_MemoryPatcher.CreatePatch("HWSkin_BlendIndices_UBYTE4", patchAddr, "05",
                     "Patch D3DDECLTYPE_D3DCOLOR to D3DDECLTYPE_UBYTE4 for bone indices")) {
-                    Msg("[Hardware Skinning] Patched bone index declaration: D3DCOLOR -> UBYTE4\n");
+                    // Always disable immediately -- the patch is toggled on/off
+                    // around CreateSingleMesh calls for skinned models only
+                    g_MemoryPatcher.DisablePatch("HWSkin_BlendIndices_UBYTE4");
+                    Msg("[Hardware Skinning] UBYTE4 patch registered (enabled per-model during mesh creation)\n");
                 } else {
-                    Warning("[Hardware Skinning] Failed to apply UBYTE4 patch!\n");
+                    Warning("[Hardware Skinning] Failed to register UBYTE4 patch!\n");
                 }
             } else {
                 Warning("[Hardware Skinning] Could not find BLENDINDICES D3DCOLOR signature in shaderapidx9.dll\n");

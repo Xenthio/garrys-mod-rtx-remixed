@@ -94,6 +94,7 @@
 //}
 #include "GarrysMod/Lua/Interface.h"
 #include "modelload_fixes.h"
+#include "globalconvars.h"
 #include "cdll_client_int.h"
 #include "filesystem.h"  // Include for IFileSystem definitions
 #include "datacache/imdlcache.h"
@@ -181,9 +182,13 @@ Define_method_Hook(FileHandle_t, IFileSystem_OpenEx, void*, const char* pFileNam
                         vtxLogCount++;
                     }
                     
-                    if (boneCount > 1) {
-                        // This is a skinned model - keep using HW vertex data (.dx90.vtx)
-                        // for proper bone animation support in RTX Remix
+                    bool vtxHw = GlobalConvars::r_forcehwskin && GlobalConvars::r_forcehwskin->GetBool()
+                              && GlobalConvars::r_hwskin_vtx_hw && GlobalConvars::r_hwskin_vtx_hw->GetBool();
+                    if (boneCount > 1 && vtxHw) {
+                        // This is a skinned model and HW VTX keeping is enabled -
+                        // keep using HW vertex data (.dx90.vtx) for proper bone
+                        // animation support in RTX Remix. Already-loaded models
+                        // are unaffected until a map change reloads them.
                         Msg("[gmRTX - Model Load] KEEPING HW vertex data for skinned model (%d bones): %s\n", boneCount, pFileName);
                         break; // Skip SW redirection, use original HW file
                     }

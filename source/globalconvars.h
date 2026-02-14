@@ -16,5 +16,8 @@ public:
 	static ConVar* r_hwskin_transform_chain;  // Use full transform chain (0 = direct passthrough)
 	static ConVar* r_hwskin_transpose; // Transpose matrices for D3D9 (0 = no, 1 = yes)
 	static ConVar* r_hwskin_clear;     // Clear matrices to identity before setting (0 = no, 1 = yes)
+	static ConVar* r_hwskin_force_flag;  // Force MESHGROUP_IS_HWSKINNED flag on multi-bone models
+	static ConVar* r_hwskin_ubyte4;      // Apply UBYTE4 vertex declaration patch for bone indices
+	static ConVar* r_hwskin_vtx_hw;      // Keep HW vertex data (.dx90.vtx) for skinned models
 	static void InitialiseConVars();
 }; 

@@ -38,6 +38,12 @@ static ConVar* CreatePatchConVar(const char* name, const char* defaultVal, const
 		cv = cvar->FindVar(name);
 	}
 
+	// Last resort: construct + register directly via ICvar
+	if (!cv && cvar) {
+		cv = new ConVar(name, defaultVal, FCVAR_ARCHIVE, help);
+		cvar->RegisterConCommand(cv);
+	}
+
 	if (cv) {
 		Msg("[PatchManager] ConVar '%s' ready\n", name);
 	} else {
