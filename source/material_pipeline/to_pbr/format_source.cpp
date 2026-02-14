@@ -853,6 +853,12 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
     // 3. Set metallic to 1.0 (fully metallic)
     // 4. Set roughness to low value (chrome-like)
     // =========================================================================
+    
+    // Chrome material constants
+    constexpr uint32_t CHROME_ALBEDO_SIZE = 64;  // Size of generated albedo texture (64x64)
+    constexpr float CHROME_METALLIC = 1.0f;      // Fully metallic for chrome appearance
+    constexpr float CHROME_ROUGHNESS = 0.05f;    // Very smooth surface (chrome-like)
+    
     if (props.baseTexturePath.empty() && props.hasEnvMap && !props.envMapPath.empty()) {
         if (ctx.debugOutput) {
             Msg("[Source] [Chrome] Detected envmap-only material (no basetexture)\n");
@@ -867,6 +873,8 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
                 ConvertedTexture envmapTex;
                 if (ctx.extractPixelData(envmapFileData, envmapHeader, envmapTex, false)) {
                     // Calculate average color of envmap
+                    // Use uint64_t to prevent overflow for large textures
+                    // (a 4K texture has 16M pixels; 255 * 16M > uint32_t max)
                     uint64_t totalR = 0, totalG = 0, totalB = 0;
                     uint32_t pixelCount = envmapTex.width * envmapTex.height;
                     
@@ -886,17 +894,17 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
                     }
                     
                     // Generate a solid color albedo texture tinted with envmap color
-                    // Use a small 64x64 texture to save memory/disk space
+                    // Use a small texture to save memory/disk space
                     ConvertedTexture albedoTex;
-                    albedoTex.width = 64;
-                    albedoTex.height = 64;
+                    albedoTex.width = CHROME_ALBEDO_SIZE;
+                    albedoTex.height = CHROME_ALBEDO_SIZE;
                     albedoTex.mipLevels = 1;
                     albedoTex.format = REMIXAPI_FORMAT_R8G8B8A8_UNORM;
                     albedoTex.isNormalMap = false;
-                    albedoTex.pixelData.resize(64 * 64 * 4);
+                    albedoTex.pixelData.resize(CHROME_ALBEDO_SIZE * CHROME_ALBEDO_SIZE * 4);
                     
                     // Fill with the tinted color
-                    for (uint32_t i = 0; i < 64 * 64; i++) {
+                    for (uint32_t i = 0; i < CHROME_ALBEDO_SIZE * CHROME_ALBEDO_SIZE; i++) {
                         size_t idx = i * 4;
                         albedoTex.pixelData[idx + 0] = avgR;
                         albedoTex.pixelData[idx + 1] = avgG;
@@ -905,7 +913,7 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
                     }
                     
                     // Write the albedo texture
-                    uint64_t albedoHash = ctx.generateHash(props.envMapPath + "_chrome_albedo", 64, 64);
+                    uint64_t albedoHash = ctx.generateHash(props.envMapPath + "_chrome_albedo", CHROME_ALBEDO_SIZE, CHROME_ALBEDO_SIZE);
                     std::string albedoPath = ctx.generateOutputPath(albedoHash, "_albedo");
                     
                     if (ctx.fileExists(albedoPath)) {
@@ -922,11 +930,12 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
                     }
                     
                     // Set material properties for chrome-like appearance
-                    result.metallicConstant = 1.0f;  // Fully metallic
-                    result.roughnessConstant = 0.05f;  // Very smooth (chrome-like)
+                    result.metallicConstant = CHROME_METALLIC;
+                    result.roughnessConstant = CHROME_ROUGHNESS;
                     
                     if (ctx.debugOutput) {
-                        Msg("[Source] [Chrome] Set metallic=1.0, roughness=0.05 for chrome appearance\n");
+                        Msg("[Source] [Chrome] Set metallic=%.1f, roughness=%.2f for chrome appearance\n", 
+                            CHROME_METALLIC, CHROME_ROUGHNESS);
                     }
                 }
             }
