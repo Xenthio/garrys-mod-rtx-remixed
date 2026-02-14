@@ -872,70 +872,77 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
             if (ctx.parseVTFHeader(envmapFileData, envmapHeader)) {
                 ConvertedTexture envmapTex;
                 if (ctx.extractPixelData(envmapFileData, envmapHeader, envmapTex, false)) {
-                    // Calculate average color of envmap
-                    // Use uint64_t to prevent overflow for large textures
-                    // (a 4K texture has 16M pixels; 255 * 16M > uint32_t max)
-                    uint64_t totalR = 0, totalG = 0, totalB = 0;
-                    uint32_t pixelCount = envmapTex.width * envmapTex.height;
-                    
-                    for (uint32_t i = 0; i < pixelCount; i++) {
-                        size_t idx = i * 4;
-                        totalR += envmapTex.pixelData[idx + 0];
-                        totalG += envmapTex.pixelData[idx + 1];
-                        totalB += envmapTex.pixelData[idx + 2];
-                    }
-                    
-                    uint8_t avgR = static_cast<uint8_t>(totalR / pixelCount);
-                    uint8_t avgG = static_cast<uint8_t>(totalG / pixelCount);
-                    uint8_t avgB = static_cast<uint8_t>(totalB / pixelCount);
-                    
-                    if (ctx.debugOutput) {
-                        Msg("[Source] [Chrome] Envmap average color: RGB(%d, %d, %d)\n", avgR, avgG, avgB);
-                    }
-                    
-                    // Generate a solid color albedo texture tinted with envmap color
-                    // Use a small texture to save memory/disk space
-                    ConvertedTexture albedoTex;
-                    albedoTex.width = CHROME_ALBEDO_SIZE;
-                    albedoTex.height = CHROME_ALBEDO_SIZE;
-                    albedoTex.mipLevels = 1;
-                    albedoTex.format = REMIXAPI_FORMAT_R8G8B8A8_UNORM;
-                    albedoTex.isNormalMap = false;
-                    albedoTex.pixelData.resize(CHROME_ALBEDO_SIZE * CHROME_ALBEDO_SIZE * 4);
-                    
-                    // Fill with the tinted color
-                    for (uint32_t i = 0; i < CHROME_ALBEDO_SIZE * CHROME_ALBEDO_SIZE; i++) {
-                        size_t idx = i * 4;
-                        albedoTex.pixelData[idx + 0] = avgR;
-                        albedoTex.pixelData[idx + 1] = avgG;
-                        albedoTex.pixelData[idx + 2] = avgB;
-                        albedoTex.pixelData[idx + 3] = 255;
-                    }
-                    
-                    // Write the albedo texture
-                    uint64_t albedoHash = ctx.generateHash(props.envMapPath + "_chrome_albedo", CHROME_ALBEDO_SIZE, CHROME_ALBEDO_SIZE);
-                    std::string albedoPath = ctx.generateOutputPath(albedoHash, "_albedo");
-                    
-                    if (ctx.fileExists(albedoPath)) {
-                        result.albedoPath = albedoPath;
-                        result.skippedCount++;
+                    // Check for valid texture dimensions
+                    if (envmapTex.width == 0 || envmapTex.height == 0) {
                         if (ctx.debugOutput) {
-                            Msg("[Source] [Chrome] Chrome albedo already exists (skipped): %s\n", albedoPath.c_str());
+                            Msg("[Source] [Chrome] Warning: Envmap texture has zero dimensions, skipping chrome processing\n");
                         }
-                    } else if (ctx.writeDDS(albedoTex, albedoPath)) {
-                        result.albedoPath = albedoPath;
+                    } else {
+                        // Calculate average color of envmap
+                        // Use uint64_t to prevent overflow for large textures
+                        // (a 4K texture has 16M pixels; 255 * 16M > uint32_t max)
+                        uint64_t totalR = 0, totalG = 0, totalB = 0;
+                        uint64_t pixelCount = static_cast<uint64_t>(envmapTex.width) * envmapTex.height;
+                        
+                        for (uint64_t i = 0; i < pixelCount; i++) {
+                            size_t idx = i * 4;
+                            totalR += envmapTex.pixelData[idx + 0];
+                            totalG += envmapTex.pixelData[idx + 1];
+                            totalB += envmapTex.pixelData[idx + 2];
+                        }
+                        
+                        uint8_t avgR = static_cast<uint8_t>(totalR / pixelCount);
+                        uint8_t avgG = static_cast<uint8_t>(totalG / pixelCount);
+                        uint8_t avgB = static_cast<uint8_t>(totalB / pixelCount);
+                        
                         if (ctx.debugOutput) {
-                            Msg("[Source] [Chrome] Wrote chrome albedo: %s\n", albedoPath.c_str());
+                            Msg("[Source] [Chrome] Envmap average color: RGB(%d, %d, %d)\n", avgR, avgG, avgB);
                         }
-                    }
-                    
-                    // Set material properties for chrome-like appearance
-                    result.metallicConstant = CHROME_METALLIC;
-                    result.roughnessConstant = CHROME_ROUGHNESS;
-                    
-                    if (ctx.debugOutput) {
-                        Msg("[Source] [Chrome] Set metallic=%.1f, roughness=%.2f for chrome appearance\n", 
-                            CHROME_METALLIC, CHROME_ROUGHNESS);
+                        
+                        // Generate a solid color albedo texture tinted with envmap color
+                        // Use a small texture to save memory/disk space
+                        ConvertedTexture albedoTex;
+                        albedoTex.width = CHROME_ALBEDO_SIZE;
+                        albedoTex.height = CHROME_ALBEDO_SIZE;
+                        albedoTex.mipLevels = 1;
+                        albedoTex.format = REMIXAPI_FORMAT_R8G8B8A8_UNORM;
+                        albedoTex.isNormalMap = false;
+                        albedoTex.pixelData.resize(CHROME_ALBEDO_SIZE * CHROME_ALBEDO_SIZE * 4);
+                        
+                        // Fill with the tinted color
+                        for (uint32_t i = 0; i < CHROME_ALBEDO_SIZE * CHROME_ALBEDO_SIZE; i++) {
+                            size_t idx = i * 4;
+                            albedoTex.pixelData[idx + 0] = avgR;
+                            albedoTex.pixelData[idx + 1] = avgG;
+                            albedoTex.pixelData[idx + 2] = avgB;
+                            albedoTex.pixelData[idx + 3] = 255;
+                        }
+                        
+                        // Write the albedo texture
+                        uint64_t albedoHash = ctx.generateHash(props.envMapPath + "_chrome_albedo", CHROME_ALBEDO_SIZE, CHROME_ALBEDO_SIZE);
+                        std::string albedoPath = ctx.generateOutputPath(albedoHash, "_albedo");
+                        
+                        if (ctx.fileExists(albedoPath)) {
+                            result.albedoPath = albedoPath;
+                            result.skippedCount++;
+                            if (ctx.debugOutput) {
+                                Msg("[Source] [Chrome] Chrome albedo already exists (skipped): %s\n", albedoPath.c_str());
+                            }
+                        } else if (ctx.writeDDS(albedoTex, albedoPath)) {
+                            result.albedoPath = albedoPath;
+                            if (ctx.debugOutput) {
+                                Msg("[Source] [Chrome] Wrote chrome albedo: %s\n", albedoPath.c_str());
+                            }
+                        }
+                        
+                        // Set material properties for chrome-like appearance
+                        result.metallicConstant = CHROME_METALLIC;
+                        result.roughnessConstant = CHROME_ROUGHNESS;
+                        
+                        if (ctx.debugOutput) {
+                            Msg("[Source] [Chrome] Set metallic=%.1f, roughness=%.2f for chrome appearance\n", 
+                                CHROME_METALLIC, CHROME_ROUGHNESS);
+                        }
                     }
                 }
             }
