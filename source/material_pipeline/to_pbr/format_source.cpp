@@ -885,7 +885,7 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
                         uint64_t pixelCount = static_cast<uint64_t>(envmapTex.width) * envmapTex.height;
                         
                         for (uint64_t i = 0; i < pixelCount; i++) {
-                            size_t idx = i * 4;
+                            size_t idx = static_cast<size_t>(i * 4);
                             totalR += envmapTex.pixelData[idx + 0];
                             totalG += envmapTex.pixelData[idx + 1];
                             totalB += envmapTex.pixelData[idx + 2];
@@ -907,10 +907,12 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
                         albedoTex.mipLevels = 1;
                         albedoTex.format = REMIXAPI_FORMAT_R8G8B8A8_UNORM;
                         albedoTex.isNormalMap = false;
-                        albedoTex.pixelData.resize(CHROME_ALBEDO_SIZE * CHROME_ALBEDO_SIZE * 4);
+                        
+                        const uint32_t chromePixelCount = CHROME_ALBEDO_SIZE * CHROME_ALBEDO_SIZE;
+                        albedoTex.pixelData.resize(chromePixelCount * 4);
                         
                         // Fill with the tinted color
-                        for (uint32_t i = 0; i < CHROME_ALBEDO_SIZE * CHROME_ALBEDO_SIZE; i++) {
+                        for (uint32_t i = 0; i < chromePixelCount; i++) {
                             size_t idx = i * 4;
                             albedoTex.pixelData[idx + 0] = avgR;
                             albedoTex.pixelData[idx + 1] = avgG;
