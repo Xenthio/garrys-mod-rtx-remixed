@@ -11,6 +11,7 @@
         - Estimates metallic from `$phongboost` values
         - Auto-processes materials on map load
 - Model fixes
+    - Hardware skinning
     - Fixes some props having unstable hashes in RTX Remix so they can be replaced in the Remix Toolkit
     - Allows most HL2 RTX mesh replacements to load correctly
 - Remix API Support (x64 only)
