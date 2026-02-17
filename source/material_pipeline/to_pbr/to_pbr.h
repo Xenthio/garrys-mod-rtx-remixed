@@ -495,6 +495,18 @@ private:
     // Cache of processed materials (includes failed/skipped - never reprocess)
     std::unordered_set<std::string> m_processedMaterials;
     
+    // Persistent disk cache of materials known to be PBR-ineligible (global, survives restarts)
+    // This avoids re-running ExtractMaterialPBR on hundreds of materials (e.g. spawnmenu icons)
+    // that will never qualify for PBR conversion.
+    static constexpr int INELIGIBLE_CACHE_VERSION = 1;
+    std::unordered_set<std::string> m_ineligibleCache;
+    bool m_ineligibleCacheDirty = false;
+    
+    // Load/save the persistent ineligible cache from/to disk
+    void LoadIneligibleCache();
+    void SaveIneligibleCache(bool force = false);
+    std::string GetIneligibleCachePath() const;
+    
     // Cache of uploaded textures (path -> hash)
     std::unordered_map<std::string, uint64_t> m_uploadedTextures;
     

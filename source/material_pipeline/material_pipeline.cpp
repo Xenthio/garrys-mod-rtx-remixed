@@ -198,6 +198,10 @@ bool Pipeline::InitializeInternal(IDirect3DDevice9Ex* device, remix::Interface* 
     ApplyConfig();
     
     m_initialized = true;
+    
+    // Start background worker thread for Stages 1-3 processing
+    StartWorkerThread();
+    
     Msg("[MaterialPipeline] Initialized successfully\n");
     
     return true;
@@ -211,6 +215,9 @@ void Pipeline::ShutdownInternal() {
     }
     
     Msg("[MaterialPipeline] Shutting down...\n");
+    
+    // Stop background worker thread first (processes remaining queue items)
+    StopWorkerThread();
     
     // Clear pending materials queue
     {
@@ -450,95 +457,166 @@ int Pipeline::ProcessPendingMaterials() {
         return 0;
     }
     
-    // Grab the pending materials under lock, then process outside the lock
-    std::vector<PendingMaterial> toProcess;
+    // Move pending materials from the D3D9 hook queue into the worker thread queue.
+    // This is the ONLY work done on the main thread - all processing happens
+    // on the background worker thread to avoid frame drops.
+    int queued = 0;
     {
-        std::lock_guard<std::mutex> lock(m_pendingMutex);
-        toProcess = std::move(m_pendingMaterials);
-        m_pendingMaterials.clear();
-    }
-    
-    if (toProcess.empty()) {
-        // Even if no new materials, retry pending categorizations for textures 
-        // that didn't have hashes ready on first try
-        AutoCategorisation::RetryPendingCategories();
+        std::lock_guard<std::mutex> pendingLock(m_pendingMutex);
         
-        // Also check if ToPBR background processing finished
-        // and needs USDA written
-        ToPBR::TextureProcessor::Instance().WriteUSDAIfNeeded();
-        return 0;
-    }
-    
-    int processed = 0;
-    extern IMaterialSystem* materials;
-    
-    for (const auto& pending : toProcess) {
-        // Fire callback for material detection tracking
-        if (m_onDetected) {
-            m_onDetected(pending.name, pending.hash);
-        }
-        
-        // If auto-processing is enabled, run quick stages synchronously
-        // ToPBR will be queued for background processing
-        if (m_config.autoProcessing) {
-            // Get the IMaterial for stages that need it
-            IMaterial* material = nullptr;
-            if (materials) {
-                material = materials->FindMaterial(pending.name.c_str(), TEXTURE_GROUP_OTHER, false);
-                if (material && material->IsErrorMaterial()) {
-                    material = nullptr;
+        if (!m_pendingMaterials.empty()) {
+            std::lock_guard<std::mutex> workerLock(m_workerMutex);
+            
+            for (auto& pending : m_pendingMaterials) {
+                // Dedup: skip materials already in the worker queue
+                if (m_workerQueuedNames.find(pending.name) != m_workerQueuedNames.end()) {
+                    continue;
                 }
+                
+                m_workerQueuedNames.insert(pending.name);
+                m_workerQueue.push(std::move(pending));
+                queued++;
             }
             
-            // Get texture pointer for stages that need it
-            IDirect3DTexture9* texture = D3D9TextureTracker::Instance().GetTextureForMaterial(pending.name.c_str());
-            
-            // -------------------------------------------------------------------------
-            // STAGES 1-3: ShaderFixes, HashCollision, AutoCategorisation (FAST)
-            // -------------------------------------------------------------------------
-            ProcessMaterialStages(pending.name, material, texture);
-            
-            // Note: Stage 4 (ToPBR) will be processed asynchronously below
-            processed++;
-        } else {
-            processed++;  // Count as "processed" even if we just tracked it
+            m_pendingMaterials.clear();
         }
     }
     
-    // -------------------------------------------------------------------------
-    // STAGE 4: ToPBR (ASYNC - uses background worker thread)
-    // -------------------------------------------------------------------------
-    // Queue all tracked materials for async background processing
-    // This is non-blocking and returns immediately
-    // QueueMaterialsForProcessing has fast-path early exit if nothing to process
-    if (m_config.autoProcessing) {
-        int queued = ToPBR::TextureProcessor::Instance().QueueMaterialsForProcessing();
-        if (queued > 0 && m_config.debugOutput) {
-            Msg("[MaterialPipeline] Queued %d materials for async ToPBR processing\n", queued);
+    // Wake up the worker thread if we queued new materials
+    if (queued > 0) {
+        m_workerCondition.notify_one();
+        
+        if (m_config.debugOutput) {
+            Msg("[MaterialPipeline] Queued %d materials for background processing (Stages 1-4)\n", queued);
         }
     }
     
+    // Lightweight housekeeping on main thread:
     // Retry pending categorizations for textures that didn't have hashes ready
     AutoCategorisation::RetryPendingCategories();
     
     // Write USDA if background processing has completed some materials
     ToPBR::TextureProcessor::Instance().WriteUSDAIfNeeded();
     
-    if (processed > 0 && m_config.debugOutput) {
-        Msg("[MaterialPipeline] Processed %d pending materials (quick stages), ToPBR queued async\n", processed);
+    return queued;
+}
+
+// =========================================================================
+// Background Worker Thread for Stages 1-4
+// =========================================================================
+
+void Pipeline::StartWorkerThread() {
+    if (m_workerRunning.load()) return;
+    
+    m_shutdownRequested.store(false);
+    m_workerRunning.store(true);
+    m_workerThread = std::thread(&Pipeline::WorkerThreadFunc, this);
+    
+    Msg("[MaterialPipeline] Background worker thread started\n");
+}
+
+void Pipeline::StopWorkerThread() {
+    if (!m_workerRunning.load()) return;
+    
+    m_shutdownRequested.store(true);
+    m_workerCondition.notify_all();
+    
+    if (m_workerThread.joinable()) {
+        m_workerThread.join();
     }
     
-    return processed;
+    m_workerRunning.store(false);
+    
+    // Clear the worker queue
+    {
+        std::lock_guard<std::mutex> lock(m_workerMutex);
+        while (!m_workerQueue.empty()) m_workerQueue.pop();
+        m_workerQueuedNames.clear();
+    }
+    
+    Msg("[MaterialPipeline] Background worker thread stopped\n");
+}
+
+void Pipeline::WorkerThreadFunc() {
+    Msg("[MaterialPipeline] Worker thread running\n");
+    
+    while (!m_shutdownRequested.load()) {
+        PendingMaterial pending;
+        
+        // Wait for work
+        {
+            std::unique_lock<std::mutex> lock(m_workerMutex);
+            m_workerCondition.wait(lock, [this]() {
+                return !m_workerQueue.empty() || m_shutdownRequested.load();
+            });
+            
+            if (m_shutdownRequested.load()) break;
+            if (m_workerQueue.empty()) continue;
+            
+            pending = std::move(m_workerQueue.front());
+            m_workerQueue.pop();
+        }
+        
+        // Process this material through Stages 1-3 on the worker thread
+        ProcessMaterialOnWorker(pending);
+    }
+    
+    Msg("[MaterialPipeline] Worker thread exiting\n");
+}
+
+void Pipeline::ProcessMaterialOnWorker(const PendingMaterial& pending) {
+    extern IMaterialSystem* materials;
+    
+    if (!m_config.autoProcessing) return;
+    
+    // Get the IMaterial for stages that need it
+    // FindMaterial is thread-safe for reads in Source Engine
+    IMaterial* material = nullptr;
+    if (materials) {
+        material = materials->FindMaterial(pending.name.c_str(), TEXTURE_GROUP_OTHER, false);
+        if (material && material->IsErrorMaterial()) {
+            material = nullptr;
+        }
+    }
+    
+    // Get texture pointer for stages that need it
+    IDirect3DTexture9* texture = D3D9TextureTracker::Instance().GetTextureForMaterial(pending.name.c_str());
+    
+    // -------------------------------------------------------------------------
+    // STAGES 1-3: ShaderFixes, HashCollision, AutoCategorisation
+    // -------------------------------------------------------------------------
+    ProcessMaterialStages(pending.name, material, texture);
+    
+    // -------------------------------------------------------------------------
+    // STAGE 4: ToPBR (queue for ToPBR's own background worker)
+    // -------------------------------------------------------------------------
+    int queued = ToPBR::TextureProcessor::Instance().QueueMaterialsForProcessing();
+    if (queued > 0 && m_config.debugOutput) {
+        Msg("[MaterialPipeline] Worker: queued %d materials for async ToPBR\n", queued);
+    }
 }
 
 bool Pipeline::IsProcessing() const {
     if (!m_initialized) return false;
+    
+    // Check both the pipeline worker queue and ToPBR's background processing
+    {
+        std::lock_guard<std::mutex> lock(m_workerMutex);
+        if (!m_workerQueue.empty()) return true;
+    }
     return ToPBR::TextureProcessor::Instance().IsProcessingInBackground();
 }
 
 size_t Pipeline::GetQueueSize() const {
     if (!m_initialized) return 0;
-    return ToPBR::TextureProcessor::Instance().GetQueuedMaterialCount();
+    
+    size_t total = 0;
+    {
+        std::lock_guard<std::mutex> lock(m_workerMutex);
+        total += m_workerQueue.size();
+    }
+    total += ToPBR::TextureProcessor::Instance().GetQueuedMaterialCount();
+    return total;
 }
 
 // =========================================================================
@@ -568,6 +646,13 @@ std::vector<std::string> Pipeline::GetTrackedMaterials() const {
 
 void Pipeline::ClearCache() {
     if (!m_initialized) return;
+    
+    // Clear worker queue
+    {
+        std::lock_guard<std::mutex> lock(m_workerMutex);
+        while (!m_workerQueue.empty()) m_workerQueue.pop();
+        m_workerQueuedNames.clear();
+    }
     
     D3D9TextureTracker::Instance().ClearCache();
     ToPBR::TextureProcessor::Instance().ClearCache();

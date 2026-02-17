@@ -15,6 +15,7 @@
 #include "../../d3d9_texture_tracker.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <cmath>
 #include <fstream>
@@ -195,6 +196,15 @@ bool TextureProcessor::Initialize(remix::Interface* remixInterface) {
         }
     }
     
+    // Load persistent ineligible cache (materials known to not qualify for PBR)
+    LoadIneligibleCache();
+    
+    // Pre-populate m_processedMaterials from the ineligible cache so the in-memory
+    // fast path (m_processedMaterials.find()) works immediately without re-evaluation
+    if (!m_ineligibleCache.empty()) {
+        m_processedMaterials.insert(m_ineligibleCache.begin(), m_ineligibleCache.end());
+    }
+    
     m_initialized = true;
     Msg("[MaterialPipeline::ToPBR] Initialized successfully\n");
     Msg("[MaterialPipeline::ToPBR] Output directory: %s\n", m_outputDirectory.c_str());
@@ -203,6 +213,9 @@ bool TextureProcessor::Initialize(remix::Interface* remixInterface) {
 
 void TextureProcessor::Shutdown() {
     if (!m_initialized) return;
+    
+    // Save persistent ineligible cache before shutdown (force bypass throttle)
+    SaveIneligibleCache(true);
     
     // Stop background worker thread first
     StopWorkerThread();
@@ -238,6 +251,95 @@ void TextureProcessor::Shutdown() {
     m_initialized = false;
     
     Msg("[MaterialPipeline::ToPBR] Shutdown complete\n");
+}
+
+// =========================================================================
+// Persistent Ineligible Cache - avoids re-running ExtractMaterialPBR on
+// materials that will never qualify for PBR (e.g. spawnmenu RT icons).
+// =========================================================================
+
+std::string TextureProcessor::GetIneligibleCachePath() const {
+    if (m_outputDirectory.empty()) return "";
+    std::string modDir = USDA::GetModDirectory(m_outputDirectory);
+    return modDir + "/pbr_ineligible_cache.txt";
+}
+
+void TextureProcessor::LoadIneligibleCache() {
+    std::string cachePath = GetIneligibleCachePath();
+    if (cachePath.empty()) return;
+    
+    std::ifstream file(cachePath);
+    if (!file.is_open()) return;
+    
+    std::string line;
+    
+    // First line must be version header
+    if (!std::getline(file, line)) return;
+    
+    // Parse "CACHE_VERSION <N>"
+    int version = 0;
+    if (sscanf(line.c_str(), "CACHE_VERSION %d", &version) != 1 || 
+        version != INELIGIBLE_CACHE_VERSION) {
+        // Version mismatch - discard stale cache
+        file.close();
+        Msg("[MaterialPipeline::ToPBR] Ineligible cache version mismatch (got %d, expected %d) - rebuilding\n",
+            version, INELIGIBLE_CACHE_VERSION);
+        return;
+    }
+    
+    // Read material names
+    while (std::getline(file, line)) {
+        if (!line.empty()) {
+            m_ineligibleCache.insert(line);
+        }
+    }
+    file.close();
+    
+    if (!m_ineligibleCache.empty()) {
+        Msg("[MaterialPipeline::ToPBR] Loaded %zu cached PBR-ineligible materials\n", 
+            m_ineligibleCache.size());
+    }
+}
+
+void TextureProcessor::SaveIneligibleCache(bool force) {
+    if (!m_ineligibleCacheDirty) return;
+    
+    // Throttle disk writes: at most once every 5 seconds during rapid discovery
+    // Bypass throttle when force=true (e.g. during Shutdown)
+    if (!force) {
+        static auto lastSaveTime = std::chrono::steady_clock::now();
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - lastSaveTime).count();
+        if (elapsed < 5) return;
+        lastSaveTime = now;
+    }
+    
+    std::string cachePath = GetIneligibleCachePath();
+    if (cachePath.empty()) return;
+    
+    // Ensure directory exists
+    std::string modDir = USDA::GetModDirectory(m_outputDirectory);
+    _mkdir(modDir.c_str());
+    
+    std::ofstream file(cachePath, std::ios::trunc);
+    if (!file.is_open()) {
+        Warning("[MaterialPipeline::ToPBR] Failed to write ineligible cache to %s\n", cachePath.c_str());
+        return;
+    }
+    
+    file << "CACHE_VERSION " << INELIGIBLE_CACHE_VERSION << "\n";
+    
+    for (const auto& name : m_ineligibleCache) {
+        file << name << "\n";
+    }
+    file.close();
+    
+    m_ineligibleCacheDirty = false;
+    
+    if (m_debugOutput) {
+        Msg("[MaterialPipeline::ToPBR] Saved %zu PBR-ineligible materials to cache\n", 
+            m_ineligibleCache.size());
+    }
 }
 
 void TextureProcessor::SetOutputDirectory(const std::string& path) {
@@ -3944,7 +4046,15 @@ void TextureProcessor::ClearCache() {
     m_needsUSDAUpdate = false;
     m_stats = {};
     
-    Msg("[MaterialPipeline::ToPBR] Cache cleared\n");
+    // Clear persistent ineligible cache and delete the file
+    m_ineligibleCache.clear();
+    m_ineligibleCacheDirty = false;
+    std::string cachePath = GetIneligibleCachePath();
+    if (!cachePath.empty()) {
+        DeleteFileA(cachePath.c_str());
+    }
+    
+    Msg("[MaterialPipeline::ToPBR] Cache cleared (including persistent ineligible cache)\n");
 }
 
 bool TextureProcessor::ProcessSingleMaterial(const std::string& materialName) {
@@ -3967,6 +4077,9 @@ bool TextureProcessor::ProcessSingleMaterial(const std::string& materialName) {
     // Extract PBR properties
     MaterialPBRProperties props;
     if (!ExtractMaterialPBR(materialName, props)) {
+        m_processedMaterials.insert(materialName);
+        m_ineligibleCache.insert(materialName);
+        m_ineligibleCacheDirty = true;
         return false;
     }
     
@@ -3978,6 +4091,8 @@ bool TextureProcessor::ProcessSingleMaterial(const std::string& materialName) {
         !props.hasBaseMapAlphaPhongMask && !props.hasBaseAlphaEnvMapMask &&
         !props.hasEnvMap && !props.hasEnvMapTint && !props.isGlass) {
         m_processedMaterials.insert(materialName);
+        m_ineligibleCache.insert(materialName);
+        m_ineligibleCacheDirty = true;
         return false;
     }
     
@@ -4051,6 +4166,9 @@ void TextureProcessor::OnNewMaterialDetected(const std::string& materialName, ui
 
 void TextureProcessor::WriteUSDAIfNeeded() {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    
+    // Flush ineligible cache to disk if dirty (piggyback on periodic Think hook call)
+    SaveIneligibleCache();
     
     if (!m_needsUSDAUpdate || m_processedMaterialInfo.empty()) {
         return;
@@ -4243,6 +4361,8 @@ bool TextureProcessor::ProcessMaterialOnWorker(const std::string& materialName) 
     if (!ExtractMaterialPBR(materialName, props)) {
         std::lock_guard<std::recursive_mutex> lock(m_mutex);
         m_processedMaterials.insert(materialName);
+        m_ineligibleCache.insert(materialName);
+        m_ineligibleCacheDirty = true;
         return false;
     }
     
@@ -4253,6 +4373,8 @@ bool TextureProcessor::ProcessMaterialOnWorker(const std::string& materialName) 
         !props.hasEnvMap && !props.hasEnvMapTint && !props.isGlass) {
         std::lock_guard<std::recursive_mutex> lock(m_mutex);
         m_processedMaterials.insert(materialName);
+        m_ineligibleCache.insert(materialName);
+        m_ineligibleCacheDirty = true;
         return false;
     }
     

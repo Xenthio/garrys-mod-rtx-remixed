@@ -47,6 +47,9 @@
 
 #include <string>
 #include <vector>
+#include <queue>
+#include <thread>
+#include <condition_variable>
 #include <unordered_map>
 #include <unordered_set>
 #include <mutex>
@@ -357,6 +360,30 @@ private:
     };
     std::vector<PendingMaterial> m_pendingMaterials;
     mutable std::mutex m_pendingMutex;
+    
+    // =========================================================================
+    // Background Worker Thread for Stages 1-3
+    // =========================================================================
+    // Processes ShaderFixes, HashCollisionFixer, AutoCategorisation off the
+    // main thread to avoid frame drops when many materials are discovered
+    // (e.g. spawnmenu opening with hundreds of icons).
+    
+    std::thread m_workerThread;
+    std::atomic<bool> m_workerRunning{false};
+    std::atomic<bool> m_shutdownRequested{false};
+    
+    // Worker queue (materials waiting for Stages 1-3 processing)
+    std::queue<PendingMaterial> m_workerQueue;
+    std::unordered_set<std::string> m_workerQueuedNames;  // Dedup
+    mutable std::mutex m_workerMutex;
+    std::condition_variable m_workerCondition;
+    
+    void StartWorkerThread();
+    void StopWorkerThread();
+    void WorkerThreadFunc();
+    
+    // Process a single material through Stages 1-3 on the worker thread
+    void ProcessMaterialOnWorker(const PendingMaterial& pending);
 };
 
 // =========================================================================
