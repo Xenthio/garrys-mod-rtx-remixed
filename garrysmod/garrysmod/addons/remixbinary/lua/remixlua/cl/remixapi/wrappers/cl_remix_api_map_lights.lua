@@ -48,7 +48,7 @@ local projtex_invert_pitch = CreateClientConVar("rtx_api_map_lights_projtex_inve
 -- This replaces the old ad-hoc envBaseline=0.2 and sqrt() compression with a single linear constant
 -- matching how VRAD's LightForString() actually processes light_environment brightness.
 -- Formula: radiance = pow(C/255, 2.2) * I * hdrScale * vrad_scale * env_brightness_mult
-local env_vrad_scale = CreateClientConVar("rtx_api_map_lights_env_vrad_scale", "0.001", true, false, "Source-to-Remix conversion constant for env light intensity (VRAD-accurate)")
+local env_vrad_scale = CreateClientConVar("rtx_api_map_lights_env_vrad_scale", "0.003", true, false, "Source-to-Remix conversion constant for env light intensity")
 
 -- Ambient sky light controls (from light_environment _ambient/_ambientHDR)
 local env_ambient_to_sky = CreateClientConVar("rtx_api_map_lights_env_ambient_to_sky", "1", true, false, "Apply light_environment ambient values to Remix sky brightness")
