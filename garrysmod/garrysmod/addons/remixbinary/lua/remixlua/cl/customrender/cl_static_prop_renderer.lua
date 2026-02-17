@@ -1,6 +1,5 @@
 if not CLIENT then return end
 local RenderCore = include("remixlua/cl/customrender/render_core.lua") or RemixRenderCore
--- Custom Static Prop Renderer -- disabled due to engine culling patches.
 -- Re-Renders all static props to bypass engine culling 
 -- Author: CR
 
@@ -353,15 +352,232 @@ local function GetCachedMaterial(matName)
     return (RenderCore and RenderCore.GetMaterial) and RenderCore.GetMaterial(matName) or Material(matName or "debug/debugwhite")
 end
 
+-- Cache for skin material remapping: [modelPath] = { [skinIndex] = { [defaultMat] = skinnedMat } }
+local skinMaterialCache = {}
+
+-- Parse the MDL file's skin table and texture names to build a material
+-- remap for non-default skins. Entity:GetMaterials() does NOT change
+-- with skin, so we must read the binary MDL data directly.
+--
+-- MDL header layout (relevant fields, Source 2007 / GMod engine):
+--   0xCC: numtextures (int)
+--   0xD0: textureindex (int)       -- offset to mstudiotexture_t array
+--   0xD4: numcdtextures (int)
+--   0xD8: cdtextureindex (int)     -- offset to texture dir path offsets
+--   0xDC: numskinref (int)         -- material slots per skin
+--   0xE0: numskinfamilies (int)    -- number of skin families
+--   0xE4: skinindex (int)          -- offset to skin lookup table
+--
+-- Each mstudiotexture_t is 64 bytes; first int is name_offset relative to entry start.
+-- Skin table is unsigned short[numskinfamilies][numskinref].
+
+-- Read an unsigned 16-bit value from a File handle (little-endian)
+local function FileReadUShort(f)
+    local lo = f:ReadByte()
+    local hi = f:ReadByte()
+    if not lo or not hi then return nil end
+    return hi * 256 + lo
+end
+
+-- Cache parsed MDL data per model path to avoid re-reading the file for different skins
+local mdlSkinDataCache = {}
+
+local function ParseMDLSkinTable(modelPath)
+    if mdlSkinDataCache[modelPath] ~= nil then
+        local cached = mdlSkinDataCache[modelPath]
+        return cached or nil -- false -> nil, table -> table
+    end
+    
+    local f = file.Open(modelPath, "rb", "GAME")
+    if not f then
+        mdlSkinDataCache[modelPath] = false
+        return nil
+    end
+    
+    local ok, result = pcall(function()
+        -- Read texture info (0xCC-0xD3)
+        f:Seek(0xCC)
+        local numTextures = f:ReadLong()
+        local textureIndex = f:ReadLong()
+        
+        -- Read texture directory paths count and offset (0xD4-0xDB)
+        local numCdTextures = f:ReadLong()
+        local cdTextureIndex = f:ReadLong()
+        
+        -- Read skin table header (0xDC-0xE7)
+        local numSkinRef = f:ReadLong()
+        local numSkinFamilies = f:ReadLong()
+        local skinRefIndex = f:ReadLong()
+        
+        if numSkinFamilies <= 1 or numSkinRef == 0 then
+            return nil -- Only one skin (default), no remapping needed
+        end
+        
+        -- Sanity checks to avoid reading garbage
+        if numTextures <= 0 or numTextures > 1024 then return nil end
+        if numSkinRef > 1024 or numSkinFamilies > 256 then return nil end
+        
+        -- Read texture directory paths
+        local cdTexturePaths = {}
+        for i = 0, numCdTextures - 1 do
+            f:Seek(cdTextureIndex + i * 4)
+            local pathOffset = f:ReadLong()
+            if not pathOffset or pathOffset <= 0 then continue end
+            f:Seek(pathOffset)
+            
+            local path = ""
+            for _ = 1, 256 do
+                local byte = f:ReadByte()
+                if not byte or byte == 0 then break end
+                path = path .. string.char(byte)
+            end
+            path = string.lower(string.gsub(path, "\\", "/"))
+            if path ~= "" and string.sub(path, -1) ~= "/" then
+                path = path .. "/"
+            end
+            cdTexturePaths[i] = path
+        end
+        
+        -- Read texture names
+        local textureNames = {}
+        for i = 0, numTextures - 1 do
+            local entryOffset = textureIndex + i * 64
+            f:Seek(entryOffset)
+            local nameOffset = f:ReadLong()
+            if not nameOffset then continue end
+            
+            f:Seek(entryOffset + nameOffset)
+            local name = ""
+            for _ = 1, 256 do
+                local byte = f:ReadByte()
+                if not byte or byte == 0 then break end
+                name = name .. string.char(byte)
+            end
+            textureNames[i] = string.lower(string.gsub(name, "\\", "/"))
+        end
+        
+        -- Read the full skin table: unsigned short[numSkinFamilies][numSkinRef]
+        f:Seek(skinRefIndex)
+        local skinTable = {}
+        for family = 0, numSkinFamilies - 1 do
+            skinTable[family] = {}
+            for ref = 0, numSkinRef - 1 do
+                local val = FileReadUShort(f)
+                if not val then return nil end
+                skinTable[family][ref] = val
+            end
+        end
+        
+        return {
+            textureNames = textureNames,
+            cdTexturePaths = cdTexturePaths,
+            skinTable = skinTable,
+            numSkinFamilies = numSkinFamilies,
+            numSkinRef = numSkinRef,
+        }
+    end)
+    
+    f:Close()
+    
+    if not ok then
+        DebugPrint("Failed to parse MDL skin table for:", modelPath, result)
+        mdlSkinDataCache[modelPath] = false
+        return nil
+    end
+    
+    mdlSkinDataCache[modelPath] = result or false
+    return result
+end
+
+local function GetSkinMaterialRemap(modelPath, skin)
+    if not skin or skin == 0 then return nil end
+    
+    -- Check cache first
+    if skinMaterialCache[modelPath] and skinMaterialCache[modelPath][skin] then
+        return skinMaterialCache[modelPath][skin]
+    end
+    
+    -- Parse the MDL skin table
+    local mdlData = ParseMDLSkinTable(modelPath)
+    if not mdlData then return nil end
+    
+    if skin >= mdlData.numSkinFamilies then
+        DebugPrint("Skin index", skin, "out of range for", modelPath, "(max:", mdlData.numSkinFamilies - 1, ")")
+        return nil
+    end
+    
+    -- Build remap: for each skin ref slot where the texture index differs,
+    -- record the default texture name -> target texture name mapping.
+    -- We match by suffix since util.GetModelMeshes returns full paths
+    -- (cdtexture dir + texture name) and we only know the texture name part.
+    local remap = {}
+    local hasChanges = false
+    local defaultFamily = mdlData.skinTable[0]
+    local targetFamily = mdlData.skinTable[skin]
+    
+    for ref = 0, mdlData.numSkinRef - 1 do
+        local defaultIdx = defaultFamily[ref]
+        local targetIdx = targetFamily[ref]
+        
+        if defaultIdx ~= targetIdx then
+            local defaultTexName = mdlData.textureNames[defaultIdx]
+            local targetTexName = mdlData.textureNames[targetIdx]
+            
+            if defaultTexName and targetTexName then
+                -- Store as texture name -> texture name (both lowercase)
+                -- Will be matched by suffix against the full material path
+                remap[defaultTexName] = targetTexName
+                hasChanges = true
+            end
+        end
+    end
+    
+    if not hasChanges then return nil end
+    
+    -- Cache the result
+    skinMaterialCache[modelPath] = skinMaterialCache[modelPath] or {}
+    skinMaterialCache[modelPath][skin] = remap
+    
+    DebugPrint("Built skin remap for", modelPath, "skin", skin, "(", table.Count(remap), "remapped materials)")
+    return remap
+end
+
+-- Apply skin remap to a material path from util.GetModelMeshes.
+-- The remap table maps short texture names (e.g. "vendingmachine01")
+-- to replacement names. The full path is like "models/props/vendingmachine01",
+-- so we match by suffix and replace the texture name portion.
+local function ApplySkinRemap(materialPath, skinRemap)
+    if not skinRemap then return materialPath end
+    local lowerPath = string.lower(materialPath)
+    
+    for defaultTex, targetTex in pairs(skinRemap) do
+        -- Check if the material path ends with the default texture name
+        -- (possibly preceded by a slash)
+        local suffix = "/" .. defaultTex
+        if string.sub(lowerPath, -#suffix) == suffix then
+            -- Replace the texture name portion, preserving the directory prefix
+            local prefix = string.sub(materialPath, 1, #materialPath - #defaultTex)
+            return prefix .. targetTex
+        end
+        -- Also check exact match (no directory prefix)
+        if lowerPath == defaultTex then
+            return targetTex
+        end
+    end
+    
+    return materialPath
+end
+
 -- Get mesh data directly using GetModelMeshes
-local function GetModelMeshes(modelPath, skin)
+local function GetModelMeshes(modelPath)
     -- Load the model if not already loaded
     if not util.IsModelLoaded(modelPath) then
         util.PrecacheModel(modelPath)
     end
     
-    -- Try to get mesh data directly with skin support
-    return util.GetModelMeshes(modelPath, 0, 0, skin or 0)
+    -- util.GetModelMeshes always returns skin 0 materials;
+    -- skin remapping is handled separately via GetSkinMaterialRemap
+    return util.GetModelMeshes(modelPath, 0, 0)
 end
 
 local function IsMaterialAllowedName(matName)
@@ -411,6 +627,10 @@ local function ProcessStaticProp(propData)
     
     -- Store this information in the prop data
     prop.isSkybox = isSkyboxProp
+    
+    -- Compute cache key early so it can be used for cluster lookups below
+    local cacheKey = modelPath .. "_skin" .. prop.skin
+    
     -- Cache BSP clusters for PVS checks (multi-cluster for better precision)
     -- Use AABB to find all clusters this prop touches
     if NikNaks and NikNaks.CurrentMap and meshCache[cacheKey] and not meshCache[cacheKey].error then
@@ -472,10 +692,9 @@ local function ProcessStaticProp(propData)
     end
     
     -- Check if we already cached this model's mesh
-    local cacheKey = modelPath .. "_skin" .. prop.skin
     if not meshCache[cacheKey] then
-        -- Get the mesh data with skin support
-        local meshData = GetModelMeshes(modelPath, prop.skin)
+        -- Get the mesh data (always returns skin 0 materials)
+        local meshData = GetModelMeshes(modelPath)
         
         if not meshData or #meshData == 0 then
             DebugPrint("Failed to get mesh data for:", modelPath)
@@ -493,10 +712,19 @@ local function ProcessStaticProp(propData)
         local maxs = Vector(-math.huge, -math.huge, -math.huge)
         local totalVertexCount = 0
         
+        -- Get skin material remap table (nil if skin 0 or no changes)
+        local skinRemap = GetSkinMaterialRemap(modelPath, prop.skin)
+        
         -- Process each mesh group
         for _, group in ipairs(meshData) do
             if group.triangles and #group.triangles > 0 then
                 local material = group.material or "models/debug/debugwhite"
+                
+                -- Apply skin material remapping if this prop uses a non-default skin
+                if skinRemap then
+                    material = ApplySkinRemap(material, skinRemap)
+                end
+                
                 if material and not IsMaterialAllowedName(material) then
                     continue
                 end
@@ -754,6 +982,8 @@ RenderCore.Register("ShutDown", "CustomStaticRender_Cleanup", function()
     table.Empty(skyboxProps)
     table.Empty(worldProps)
     table.Empty(meshCache)
+    table.Empty(skinMaterialCache)
+    table.Empty(mdlSkinDataCache)
     table.Empty(combinedMeshes)
     combinedMeshesBuilt = false
     
@@ -956,6 +1186,8 @@ concommand.Add("rtx_spr_reload", function()
     table.Empty(skyboxProps)
     table.Empty(worldProps)
     table.Empty(meshCache)
+    table.Empty(skinMaterialCache)
+    table.Empty(mdlSkinDataCache)
     
     timer.Simple(0.1, CacheMapStaticProps)
 end)
@@ -996,6 +1228,8 @@ RenderCore.RegisterRebuildSink("StaticPropsRebuild", function(token, reason)
     table.Empty(skyboxProps)
     table.Empty(worldProps)
     table.Empty(meshCache)
+    table.Empty(skinMaterialCache)
+    table.Empty(mdlSkinDataCache)
     timer.Simple(0.1, CacheMapStaticProps)
 end)
 
