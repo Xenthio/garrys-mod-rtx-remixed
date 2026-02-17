@@ -430,10 +430,12 @@ LUA_FUNCTION(RemixMaterial_TrackMaterial) {
     if (materials) {
         IMaterial* pMaterial = materials->FindMaterial(materialName, TEXTURE_GROUP_MODEL);
         if (pMaterial && !pMaterial->IsErrorMaterial()) {
-            Msg("[RemixMaterial] TrackMaterial: Found material, ensuring it's loaded...\n");
+            // Set the current material name DIRECTLY on the tracker before binding.
+            // We cannot rely on Hook_Bind firing because the IMatRenderContext vtable
+            // hook may be on a stale instance (Source Engine can return different
+            // render context objects from GetRenderContext()).
+            D3D9TextureTracker::Instance().SetCurrentMaterial(pMaterial);
             
-            // Force bind the material to trigger our Bind hook
-            // This will update the D3D9TextureTracker with the correct material name
             IMatRenderContext* pContext = materials->GetRenderContext();
             if (pContext) {
                 pContext->Bind(pMaterial);

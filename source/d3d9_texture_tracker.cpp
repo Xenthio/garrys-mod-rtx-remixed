@@ -187,6 +187,49 @@ void D3D9TextureTracker::Shutdown() {
     Msg("[D3D9TextureTracker] Shutdown complete\n");
 }
 
+void D3D9TextureTracker::EnsureBindHook() {
+    // This is called from Hook_SetTexture which runs on the RENDER THREAD.
+    // The initial hook in Initialize() may have hooked the queued context (main thread),
+    // but we need to hook the immediate context (render thread) for the hook to fire
+    // during actual rendering.
+    if (!materials) return;
+    
+    IMatRenderContext* currentContext = materials->GetRenderContext();
+    if (!currentContext) return;
+    
+    if (currentContext != m_pRenderContext) {
+        // Different context than what we hooked! This likely means Initialize() hooked
+        // the queued context but rendering uses the immediate context.
+        IMatRenderContext* oldContext = m_pRenderContext;
+        
+        // Restore the old hook if we had one
+        if (m_pRenderContext && m_pOriginalBind) {
+            VTableHook::HookVTableFunction(m_pRenderContext, 7, m_pOriginalBind);
+            m_pOriginalBind = nullptr;
+        }
+        
+        m_pRenderContext = currentContext;
+        Bind_t newOriginal = reinterpret_cast<Bind_t>(
+            VTableHook::HookVTableFunction(m_pRenderContext, 7, &Hook_Bind)
+        );
+        
+        if (newOriginal) {
+            // Only update m_pOriginalBind if we got a valid pointer AND it's not our own hook
+            if (newOriginal != &Hook_Bind) {
+                m_pOriginalBind = newOriginal;
+                Msg("[D3D9TextureTracker] Re-hooked IMatRenderContext::Bind on new context %p (was %p)\n", 
+                    currentContext, oldContext);
+            } else {
+                // Already hooked (same vtable shared between instances)
+                // Restore since we don't need a double-hook
+                VTableHook::HookVTableFunction(m_pRenderContext, 7, newOriginal);
+            }
+        } else {
+            Warning("[D3D9TextureTracker] Failed to re-hook Bind on new context!\n");
+        }
+    }
+}
+
 void D3D9TextureTracker::SetCurrentMaterial(IMaterial* pMaterial) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_currentMaterial = pMaterial;
@@ -338,6 +381,25 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
 {
     D3D9TextureTracker& tracker = Instance();
 
+    // Always query the currently bound material via GetCurrentMaterial() for Stage 0.
+    // This is more reliable than Hook_Bind which depends on a fragile vtable hook that
+    // may be applied to a stale IMatRenderContext instance (queued vs immediate context).
+    // GetCurrentMaterial() is called BEFORE acquiring our mutex to avoid potential deadlocks
+    // with the material system's internal locks.
+    if (Stage == 0 && pTexture && materials) {
+        IMatRenderContext* ctx = materials->GetRenderContext();
+        if (ctx) {
+            IMaterial* pCurMat = ctx->GetCurrentMaterial();
+            if (pCurMat) {
+                const char* name = pCurMat->GetName();
+                if (name && name[0]) {
+                    // SetCurrentMaterial handles its own locking
+                    tracker.SetCurrentMaterial(pCurMat);
+                }
+            }
+        }
+    }
+
     {
         std::lock_guard<std::mutex> lock(tracker.m_mutex);
 
@@ -367,9 +429,7 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
             }
         }
 
-        // For now, let's just track ALL textures at stage 0 with a generic key
-        // We'll use the texture pointer itself as a way to identify it
-        // ALSO track Stage 1 for displacement materials (they use multi-stage blending)
+        // Track textures at stage 0 and stage 1 (displacement materials use multi-stage blending)
         if ((Stage == 0 || Stage == 1) && pTexture) {
             // Check if this is a 2D texture (not cube/volume)
             D3DRESOURCETYPE resType = pTexture->GetType();
@@ -449,13 +509,20 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
         }
     }
 
+    // Periodically check if the render context changed and re-hook Bind if needed.
+    // This fixes the case where the initial vtable hook was applied to a different
+    // IMatRenderContext instance than the one used during actual rendering.
+    static int setTextureCallCount = 0;
+    setTextureCallCount++;
+    if (setTextureCallCount % 500 == 1) {
+        tracker.EnsureBindHook();
+    }
+
     // Periodically retry pending categorizations
     // We do this here because SetTexture is called frequently during rendering
     // This ensures categories are applied when texture hashes become available
     // NOTE: Reduced from 500 to 100 calls for more aggressive retry, especially
     // for particle effects that may have many texture variants with delayed hashing
-    static int setTextureCallCount = 0;
-    setTextureCallCount++;
     if (setTextureCallCount % 100 == 0) {
         // Retry AutoCategorisation pending queue (from pipeline processing)
         MaterialPipeline::AutoCategorisation::RetryPendingCategories();
@@ -1029,6 +1096,10 @@ void D3D9TextureTracker::SetWorldTextureNames(const std::vector<std::string>& te
     } catch (const std::exception& e) {
         Warning("[D3D9TextureTracker] SetWorldTextureNames: Exception: %s\n", e.what());
     }
+    
+    // Forward to AutoCategorisation so the pipeline's DetectCategory can identify
+    // world textures during normal material processing (IsWorldTexture check)
+    MaterialPipeline::AutoCategorisation::SetWorldTextureNames(textureNames);
 }
 
 // Clear world texture list
@@ -1036,6 +1107,9 @@ void D3D9TextureTracker::ClearWorldTextureNames() {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_worldTextureNames.clear();
     Msg("[D3D9TextureTracker] Cleared world texture list\n");
+    
+    // Keep AutoCategorisation in sync
+    MaterialPipeline::AutoCategorisation::ClearWorldTextureNames();
 }
 
 // Enable or disable automatic particle categorization

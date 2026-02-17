@@ -146,6 +146,9 @@ private:
         IMaterial* pMaterial,
         void* proxyData);
 
+    // Re-hook Bind if the render context instance has changed
+    void EnsureBindHook();
+
     // Original function pointer
     typedef HRESULT (STDMETHODCALLTYPE *SetTexture_t)(
         IDirect3DDevice9* pDevice,

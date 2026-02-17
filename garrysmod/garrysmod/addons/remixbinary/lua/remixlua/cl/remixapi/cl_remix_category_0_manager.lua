@@ -1961,8 +1961,11 @@ end
 -- Auto-initialize on player spawn (client-side)
 -- NEW APPROACH: Parse BSP once, send world texture list to C++ for real-time categorization
 -- C++ will automatically categorize textures as they render (single-pass, no delays!)
+local autoInitRan = false
 local function AutoInitFunction()
     -- Only run once per map load
+    if autoInitRan then return end
+    autoInitRan = true
     hook.Remove("HUDPaint", "RemixCategoryManager_AutoInit")
     
     -- Check if auto-categorization is enabled
@@ -1977,105 +1980,36 @@ local function AutoInitFunction()
     
     MsgC(Color(200, 200, 200), string.format("[RemixCategoryManager] Will parse BSP and send world textures to C++ in %.1f seconds...\n", delay))
     
-    -- Wait for NikNaks to be ready
+    -- Wait for NikNaks and textures to be ready, then run full categorization
     timer.Simple(delay, function()
-        -- Check master toggle first
         if not GetConVar("rtx_auto_categorize"):GetBool() then
-            MsgC(Color(255, 200, 100), "[RemixCategoryManager] Auto-categorization disabled (remix_auto_categorize = 0), skipping initialization\n")
+            MsgC(Color(255, 200, 100), "[RemixCategoryManager] Auto-categorization disabled, skipping\n")
             return
         end
         
-        MsgC(Color(100, 200, 255), "[RemixCategoryManager] Timer fired! Checking NikNaks...\n")
+        MsgC(Color(100, 200, 255), "[RemixCategoryManager] Running auto-categorization (SmartMarkWorldTextures)...\n")
         
-        if not NikNaks or not NikNaks.CurrentMap then
-            MsgC(Color(255, 100, 100), "[RemixCategoryManager] Error: NikNaks not available!\n")
-            MsgC(Color(255, 100, 100), string.format("  NikNaks = %s, NikNaks.CurrentMap = %s\n", tostring(NikNaks), tostring(NikNaks and NikNaks.CurrentMap)))
-            return
-        end
+        -- Clear processed cache so everything gets categorized fresh
+        processedTextures = {}
         
-        MsgC(Color(100, 200, 255), "[RemixCategoryManager] NikNaks available, getting BSP...\n")
-        
-        local bsp = NikNaks.CurrentMap
-        if not bsp or not bsp.GetTextures then
-            MsgC(Color(255, 100, 100), "[RemixCategoryManager] Error: BSP not loaded!\n")
-            MsgC(Color(255, 100, 100), string.format("  bsp = %s, bsp.GetTextures = %s\n", tostring(bsp), tostring(bsp and bsp.GetTextures)))
-            return
-        end
-        
-        MsgC(Color(100, 200, 255), "[RemixCategoryManager] BSP available, parsing textures...\n")
-        
-        -- Get all world textures from BSP
-        local textures = {}
-        local ok, bspTextures = pcall(function() return bsp:GetTextures() end)
-        
-        if ok and bspTextures then
-            textures = bspTextures
-        else
-            MsgC(Color(255, 200, 100), "[RemixCategoryManager] GetTextures() failed, trying faces...\n")
-            local faces = bsp:GetFaces()
-            if faces then
-                local textureSet = {}
-                for _, face in pairs(faces) do
-                    if face and face.GetMaterial then
-                        local ok2, material = pcall(function() return face:GetMaterial() end)
-                        if ok2 and material and material.GetName then
-                            local matName = material:GetName()
-                            if matName and matName ~= "" then
-                                textureSet[matName] = true
-                            end
-                        end
-                    end
-                end
-                for texName, _ in pairs(textureSet) do
-                    table.insert(textures, texName)
-                end
-            end
-        end
-        
-        -- Get master toggle state (already set by InitPostEntity hook)
-        local masterEnabled = GetConVar("rtx_auto_categorize"):GetBool()
-        
-        -- Send to C++ module (if master toggle and world geometry categorization are enabled)
-        if masterEnabled and GetConVar("rtx_auto_categorize_world"):GetBool() and RemixMaterial and RemixMaterial.SetWorldTextureList and #textures > 0 then
-            RemixMaterial.SetWorldTextureList(textures)
-            if GetConVar("rtx_debug_categorization"):GetBool() then
-                MsgC(Color(100, 255, 100), string.format("[RemixCategoryManager] Sent %d world textures to C++ for real-time categorization\n", #textures))
-            end
-            
-            -- IMPORTANT: Re-check already tracked materials now that we have the world texture list
-            -- This catches materials that rendered BEFORE the timer fired
-            if RemixMaterial.RecheckWorldTextures then
-                if GetConVar("rtx_debug_categorization"):GetBool() then
-                    MsgC(Color(100, 200, 255), "[RemixCategoryManager] Re-checking already tracked materials against world texture list...\n")
-                end
-                local rechecked = RemixMaterial.RecheckWorldTextures()
-                if GetConVar("rtx_debug_categorization"):GetBool() then
-                    MsgC(Color(100, 255, 100), string.format("[RemixCategoryManager] Re-check complete: %d world materials categorized\n", rechecked))
-                end
-            end
-        elseif not masterEnabled then
-            MsgC(Color(255, 200, 100), "[RemixCategoryManager] Auto-categorization disabled (remix_auto_categorize = 0)\n")
-        elseif not GetConVar("rtx_auto_categorize_world"):GetBool() then
-            MsgC(Color(255, 200, 100), "[RemixCategoryManager] World geometry categorization disabled (remix_auto_categorize_world = 0)\n")
-        end
-        
-        -- NOTE: Per-material decal/emissive categorization is now handled by MaterialPipeline
-        -- via RemixCategoryManager.AutoCategorizeMaterial() called from Stage2_Autocategorize
-        -- The bulk CategorizeAllTrackedMaterials() is no longer called here.
-        
-        MsgC(Color(255, 200, 100), "[RemixCategoryManager] BSP world texture initialization complete!\n")
-        MsgC(Color(255, 200, 100), "[RemixCategoryManager] Per-material categorization is handled by MaterialPipeline.\n")
+        -- Run the same full categorization that "Scan Now" uses
+        RemixCategoryManager.SmartMarkWorldTextures()
     end)
 end
 
--- Initialize C++ flags on every map load
+-- Initialize C++ flags on every map load and trigger auto-categorization directly
 hook.Add("InitPostEntity", "RemixCategoryManager_InitFlags", function()
     InitializeCppModuleFlags()
     MsgC(Color(100, 200, 255), "[RemixCategoryManager] C++ module flags initialized from ConVars\n")
     
-    -- Re-register the HUDPaint hook for this map load
-    hook.Add("HUDPaint", "RemixCategoryManager_AutoInit", AutoInitFunction)
+    -- Reset guard flag so auto-categorization runs on each new map load
+    autoInitRan = false
+    
+    hook.Remove("HUDPaint", "RemixCategoryManager_AutoInit")
+    AutoInitFunction()
 end)
+
+hook.Add("HUDPaint", "RemixCategoryManager_AutoInit", AutoInitFunction)
 
 -- Console command: remix_mark_decal (manually mark a material as decal by name)
 concommand.Add("rtx_mark_decal", function(ply, cmd, args)
