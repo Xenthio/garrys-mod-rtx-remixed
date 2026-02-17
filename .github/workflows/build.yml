@@ -77,21 +77,21 @@ jobs:
     
     - name: Package nightly release
       run: |
-        mkdir -p nightly-release/garrysmod/lua/bin
+        mkdir -p nightly-release
         
-        # Copy Win32 DLL
+        # Copy Win32 artifacts (includes bin/, garrysmod/, rtx-remix/, rtx.conf, dxvk.conf)
         if [ -d "artifacts/windows-Win32" ]; then
-          cp -r artifacts/windows-Win32/garrysmod/* nightly-release/garrysmod/ || true
+          cp -r artifacts/windows-Win32/* nightly-release/ || true
         fi
         
-        # Copy x64 DLL
+        # Copy x64 artifacts (merges with above)
         if [ -d "artifacts/windows-x64" ]; then
-          cp -r artifacts/windows-x64/garrysmod/* nightly-release/garrysmod/ || true
+          cp -r artifacts/windows-x64/* nightly-release/ || true
         fi
         
-        # Create zip
+        # Create zip with short hash in filename
         cd nightly-release
-        zip -r ../garrys-mod-rtx-remixed-nightly.zip .
+        zip -r ../garrys-mod-rtx-remixed-nightly-${GITHUB_SHA_SHORT}.zip .
         cd ..
     
     - name: Delete existing nightly release and tag
@@ -150,4 +150,4 @@ jobs:
           
           ⚠️ This is an automated pre-release build and may be unstable.
         prerelease: true
-        files: garrys-mod-rtx-remixed-nightly.zip
+        files: garrys-mod-rtx-remixed-nightly-${{env.GITHUB_SHA_SHORT}}.zip
