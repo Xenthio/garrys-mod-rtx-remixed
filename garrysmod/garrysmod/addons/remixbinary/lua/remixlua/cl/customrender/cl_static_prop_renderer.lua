@@ -168,7 +168,8 @@ local function BuildAllCombinedMeshes()
                         mesh = combinedMesh,
                         propCount = #currentBatch,
                         propIndices = currentBatchIndices,
-                        clusters = batchClusters -- Cache for fast PVS checks
+                        clusters = batchClusters, -- Cache for fast PVS checks
+                        submitData = { material = group.material, mesh = combinedMesh, translucent = false }
                     }
                 end
                 
@@ -210,7 +211,8 @@ local function BuildAllCombinedMeshes()
                     mesh = combinedMesh,
                     propCount = #currentBatch,
                     propIndices = currentBatchIndices,
-                    clusters = batchClusters -- Cache for fast PVS checks
+                    clusters = batchClusters, -- Cache for fast PVS checks
+                    submitData = { material = group.material, mesh = combinedMesh, translucent = false }
                 }
             end
         end
@@ -799,6 +801,27 @@ local function ProcessStaticProp(propData)
     -- Link to the cached mesh data
     prop.cachedMesh = meshCache[cacheKey]
     prop.vertexCount = meshCache[cacheKey].vertexCount or 0
+    
+    -- Pre-allocate submit tables to avoid per-frame GC pressure.
+    -- Each entry is a reusable table passed directly to RenderCore.Submit;
+    -- only matrix/color are updated in-place during rendering.
+    local cached = meshCache[cacheKey]
+    if cached.meshes then
+        local submitList = {}
+        for _, meshInfo in ipairs(cached.meshes) do
+            if meshInfo.mesh and meshInfo.material then
+                submitList[#submitList + 1] = {
+                    material = meshInfo.material,
+                    mesh = meshInfo.mesh,
+                    matrix = prop.matrix,
+                    translucent = false,
+                    color = prop.color
+                }
+            end
+        end
+        prop.submitList = submitList
+    end
+    
     return prop
 end
 
@@ -1128,12 +1151,8 @@ RenderCore.Register("PreDrawOpaqueRenderables", "CustomStaticRender_DrawProps", 
                 anyVisible = true -- Skybox props always visible
             end
             
-            if anyVisible and combined.mesh and combined.material then
-                RenderCore.Submit({
-                    material = combined.material,
-                    mesh = combined.mesh,
-                    translucent = false
-                })
+            if anyVisible and combined.submitData then
+                RenderCore.Submit(combined.submitData)
                 
                 -- Count unique props only (avoid double-counting multi-material props)
                 for _, propIdx in ipairs(combined.propIndices or {}) do
@@ -1145,17 +1164,12 @@ RenderCore.Register("PreDrawOpaqueRenderables", "CustomStaticRender_DrawProps", 
             end
         end
     else
-        -- Fallback: render individual props
+        -- Render individual props using pre-allocated submit tables (zero per-frame allocs)
         for _, prop in ipairs(cachedRenderList[cacheKey]) do
-            for _, meshInfo in ipairs(prop.cachedMesh.meshes) do
-                if meshInfo.mesh and meshInfo.material then
-                    RenderCore.Submit({
-                        material = meshInfo.material,
-                        mesh = meshInfo.mesh,
-                        matrix = prop.matrix,
-                        translucent = false,
-                        color = prop.color
-                    })
+            local submitList = prop.submitList
+            if submitList then
+                for i = 1, #submitList do
+                    RenderCore.Submit(submitList[i])
                 end
             end
             renderedProps = renderedProps + 1
