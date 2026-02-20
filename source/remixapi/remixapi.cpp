@@ -816,12 +816,7 @@ MeshManager::~MeshManager() {
 uint64_t MeshManager::CreateMesh(const std::string& name, const remix::MeshInfo& info) {
     if (!m_remixInterface) return 0;
 
-    auto result = [&]() {
-        if (m_remixInterface->m_CInterface.CreateMeshBatched) {
-            return m_remixInterface->CreateMeshBatched(info);
-        }
-        return m_remixInterface->CreateMesh(info);
-    }();
+    auto result = m_remixInterface->CreateMesh(info);
 
     if (!result) {
         Warning("[MeshManager] Failed to create mesh '%s': %d\n", name.c_str(), result.status());
