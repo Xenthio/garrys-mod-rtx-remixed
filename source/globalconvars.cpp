@@ -65,7 +65,7 @@ void GlobalConvars::InitialiseConVars() {
 	r_worldnodenocull = CreateOrFindConVar("r_worldnodenocull", "0", "Force world node nocull");
 	r_forcehwlight = CreateOrFindConVar("r_forcehwlight", "0", "Force LIGHTING_HARDWARE");
 	rtx_force_static_lighting = CreateOrFindConVar("rtx_force_static_lighting", "1", "Force all models to use static lighting for RTX");
-	r_forcehwskin = CreateOrFindConVar("r_forcehwskin", "1", "Force hardware skinning for all models (RTX Remix)");
+	r_forcehwskin = CreateOrFindConVar("r_forcehwskin", "0", "Force hardware skinning for all models (RTX Remix)");
 	r_hwskin_debug = CreateOrFindConVar("r_hwskin_debug", "0", "Enable debug logging for hardware skinning");
 	r_hwskin_setbones = CreateOrFindConVar("r_hwskin_setbones", "1", "Enable D3D9 bone matrix setting (set to 0 to disable for debugging)");
 	r_hwskin_transform_chain = CreateOrFindConVar("r_hwskin_transform_chain", "0", "Use full poseToBone transform chain (0 = direct passthrough, 1 = full chain)");
