@@ -64,6 +64,7 @@ static bool g_bHaveModelToWorld = false;
 // D3D9 device for setting bone transforms
 static IDirect3DDevice9* g_pD3DDevice = nullptr;
 
+
 // ============================================================================
 // DrawIndexedPrimitive (DIP) vtable hook for per-strip bone updates
 // ============================================================================
@@ -208,10 +209,24 @@ typedef __int64 (__fastcall* F_StudioRenderFinal)(
     void* pColorMeshes              // ColorMeshInfo_t*
 );
 
+// R_StudioDrawEyeball - handles special eye mesh rendering
+// In Source SDK: CStudioRender::R_StudioDrawEyeball(IMatRenderContext*, mstudiomesh_t*,
+//                studiomeshdata_t*, StudioModelLighting_t, IMaterial*, int)
+typedef int (__fastcall* F_StudioDrawEyeball)(
+    void* _this,                    // CStudioRender*
+    void* pRenderContext,           // IMatRenderContext*
+    void* pmesh,                    // mstudiomesh_t*
+    void* pMeshData,                // studiomeshdata_t*
+    int lighting,                   // StudioModelLighting_t (0=HW, 1=SW, 2=MOUTH)
+    void* pMaterial,                // IMaterial*
+    int lod                         // LOD level
+);
+
 // Function pointers for trampolines
 static F_StudioCreateSingleMesh R_StudioCreateSingleMesh_Original = nullptr;
 static F_StudioDrawGroupHWSkin R_StudioDrawGroupHWSkin_Original = nullptr;
 static F_StudioRenderFinal R_StudioRenderFinal_Original = nullptr;
+static F_StudioDrawEyeball R_StudioDrawEyeball_Original = nullptr;
 
 // ============================================================================
 // D3D9 Fixed-Function Bone Transform Helper
@@ -624,9 +639,107 @@ static HRESULT STDMETHODCALLTYPE Hook_DrawIndexedPrimitive(
         g_PerStripState.currentStripIndex++;
     }
     
-    // Call the original DrawIndexedPrimitive
     return g_OriginalDIP(pDevice, PrimitiveType, BaseVertexIndex,
                           MinVertexIndex, NumVertices, StartIndex, PrimitiveCount);
+}
+
+
+// ============================================================================
+// Exported helper: called from the Eyes_dx9 shader (stdshader_dx6.dll) to
+// set/reset D3D9 texture-generation state for the iris & glint passes.
+//
+// GMod's shaderapidx9.dll is compiled without FIXED_FUNCTION_PIPELINE, so
+// IShaderShadow::EnableTexGen / TexGen are no-ops and D3DTSS_TEXCOORDINDEX
+// is never set to D3DTSS_TCI_CAMERASPACEPOSITION.  We bridge the gap here
+// by writing the state directly on the device from the shader's DYNAMIC_STATE
+// block, which is the correct point in the frame to touch per-pass D3D state.
+// ============================================================================
+extern "C" __declspec(dllexport) void RTX_SetEyeTexGenState(int enable)
+{
+    if (!g_pD3DDevice) return;
+
+    if (enable) {
+        g_pD3DDevice->SetTextureStageState(0, D3DTSS_TEXCOORDINDEX,
+                                            D3DTSS_TCI_CAMERASPACEPOSITION);
+        g_pD3DDevice->SetTextureStageState(0, D3DTSS_TEXTURETRANSFORMFLAGS,
+                                            D3DTTFF_COUNT2);
+        // CLAMP prevents the iris texture from tiling when TexGen UVs
+        // exceed [0,1] for vertices outside the iris projection area.
+        g_pD3DDevice->SetSamplerState(0, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
+        g_pD3DDevice->SetSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
+    } else {
+        g_pD3DDevice->SetTextureStageState(0, D3DTSS_TEXCOORDINDEX, 0);
+        g_pD3DDevice->SetTextureStageState(0, D3DTSS_TEXTURETRANSFORMFLAGS,
+                                            D3DTTFF_DISABLE);
+        g_pD3DDevice->SetSamplerState(0, D3DSAMP_ADDRESSU, D3DTADDRESS_WRAP);
+        g_pD3DDevice->SetSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_WRAP);
+    }
+}
+
+// ============================================================================
+// Hook: R_StudioDrawEyeball
+// Intercepts eye mesh rendering to:
+//   1) Log diagnostic info (which early-out kills rendering)
+//   2) Force LIGHTING_HARDWARE so eyes go through the HW skinning path
+//      instead of the software vertex transform path (invisible to RTX Remix)
+// ============================================================================
+Define_method_Hook(int, R_StudioDrawEyeball, void*,
+    void* pRenderContext,
+    void* pmesh,
+    void* pMeshData,
+    int lighting,
+    void* pMaterial,
+    int lod)
+{
+    static int eyeCallCount = 0;
+    eyeCallCount++;
+
+    bool forceEyeHW = GlobalConvars::r_eyes_hwskin && GlobalConvars::r_eyes_hwskin->GetBool();
+    bool forcehwskin = GlobalConvars::r_forcehwskin && GlobalConvars::r_forcehwskin->GetBool();
+    bool shouldForce = forceEyeHW && forcehwskin && g_bInRenderFinal;
+
+    if (eyeCallCount <= 10 || (eyeCallCount % 2000) == 0) {
+        HWSKIN_DBG_ALWAYS("[HWSkin] R_StudioDrawEyeball #%d: lighting=%d (%s), pMaterial=%p, lod=%d, forceHW=%d\n",
+            eyeCallCount, lighting,
+            (lighting == 0 ? "HARDWARE" : (lighting == 1 ? "SOFTWARE" : "MOUTH")),
+            pMaterial, lod, shouldForce);
+    }
+
+    int actualLighting = lighting;
+    if (shouldForce) {
+        actualLighting = 0; // LIGHTING_HARDWARE
+    }
+
+    int result = 0;
+    __try {
+        result = R_StudioDrawEyeball_trampoline()(_this, pRenderContext, pmesh, pMeshData, actualLighting, pMaterial, lod);
+    }
+    __except(EXCEPTION_EXECUTE_HANDLER) {
+        static int eyeCrashCount = 0;
+        if (++eyeCrashCount <= 5) {
+            HWSKIN_DBG_ALWAYS("[HWSkin] EXCEPTION in DrawEyeball trampoline (occurrence #%d, code=0x%08X)\n",
+                eyeCrashCount, GetExceptionCode());
+        }
+        // Safety net: ensure TexGen is OFF even on exception, so subsequent
+        // draws (head, body, other models) don't get corrupted texcoords.
+        RTX_SetEyeTexGenState(0);
+        return 0;
+    }
+
+    // Safety net: the eye shader *should* reset TexGen after each pass, but
+    // if anything goes wrong (early return, exception in shader code, state
+    // cache mismatch), force it off here after every DrawEyeball call.
+    RTX_SetEyeTexGenState(0);
+
+    if (eyeCallCount <= 10 || (eyeCallCount % 2000) == 0) {
+        HWSKIN_DBG_ALWAYS("[HWSkin] R_StudioDrawEyeball #%d: returned %d triangles (lighting: %d->%d)\n",
+            eyeCallCount, result, lighting, actualLighting);
+        if (result == 0) {
+            HWSKIN_DBG_ALWAYS("[HWSkin]   -> 0 triangles! Likely causes: bEyes=false, GetFatVertexData=NULL, or mesh has no groups\n");
+        }
+    }
+
+    return result;
 }
 
 // ============================================================================
@@ -717,23 +830,24 @@ Define_method_Hook(void*, R_StudioCreateSingleMesh, void*,
                 return result;
             }
             
-            int forcedCount = 0;
-            for (int i = 0; i < numGroups; i++) {
-                studiomeshgroup_t* pGroup = &pGroups[i];
-                
-                HWSKIN_DBG("[HWSkin] Group %d: flags=0x%X\n", i, pGroup->m_Flags);
-                
-                // Skip flexed groups - they use a different rendering path
-                if (pGroup->m_Flags & MESHGROUP_IS_FLEXED) {
-                    continue;
-                }
-                
-                // Force hardware skinning flag
-                if (!(pGroup->m_Flags & MESHGROUP_IS_HWSKINNED)) {
-                    pGroup->m_Flags |= MESHGROUP_IS_HWSKINNED;
-                    forcedCount++;
-                }
-            }
+			int forcedCount = 0;
+			for (int i = 0; i < numGroups; i++) {
+				studiomeshgroup_t* pGroup = &pGroups[i];
+				
+				HWSKIN_DBG("[HWSkin] Group %d: flags=0x%X (flexed=%d, hwskinned=%d)\n", 
+					i, pGroup->m_Flags,
+					!!(pGroup->m_Flags & MESHGROUP_IS_FLEXED),
+					!!(pGroup->m_Flags & MESHGROUP_IS_HWSKINNED));
+				
+				// Force hardware skinning flag on ALL groups including flexed ones.
+				// Eye mesh groups are typically flexed (for eyelid animation) and were
+				// previously skipped here, which prevented them from ever reaching the
+				// R_StudioDrawGroupHWSkin hook for proper D3D9 bone transform output.
+				if (!(pGroup->m_Flags & MESHGROUP_IS_HWSKINNED)) {
+					pGroup->m_Flags |= MESHGROUP_IS_HWSKINNED;
+					forcedCount++;
+				}
+			}
             
             if (forcedCount > 0) {
                 HWSKIN_DBG("[HWSkin] Forced MESHGROUP_IS_HWSKINNED on %d/%d groups (numBones=%d)\n", 
@@ -769,6 +883,15 @@ Define_method_Hook(__int64, R_StudioDrawGroupHWSkin, void*,
     if (!s_firstCallLogged) {
         HWSKIN_DBG_ALWAYS("[HWSkin] DrawGroupHWSkin hook HIT! lighting=%d, r_blend=%.2f, pGroup=%p\n", lighting, r_blend, pGroup);
         s_firstCallLogged = true;
+    }
+
+    // Defensive: ensure TexGen is OFF before any non-eye body-part draw.
+    // Eye rendering (DrawEyeball) sets D3DTSS_TCI_CAMERASPACEPOSITION for the
+    // iris/glint passes and should reset it, but if the shader or DrawEyeball
+    // hook didn't run the reset (crash, early-out, engine state cache), this
+    // catches the leak before it corrupts head/body textures.
+    if (g_pD3DDevice) {
+        RTX_SetEyeTexGenState(0);
     }
     
     // Check if bone export is enabled and we have a D3D device
@@ -1071,7 +1194,10 @@ Define_method_Hook(__int64, R_StudioRenderFinal, void*,
             pClientEntity, ppMaterials, pMaterialFlags, boneMask, pColorMeshes);
     }
     __except(EXCEPTION_EXECUTE_HANDLER) {
-        HWSKIN_DBG_ALWAYS("[HWSkin] CRASH in RenderFinal trampoline!\n");
+        static int crashCount = 0;
+        if (++crashCount <= 5) {
+            HWSKIN_DBG_ALWAYS("[HWSkin] Exception in RenderFinal trampoline (occurrence #%d)\n", crashCount);
+        }
     }
     
     g_bInRenderFinal = false;
@@ -1169,9 +1295,9 @@ void HardwareSkinningHooks::Initialize() {
         // Unique register save pattern: push rbp, rbx, rsi, rdi, r12, r13, r14, r15 + lea rbp
         static const char DrawGroupHWSkin_sign[] = "40 55 53 56 57 41 54 41 55 41 56 41 57 48 8D AC 24 A8 FD FF FF";
         
-        // R_StudioRenderFinal at offset 0x11B70
-        // Spill r9 and rdx to shadow space, then push rsi, rdi, r15
-        static const char RenderFinal_sign[] = "4C 89 4C 24 20 48 89 54 24 10 56 57 41 57 48 81 EC A0 00 00 00";
+        // R_StudioRenderFinal at offset 0x11E40
+        // Spill r9 and rdx to shadow space, push rsi/rdi/r15, sub rsp,0A0h, xor r15d
+        static const char RenderFinal_sign[] = "4C 89 4C 24 20 48 89 54 24 10 56 57 41 57 48 81 EC A0 00 00 00 45 33 FF 48 8B F2 48 8B F9";
 #else
         // 32-bit signatures (kept for reference)
         static const char CreateSingleMesh_sign[] = "55 8B EC 81 EC 00 02 00 00";
@@ -1195,6 +1321,21 @@ void HardwareSkinningHooks::Initialize() {
         auto RenderFinal_addr = ScanSign(studiorenderdll, RenderFinal_sign, sizeof(RenderFinal_sign) - 1);
         uintptr_t RenderFinal_offset = RenderFinal_addr ? ((uintptr_t)RenderFinal_addr - moduleBase) : 0;
         Msg("[Hardware Skinning] R_StudioRenderFinal: %p (offset: 0x%llX)\n", RenderFinal_addr, RenderFinal_offset);
+
+        // R_StudioDrawEyeball: CStudioRender::R_StudioDrawEyeball handles special eye mesh rendering.
+        // Prologue: push rbp/rbx/rsi/rdi/r12-r15, lea rbp,[rsp-3A8h], sub rsp,4A8h
+        // Unique stack frame size (0x3A8/0x4A8) distinguishes it from R_StudioDrawGroupHWSkin (0x258/0x538).
+#ifdef _WIN64
+        static const char DrawEyeball_sign[] = "40 55 53 56 57 41 54 41 55 41 56 41 57 48 8D AC 24 58 FC FF FF 48 81 EC A8 04 00 00";
+#else
+        static const char DrawEyeball_sign[] = "";
+#endif
+        void* DrawEyeball_addr = nullptr;
+        if (sizeof(DrawEyeball_sign) > 1) {
+            DrawEyeball_addr = ScanSign(studiorenderdll, DrawEyeball_sign, sizeof(DrawEyeball_sign) - 1);
+        }
+        uintptr_t DrawEyeball_offset = DrawEyeball_addr ? ((uintptr_t)DrawEyeball_addr - moduleBase) : 0;
+        Msg("[Hardware Skinning] R_StudioDrawEyeball: %p (offset: 0x%llX)\n", DrawEyeball_addr, DrawEyeball_offset);
         
         // Validate addresses are in code section (not PE header)
         if (CreateSingleMesh_addr && CreateSingleMesh_offset < MIN_VALID_OFFSET) {
@@ -1208,6 +1349,10 @@ void HardwareSkinningHooks::Initialize() {
         if (RenderFinal_addr && RenderFinal_offset < MIN_VALID_OFFSET) {
             Warning("[Hardware Skinning] R_StudioRenderFinal matched PE header - invalid!\n");
             RenderFinal_addr = nullptr;
+        }
+        if (DrawEyeball_addr && DrawEyeball_offset < MIN_VALID_OFFSET) {
+            Warning("[Hardware Skinning] R_StudioDrawEyeball matched PE header - invalid!\n");
+            DrawEyeball_addr = nullptr;
         }
 
         // Initialize model-to-world as identity
@@ -1241,11 +1386,20 @@ void HardwareSkinningHooks::Initialize() {
         R_StudioCreateSingleMesh_Original = (F_StudioCreateSingleMesh)CreateSingleMesh_addr;
         R_StudioDrawGroupHWSkin_Original = (F_StudioDrawGroupHWSkin)DrawGroupHWSkin_addr;
         R_StudioRenderFinal_Original = (F_StudioRenderFinal)RenderFinal_addr;
+        R_StudioDrawEyeball_Original = DrawEyeball_addr ? (F_StudioDrawEyeball)DrawEyeball_addr : nullptr;
 
         // Set up all hooks with corrected GMod signatures (9 params for DrawGroupHWSkin/RenderFinal)
         Setup_Hook(R_StudioCreateSingleMesh, CreateSingleMesh_addr);
         Setup_Hook(R_StudioDrawGroupHWSkin, DrawGroupHWSkin_addr);
         Setup_Hook(R_StudioRenderFinal, RenderFinal_addr);
+
+        if (DrawEyeball_addr) {
+            Setup_Hook(R_StudioDrawEyeball, DrawEyeball_addr);
+            Msg("[Hardware Skinning] R_StudioDrawEyeball hook installed - eye rendering diagnostics + HW lighting force active\n");
+        } else {
+            Warning("[Hardware Skinning] R_StudioDrawEyeball not found - eye hook disabled. Eyes may not render in RTX Remix.\n");
+            Warning("[Hardware Skinning]   To fix: find R_StudioDrawEyeball signature in IDA (search for \"$glint\" string ref)\n");
+        }
 
         m_bInitialized = true;
         m_bEnabled = true;
@@ -1283,6 +1437,9 @@ void HardwareSkinningHooks::Shutdown() {
         m_StudioCreateSingleMesh_hook.Disable();
         m_StudioDrawGroupHWSkin_hook.Disable();
         m_StudioRenderFinal_hook.Disable();
+        if (R_StudioDrawEyeball_Original) {
+            R_StudioDrawEyeball_hook.Disable();
+        }
 
         // Reset global state
         g_BONEDATA.bone_count = -1;

@@ -19,5 +19,6 @@ public:
 	static ConVar* r_hwskin_force_flag;  // Force MESHGROUP_IS_HWSKINNED flag on multi-bone models
 	static ConVar* r_hwskin_ubyte4;      // Apply UBYTE4 vertex declaration patch for bone indices
 	static ConVar* r_hwskin_vtx_hw;      // Keep HW vertex data (.dx90.vtx) for skinned models
+	static ConVar* r_eyes_hwskin;     // Force eye meshes through HW skinning path for RTX Remix
 	static void InitialiseConVars();
 }; 

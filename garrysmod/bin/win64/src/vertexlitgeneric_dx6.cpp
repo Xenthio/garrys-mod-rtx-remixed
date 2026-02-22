@@ -1,8 +1,5 @@
 //========= Copyright Valve Corporation, All rights reserved. ============//
 //
-// Tries to render newer eye shaders in FF, only eyeball working atm
-// - CR
-//
 // Purpose: 
 //
 // $Header: $
@@ -15,9 +12,7 @@
 #include "tier0/memdbgon.h"
 
 DEFINE_FALLBACK_SHADER( VertexLitGeneric, VertexLitGeneric_DX6 )
-DEFINE_FALLBACK_SHADER( Eyes, VertexLitGeneric_DX6 )
 DEFINE_FALLBACK_SHADER( EyeRefract, VertexLitGeneric_DX6 )
-DEFINE_FALLBACK_SHADER( eyes, VertexLitGeneric_DX6 )
 
 BEGIN_SHADER( VertexLitGeneric_DX6, 
 			  "Help for VertexLitGeneric_DX6" )

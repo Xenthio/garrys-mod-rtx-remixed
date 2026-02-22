@@ -54,6 +54,7 @@ static ConVar* CreateOrFindConVar(const char* name, const char* defaultVal, cons
 	return cv;
 }
 
+ConVar* GlobalConvars::r_eyes_hwskin;
 void GlobalConvars::InitialiseConVars() {
 	m_pLuaConVars = loader_lua_shared.GetInterface<GarrysMod::Lua::ILuaConVars>(GMOD_LUACONVARS_INTERFACE);
 	if (!m_pLuaConVars) {
@@ -74,4 +75,10 @@ void GlobalConvars::InitialiseConVars() {
 	r_hwskin_force_flag = CreateOrFindConVar("r_hwskin_force_flag", "0", "Force MESHGROUP_IS_HWSKINNED flag on multi-bone models at load time");
 	r_hwskin_ubyte4 = CreateOrFindConVar("r_hwskin_ubyte4", "1", "Apply UBYTE4 vertex declaration patch for bone indices during skinned model creation");
 	r_hwskin_vtx_hw = CreateOrFindConVar("r_hwskin_vtx_hw", "1", "Keep HW vertex data (.dx90.vtx) instead of SW redirect for skinned models");
+
+	r_eyes_hwskin = m_pLuaConVars->CreateConVar("r_eyes_hwskin", "1", "Force eye meshes through HW skinning path for RTX Remix (0 = disabled, 1 = enabled)", FCVAR_ARCHIVE);
+	if (!r_eyes_hwskin) { r_eyes_hwskin = cvar->FindVar("r_eyes_hwskin"); }
+	if (!r_eyes_hwskin) { Error("[RTX Fixes 2] Failed to create r_eyes_hwskin convar\n"); }
+	else { Msg("[RTX Fixes 2] r_eyes_hwskin convar created\n"); }
+
 }

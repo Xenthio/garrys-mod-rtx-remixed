@@ -35,6 +35,7 @@ private:
     Detouring::Hook m_StudioDrawGroupHWSkin_hook;
     Detouring::Hook m_StudioCreateSingleMesh_hook;
     Detouring::Hook m_StudioRenderFinal_hook;
+    Detouring::Hook m_StudioDrawEyeball_hook;
     
     bool m_bEnabled;
     bool m_bBoneExportEnabled;
