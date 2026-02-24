@@ -1,7 +1,0 @@
-"UnlitGeneric"
-{
-	// Original shader: VertexLitMaskedEnvMappedTexture
-	"$basetexture" "models/Roller/rollermine_glow"
-	"$additive" "1"
-	"$translucent" "1"
-}

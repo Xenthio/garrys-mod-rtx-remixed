@@ -1,8 +1,0 @@
-UnlitGeneric
-{
-
-$basetexture "effects/HL2MMod/HL2MMod_RandomSparks_2"
-$additive 1
-	$DEPTHBLEND 0
-	$ignorez 1
-}

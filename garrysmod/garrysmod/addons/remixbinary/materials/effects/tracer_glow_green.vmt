@@ -1,6 +1,0 @@
-"UnlitGeneric"
-{
-	"$basetexture" "effects/tracer_glow_green"
-	"$additive" 1
-	"$vertexcolor" 1
-}

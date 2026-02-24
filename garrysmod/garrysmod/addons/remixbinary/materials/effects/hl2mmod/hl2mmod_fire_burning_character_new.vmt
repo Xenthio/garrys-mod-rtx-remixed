@@ -1,8 +1,0 @@
-"LightmappedGeneric"
-{
-	"$basetexture" "effects/hl2mmod/hl2mmod_fire_burning_character_new"
-	"$translucent" "1"
-	"$vertexalpha" "1"
-	"$vertexcolor" "1"
-	"$additive" "1"
-}

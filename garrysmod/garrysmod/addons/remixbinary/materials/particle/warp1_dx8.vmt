@@ -1,8 +1,0 @@
-"unlitgeneric"
-{
-	"$tint" "[0 0 0]"
-	"$maxsize" "0.00001"
-	"$basetexture" "particle\Particle_Glow_01"
-	"$additive" "1"
-	"$color" "[0 0 0]"
-}

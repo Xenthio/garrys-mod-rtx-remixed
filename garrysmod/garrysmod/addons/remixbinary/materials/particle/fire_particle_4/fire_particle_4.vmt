@@ -1,9 +1,0 @@
-"UnlitGeneric"
-{
-	$basetexture "particle/fire_particle_4/fire_particle_4"
-	$addself .75
-//	$addbasetexture2 2
-//	$addbasetexture2 1.5
-	$overbrightfactor 3.5
-	$DEPTHBLEND 1
-}

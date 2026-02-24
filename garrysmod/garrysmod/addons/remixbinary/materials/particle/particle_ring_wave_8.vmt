@@ -1,9 +1,0 @@
-"UnlitGeneric"
-{
-	"$basetexture" "particle\Particle_Ring_Wave_8"
-	$vertexcolor 1
-	$vertexalpha 1
-	$translucent 1
-	$Additive 1
-	$NoCull 1
-}

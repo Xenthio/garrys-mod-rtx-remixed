@@ -1,6 +1,0 @@
-"UnlitGeneric"
-{
-	"$basetexture" "particle\Particle_Ring_Wave_9"
-	$translucent 1
-	$DEPTHBLEND 1
-}

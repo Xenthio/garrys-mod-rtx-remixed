@@ -164,7 +164,14 @@ SHADER_INIT {
 		LoadTexture(IRIS, TEXTUREFLAGS_SRGB | TEXTUREFLAGS_CLAMPS | TEXTUREFLAGS_CLAMPT);
 }
 
-// Build eye-space texture matrix for iris projection (same as Eyes_dx9)
+// UV scale for the EyeRefract iris projection.  The original EyeRefract
+// pixel shader applies parallax / sphere-raytrace adjustments that change
+// the effective iris size.  This constant compensates in the FF fallback.
+// 0.5 = iris covers twice as much of the eye (UVs compressed toward center).
+#define EYEREFRACT_IRIS_UV_SCALE 0.5f
+
+// Build eye-space texture matrix for iris projection (same as Eyes_dx9),
+// with an additional UV scale applied around the (0.5, 0.5) center.
 static void SetTextureTransformER(IMaterialVar** params,
 								  IShaderDynamicAPI* pShaderAPI,
 								  MaterialMatrixMode_t textureTransform,
@@ -188,9 +195,14 @@ static void SetTextureTransformER(IMaterialVar** params,
 	vView[3] =
 		vWorld[3] - DotProduct(view.GetTranslation(), vView.AsVector3D());
 
-	float mat[16] = {uView[0], vView[0], 0.0f,	   0.0f,	 uView[1], vView[1],
-					 0.0f,	   0.0f,	 uView[2], vView[2], 1.0f,	   0.0f,
-					 uView[3], vView[3], 0.0f,	   1.0f};
+	// Scale UVs around (0.5, 0.5):  UV' = s * UV + 0.5*(1-s)
+	const float s = EYEREFRACT_IRIS_UV_SCALE;
+	const float offset = 0.5f * (1.0f - s);
+
+	float mat[16] = {uView[0]*s, vView[0]*s, 0.0f,              0.0f,
+					 uView[1]*s, vView[1]*s, 0.0f,              0.0f,
+					 uView[2]*s, vView[2]*s, 1.0f,              0.0f,
+					 uView[3]*s + offset, vView[3]*s + offset, 0.0f, 1.0f};
 
 	pShaderAPI->MatrixMode(textureTransform);
 	pShaderAPI->LoadMatrix(mat);

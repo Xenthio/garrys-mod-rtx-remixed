@@ -1,8 +1,0 @@
-"UnlitGeneric"
-{
-	"$basetexture" "effects/sparkler"
-	"$additive" "1"
-	"$vertexcolor" 1
-	"$vertexalpha" "1"
-	"$addself" 5
-}

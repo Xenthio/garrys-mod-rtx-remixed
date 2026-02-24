@@ -1,9 +1,0 @@
-"unlitgeneric"
-{
-	$basetexture "effects/HL2MMod/HL2MMod_Explosion_AE1"
-	$additive "1"
-	$vertexcolor "1"
-	$vertexalpha "1"
-	$overbrightfactor "3.0"
-}
-

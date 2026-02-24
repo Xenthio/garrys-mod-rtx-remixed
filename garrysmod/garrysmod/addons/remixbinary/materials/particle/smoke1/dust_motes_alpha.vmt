@@ -1,8 +1,0 @@
-"UnlitGeneric"
-{
-	$basetexture "particle/smoke1/smoke1"
-	$maxsize .002
-	$minsize .00075
-	//$startfadesize .675
-	//$endfadesize .75
-}

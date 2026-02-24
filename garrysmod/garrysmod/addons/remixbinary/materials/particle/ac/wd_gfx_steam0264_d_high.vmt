@@ -1,7 +1,0 @@
-"UnlitGeneric"
-{
-	"$basetexture" "particle/Ac/wd_gfx_steam0264_d_high"
-	"$translucent" 1
-//             "$additive" 1
-	"$overbrightfactor" "1"
-}

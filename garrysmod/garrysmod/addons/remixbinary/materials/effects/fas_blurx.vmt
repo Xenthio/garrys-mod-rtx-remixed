@@ -1,7 +1,0 @@
-"BlurFilterX"
-{
-	"$basetexture" "_rt_SmallFB0"
-	"$bloomscale" "20"
-	"$bloomamount" "20"
-//	"$additive" 1
-}

@@ -1,6 +1,0 @@
-"BlurFilterY"
-{
-	"$basetexture" "_rt_SmallFB1"
-	"$bloomamount" "20"
-//	"$additive" 1
-}

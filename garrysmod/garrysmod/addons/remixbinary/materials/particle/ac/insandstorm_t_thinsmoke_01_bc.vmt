@@ -1,7 +1,0 @@
-"UnlitGeneric"
-{
-	"$basetexture" "particle/Ac/insandstorm_t_thinsmoke_01_bc"
-	"$translucent" 1
-//             "$additive" 1
-	"$overbrightfactor" "1"
-}

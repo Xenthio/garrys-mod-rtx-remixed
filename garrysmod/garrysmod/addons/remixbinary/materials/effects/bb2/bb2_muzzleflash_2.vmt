@@ -1,8 +1,0 @@
-"UnlitGeneric"
-{
-	"$basetexture" "effects/bb2/bb2_muzzleflash_2"
-	"$additive" "1"
-	"$vertexcolor" 1
-	"$vertexalpha" "1"
-}
-

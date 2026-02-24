@@ -1,7 +1,0 @@
-"UnlitGeneric"
-{
-	"$basetexture" "particle\particle_Ring_Wave_Curl\particle_Ring_Wave_Curl"
-	$vertexcolor 1
-	$vertexalpha 1
-	$translucent 1
-}

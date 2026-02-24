@@ -1,8 +1,0 @@
-"UnlitGeneric"
-{
-	// Original shader: AddTexture
-	"$basetexture" "effects/fas_red_tracers"
-	"$brightness" "effects/spark_brightness"
-	"$additive" 1
-	"$vertexcolor" 1
-}

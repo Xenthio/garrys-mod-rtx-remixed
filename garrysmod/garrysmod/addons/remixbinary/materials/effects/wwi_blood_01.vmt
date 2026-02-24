@@ -1,8 +1,0 @@
-"UnlitGeneric"
-{
-	"$basetexture" "effects/wwi_blood_01"
-	$vertexcolor 1
-	$vertexalpha 1
-	$translucent 1
-}
-

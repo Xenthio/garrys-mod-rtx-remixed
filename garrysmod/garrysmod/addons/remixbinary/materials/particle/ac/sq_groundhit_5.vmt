@@ -1,7 +1,0 @@
-"UnlitGeneric"
-{
-	"$basetexture" "particle/Ac/sq_groundhit_5"
-	"$vertexcolor" "1"
-	"$vertexalpha" "1"
-	"$translucent" "1"
-}

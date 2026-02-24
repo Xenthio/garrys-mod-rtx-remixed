@@ -1,7 +1,0 @@
-"UnlitGeneric"
-{
-	"$basetexture" "effects/fas_snow"
-	"$vertexcolor" 1
-	"$vertexalpha" 1
-	"$translucent" 1
-}

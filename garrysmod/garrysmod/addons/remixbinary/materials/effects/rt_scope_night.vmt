@@ -1,6 +1,0 @@
-"editor_shader"
-{
-	"$shadername" "fas_postproc_nightvision"
-	"$nvlevel" 10 
-	"$basetexture" "_rt_Scope"
-}

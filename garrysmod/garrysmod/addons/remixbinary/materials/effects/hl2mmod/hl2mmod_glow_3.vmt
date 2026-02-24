@@ -1,9 +1,0 @@
-"UnlitGeneric"
-{
-	"$basetexture"	"effects/HL2MMod/HL2MMod_Glow_3"
-	"$surfaceprop"	"no_decal"
-	"$additive"	1
-	"$vertexcolor"	1
-	"$vertexalpha"	1
-
-}

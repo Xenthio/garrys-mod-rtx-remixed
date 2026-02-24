@@ -1,7 +1,0 @@
-"UnlitGeneric"
-{
-	"$basetexture" "particle/Ac/irons_exp_smoke2_8x4s"
-	"$translucent" 1
-//             "$additive" 1
-	"$overbrightfactor" "1"
-}

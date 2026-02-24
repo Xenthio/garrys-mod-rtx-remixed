@@ -1,7 +1,0 @@
-"UnlitGeneric"
-{
-	"$basetexture" "particle/Ac/irons_blood4x4_head2r"
-	"$vertexcolor" "1"
-	"$vertexalpha" "1"
-	"$translucent" "1"
-}

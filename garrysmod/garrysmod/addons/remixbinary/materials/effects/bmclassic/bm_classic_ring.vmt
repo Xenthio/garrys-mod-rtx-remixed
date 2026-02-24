@@ -1,7 +1,0 @@
-"UnlitGeneric"
-{
-	"$basetexture" "effects/BMClassic/BM_Classic_Ring"
-	"$additive" 1
-	"$translucent" 1
-	"$vertexcolor" 1
-}

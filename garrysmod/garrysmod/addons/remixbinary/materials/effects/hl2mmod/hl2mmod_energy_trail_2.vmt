@@ -1,9 +1,0 @@
-
-"Sprite"
-{
-	"$spriteorientation" "vp_parallel"
-	"$spriteorigin" "[ 0.50 0.50 ]"
-	"$basetexture" "effects/ar2ground2"
-	"$spriterendermode" 5
-$HDRCOLORSCALE 5
-}

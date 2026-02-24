@@ -1,9 +1,0 @@
-"UnlitGeneric"
-{
-	$basetexture "particle\tinyfiresprites\tinyfiresprites"
-	$additive 0
-	$overbrightfactor 1
-	$blendframes 1
-	$depthblend 0
-	$addself 5
-}

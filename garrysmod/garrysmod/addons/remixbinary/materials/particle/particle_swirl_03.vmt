@@ -1,7 +1,0 @@
-"UnlitGeneric"
-{
-	"$basetexture" "particle\Particle_Swirl_03"
-	$translucent 1
-	$Additive 1
-	$depthblendscale 12
-}
