@@ -1,4 +1,4 @@
- > This project uses AI-generated code in various areas of the codebase.
+ > This project uses AI-generated code.
 
 <img src="https://github.com/user-attachments/assets/fad469d4-b7b2-428c-a093-5b497f02d820" alt="drawing" width="500"/>
 
