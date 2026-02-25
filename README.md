@@ -61,3 +61,4 @@ You can join servers without the addon but you ***will*** experience visual issu
 * [Nak2](https://github.com/Nak2) for [NikNaks](https://github.com/Nak2/NikNaks)
 * [BlueAmulet](https://github.com/BlueAmulet) for [SourceRTXTweaks](https://github.com/BlueAmulet/SourceRTXTweaks)
 * [0xNULLderef](https://github.com/0xNULLderef) and [Wolƒe Strider Shoσter](https://github.com/wolfestridershooter) for additional x64 patches (culling and HDR map lighting)
+* [King David](https://github.com/KingDavidW) for all of their guidance for getting hardware skinning working.
