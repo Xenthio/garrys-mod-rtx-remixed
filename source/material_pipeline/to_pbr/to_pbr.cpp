@@ -3878,6 +3878,10 @@ int TextureProcessor::ProcessAllTrackedMaterials() {
 }
 
 int TextureProcessor::ProcessTrackedMaterialsBatch(int maxBatch) {
+    if (!m_enabled.load(std::memory_order_relaxed)) {
+        return 0;
+    }
+    
     // LOCK-FREE FAST PATH: Check if we know everything is processed without taking any locks
     // This atomic load has zero contention and returns instantly
     if (m_allMaterialsProcessed.load(std::memory_order_relaxed)) {
@@ -4058,6 +4062,10 @@ void TextureProcessor::ClearCache() {
 }
 
 bool TextureProcessor::ProcessSingleMaterial(const std::string& materialName) {
+    if (!m_enabled.load(std::memory_order_relaxed)) {
+        return false;
+    }
+    
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
     
     if (!m_initialized) {
@@ -4134,7 +4142,7 @@ bool TextureProcessor::ProcessSingleMaterial(const std::string& materialName) {
 }
 
 void TextureProcessor::OnNewMaterialDetected(const std::string& materialName, uint64_t textureHash) {
-    if (!m_initialized || !m_autoProcessing) {
+    if (!m_initialized || !m_autoProcessing || !m_enabled.load(std::memory_order_relaxed)) {
         return;
     }
     
@@ -4297,6 +4305,14 @@ void TextureProcessor::WorkerThreadFunc() {
             m_materialQueue.pop();
         }
         
+        // Skip processing when globally disabled; remove from dedup set
+        // (but not from processedMaterials) so it can be re-queued when re-enabled
+        if (!m_enabled.load(std::memory_order_relaxed)) {
+            std::lock_guard<std::mutex> lock(m_queueMutex);
+            m_queuedMaterials.erase(materialName);
+            continue;
+        }
+        
         // Process the material (outside of queue lock)
         m_backgroundProcessing.store(true, std::memory_order_relaxed);
         
@@ -4341,6 +4357,10 @@ void TextureProcessor::WorkerThreadFunc() {
 }
 
 bool TextureProcessor::ProcessMaterialOnWorker(const std::string& materialName) {
+    if (!m_enabled.load(std::memory_order_relaxed)) {
+        return false;
+    }
+    
     // Check if already processed (lock-free check first, then verify under lock)
     {
         std::lock_guard<std::recursive_mutex> lock(m_mutex);
@@ -4432,6 +4452,10 @@ bool TextureProcessor::ProcessMaterialOnWorker(const std::string& materialName) 
 }
 
 int TextureProcessor::QueueMaterialsForProcessing() {
+    if (!m_enabled.load(std::memory_order_relaxed)) {
+        return 0;
+    }
+    
     if (!m_initialized) {
         Msg("[MaterialPipeline::ToPBR] QueueMaterialsForProcessing: not initialized\n");
         return 0;
@@ -4641,6 +4665,23 @@ LUA_FUNCTION(ToPBR_ProcessMaterialsBatch) {
     
     int count = MaterialPipeline::ToPBR::TextureProcessor::Instance().ProcessTrackedMaterialsBatch(maxBatch);
     LUA->PushNumber(count);
+    return 1;
+}
+
+LUA_FUNCTION(ToPBR_SetEnabled) {
+    if (!LUA->IsType(1, GarrysMod::Lua::Type::Bool)) {
+        LUA->ThrowError("Expected boolean for enabled");
+        return 0;
+    }
+    
+    bool enabled = LUA->GetBool(1);
+    MaterialPipeline::ToPBR::TextureProcessor::Instance().SetEnabled(enabled);
+    Msg("[MaterialPipeline::ToPBR] ToPBR conversion %s\n", enabled ? "ENABLED" : "DISABLED");
+    return 0;
+}
+
+LUA_FUNCTION(ToPBR_IsEnabled) {
+    LUA->PushBool(MaterialPipeline::ToPBR::TextureProcessor::Instance().IsEnabled());
     return 1;
 }
 
@@ -5176,6 +5217,12 @@ void InitializeToPBRLuaBindings(GarrysMod::Lua::ILuaBase* LUA) {
     
     LUA->PushCFunction(ToPBR_ProcessSingleMaterial);
     LUA->SetField(-2, "ProcessSingleMaterial");
+    
+    LUA->PushCFunction(ToPBR_SetEnabled);
+    LUA->SetField(-2, "SetEnabled");
+    
+    LUA->PushCFunction(ToPBR_IsEnabled);
+    LUA->SetField(-2, "IsEnabled");
     
     LUA->PushCFunction(ToPBR_SetAutoProcessing);
     LUA->SetField(-2, "SetAutoProcessing");

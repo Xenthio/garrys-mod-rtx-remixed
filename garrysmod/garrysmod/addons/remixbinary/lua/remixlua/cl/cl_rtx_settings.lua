@@ -240,15 +240,13 @@ end)
 -- ToPBR Conversion Settings (Only show for 64-bit client)
 if BRANCH == "x86-64" or BRANCH == "chromium" then
     hook.Add( "PopulateToolMenu", "RTXOptionsClient_ToPBR", function()
-        spawnmenu.AddToolMenuOption( "Utilities", "RTX Remix", "RTX_Client_ToPBR", "#ToPBR Conversion", "", "", function( panel )
+        spawnmenu.AddToolMenuOption( "Utilities", "RTX Remix", "RTX_Client_ToPBR", "#ToPBR", "", "", function( panel )
             panel:ClearControls()
-            
-            panel:Help("Automatic PBR Conversion")
-            panel:ControlHelp("Converts Source Engine materials to PBR format for RTX Remix.")
-            
             -- Master toggle
-            local enabledCheckbox = panel:CheckBox("Enable ToPBR Conversion", "rtx_topbr_enabled")
-            panel:ControlHelp("Enable automatic conversion of materials to PBR format.")
+            local enabledCheckbox = panel:CheckBox("Enable ToPBR", "rtx_topbr_enabled")
+            panel:ControlHelp("Converts source material maps (normal, bump, ssbump, etc) to a pseudo-pbr format for RTX Remix.")
+            panel:ControlHelp("This is a work in progress, conversion will never be 100% accurate.")
+            panel:ControlHelp("This will use a significant amount of VRAM, disk space, and may cause stability issues.")
             
             -- Auto-processing toggle
             local autoCheckbox = panel:CheckBox("Auto-Process on Map Load", "rtx_topbr_auto")
@@ -263,28 +261,9 @@ if BRANCH == "x86-64" or BRANCH == "chromium" then
             panel:ControlHelp("Generate metallic maps from base texture brightness.")
             panel:ControlHelp("WARNING: May cause dark materials to appear completely black!")
             
-            -- Auto-discover companion textures
-            local autodiscoverCheckbox = panel:CheckBox("Auto-Discover Textures", "rtx_topbr_autodiscover")
-            panel:ControlHelp("Search for companion textures (_normal, _mask, _spec) not in VMT.")
-            
             -- Debug output toggle
             local debugCheckbox = panel:CheckBox("Debug Output", "rtx_topbr_debug")
             panel:ControlHelp("Shows debug messages in console for troubleshooting.")
-            
-            panel:Help("Manual Controls")
-            
-            -- Process button
-            local processButton = panel:Button("Process Materials Now")
-            processButton.DoClick = function()
-                RunConsoleCommand("rtx_topbr_process")
-            end
-            panel:ControlHelp("Manually trigger PBR conversion for all tracked materials.")
-            
-            -- Stats button
-            local statsButton = panel:Button("Show Statistics")
-            statsButton.DoClick = function()
-                RunConsoleCommand("rtx_topbr_stats")
-            end
             
             -- Clear cache button
             local clearButton = panel:Button("Clear Cache")

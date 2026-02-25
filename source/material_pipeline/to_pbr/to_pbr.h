@@ -331,6 +331,10 @@ public:
     // Clear processed materials cache (for map changes)
     void ClearCache();
     
+    // Global enable/disable for ToPBR processing (controlled by rtx_topbr_enabled ConVar)
+    void SetEnabled(bool enabled) { m_enabled.store(enabled, std::memory_order_relaxed); }
+    bool IsEnabled() const { return m_enabled.load(std::memory_order_relaxed); }
+    
     // Enable/disable auto-processing of new materials
     void SetAutoProcessing(bool enabled) { m_autoProcessing = enabled; }
     bool IsAutoProcessingEnabled() const { return m_autoProcessing; }
@@ -483,6 +487,7 @@ private:
     remix::Interface* m_remixInterface;
     IFileSystem* m_fileSystem;
     bool m_initialized;
+    std::atomic<bool> m_enabled{true};
     bool m_autoProcessing;
     bool m_debugOutput;
     bool m_metallicGenerationEnabled;  // Experimental metallic generation from base texture brightness (default: false)

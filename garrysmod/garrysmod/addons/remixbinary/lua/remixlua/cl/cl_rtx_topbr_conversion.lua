@@ -19,7 +19,7 @@ if not (BRANCH == "x86-64" or BRANCH == "chromium") then return end
 
 -- ConVars for configuration
 -- NOTE: Material discovery is handled by RTXMaterialPipeline. ToPBR only processes individual materials.
-CreateClientConVar("rtx_topbr_enabled", "1", true, false, "Enable ToPBR conversion stage")
+CreateClientConVar("rtx_topbr_enabled", "0", true, false, "Enable ToPBR conversion stage")
 CreateClientConVar("rtx_topbr_debug", "0", true, false, "Enable debug output")
 CreateClientConVar("rtx_topbr_metallic", "0", true, false, "Enable experimental metallic generation from base texture brightness (may cause black materials)")
 CreateClientConVar("rtx_topbr_autodiscover", "1", true, false, "Auto-discover companion textures (_normal, _mask, _spec) not explicitly referenced in VMT")
@@ -71,11 +71,11 @@ function RTXToPBR.Initialize()
         return false
     end
     
-    -- Check if already initialized by C++ (during RemixAPI init)
-    if processor.IsInitialized and processor.IsInitialized() then
-        isInitialized = true
-        MsgC(Color(100, 255, 100), "[RTX ToPBR] MaterialPipeline.ToPBR already initialized by C++\n")
-        -- Sync ConVars to C++
+    -- Helper to sync all ConVars to C++
+    local function SyncConVarsToProcessor()
+        if processor.SetEnabled then
+            processor.SetEnabled(GetConVarBoolSafe("rtx_topbr_enabled", true))
+        end
         processor.SetDebugOutput(GetConVarBoolSafe("rtx_topbr_debug", false))
         if processor.SetMetallicGeneration then
             processor.SetMetallicGeneration(GetConVarBoolSafe("rtx_topbr_metallic", false))
@@ -86,6 +86,13 @@ function RTXToPBR.Initialize()
         if processor.SetParseCommentedProperties then
             processor.SetParseCommentedProperties(GetConVarBoolSafe("rtx_topbr_parse_commented_properties", true))
         end
+    end
+    
+    -- Check if already initialized by C++ (during RemixAPI init)
+    if processor.IsInitialized and processor.IsInitialized() then
+        isInitialized = true
+        MsgC(Color(100, 255, 100), "[RTX ToPBR] MaterialPipeline.ToPBR already initialized by C++\n")
+        SyncConVarsToProcessor()
         return true
     end
     
@@ -96,17 +103,7 @@ function RTXToPBR.Initialize()
         return false
     end
     
-    -- Sync ConVars to C++
-    processor.SetDebugOutput(GetConVarBoolSafe("rtx_topbr_debug", false))
-    if processor.SetMetallicGeneration then
-        processor.SetMetallicGeneration(GetConVarBoolSafe("rtx_topbr_metallic", false))
-    end
-    if processor.SetAutoDiscover then
-        processor.SetAutoDiscover(GetConVarBoolSafe("rtx_topbr_autodiscover", true))
-    end
-    if processor.SetParseCommentedProperties then
-        processor.SetParseCommentedProperties(GetConVarBoolSafe("rtx_topbr_parse_commented_properties", true))
-    end
+    SyncConVarsToProcessor()
     
     isInitialized = true
     MsgC(Color(100, 255, 100), "[RTX ToPBR] Initialized successfully\n")
@@ -638,6 +635,14 @@ PBR metallic surfaces reflect their base color.
     MsgC(Color(100, 200, 255), string.rep("=", 60) .. "\n\n")
 end, nil, "Show ToPBR help information")
 
+-- Sync rtx_topbr_enabled ConVar to C++ when changed at runtime
+cvars.AddChangeCallback("rtx_topbr_enabled", function(_, _, new)
+    local processor = GetProcessor()
+    if processor and processor.SetEnabled then
+        processor.SetEnabled(tobool(new))
+    end
+end, "RTXToPBREnabled")
+
 -- NOTE: Auto-processing and continuous processing hooks have been REMOVED.
 -- All material discovery and processing timing is now handled by RTXMaterialPipeline.
 -- ToPBR is called as Stage 3 of the unified pipeline.
@@ -647,6 +652,11 @@ MsgC(Color(100, 255, 100), "[RTX ToPBR] Runtime PBR Converter loaded.\n")
 MsgC(Color(200, 200, 200), "  Processing controlled by RTXMaterialPipeline.\n")
 if MaterialPipeline and MaterialPipeline.ToPBR then
     MsgC(Color(200, 200, 200), "  C++ MaterialPipeline.ToPBR module available.\n")
+    -- Sync enabled state immediately at load time so a saved rtx_topbr_enabled=0
+    -- takes effect before the C++ worker thread processes any queued materials
+    if MaterialPipeline.ToPBR.SetEnabled then
+        MaterialPipeline.ToPBR.SetEnabled(GetConVarBoolSafe("rtx_topbr_enabled", true))
+    end
 else
     MsgC(Color(255, 200, 100), "  C++ MaterialPipeline.ToPBR module not loaded - waiting for binary module.\n")
 end
