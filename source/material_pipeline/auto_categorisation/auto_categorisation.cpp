@@ -37,6 +37,7 @@ static remix::Interface* s_remix = nullptr;
 static Config s_config;
 static std::recursive_mutex s_mutex;
 static std::unordered_map<uint64_t, uint32_t> s_hashToCategoryFlags;
+static std::unordered_map<std::string, uint32_t> s_materialToCategoryFlags;
 static std::vector<PendingCategory> s_pendingCategories;
 static std::unordered_set<std::string> s_worldTextureNames;
 static Stats s_stats;
@@ -190,6 +191,7 @@ void Initialize(remix::Interface* remix) {
     s_remix = remix;
     s_config = Config();
     s_hashToCategoryFlags.clear();
+    s_materialToCategoryFlags.clear();
     s_pendingCategories.clear();
     s_worldTextureNames.clear();
     s_stats = Stats();
@@ -209,6 +211,7 @@ void Shutdown() {
     }
     s_pendingCategories.clear();
     s_hashToCategoryFlags.clear();
+    s_materialToCategoryFlags.clear();
     s_worldTextureNames.clear();
     s_remix = nullptr;
     s_initialized = false;
@@ -495,6 +498,11 @@ uint32_t DetectAndApply(const std::string& materialName,
     uint32_t flags = DetectCategory(materialName, material);
     if (flags == 0) return 0;
     
+    {
+        std::lock_guard<std::recursive_mutex> lock(s_mutex);
+        s_materialToCategoryFlags[materialName] = flags;
+    }
+    
     // Get hash
     auto result = s_remix->dxvk_GetTextureHash(texture);
     if (!result) return 0;
@@ -520,10 +528,14 @@ uint32_t DetectAndApplyAllVariants(const std::string& materialName,
     uint32_t flags = DetectCategory(materialName, material);
     if (flags == 0) return 0;
     
-    bool anyApplied = false;
-    bool anyPending = false;
+    {
+        std::lock_guard<std::recursive_mutex> lock(s_mutex);
+        s_materialToCategoryFlags[materialName] = flags;
+    }
     
-    // Try ALL texture variants - some may have valid hashes while others don't
+    bool anyApplied = false;
+    int pendingCount = 0;
+    
     for (IDirect3DTexture9* texture : *textureVariants) {
         if (!texture) continue;
         
@@ -533,24 +545,50 @@ uint32_t DetectAndApplyAllVariants(const std::string& materialName,
         uint64_t hash = result.value();
         
         if (hash != 0) {
-            // Got a valid hash - apply category
             ApplyToHash(hash, flags, materialName);
             anyApplied = true;
         } else {
-            // Hash not ready - queue for retry (only queue first one to avoid duplicates)
-            if (!anyPending) {
-                AddPendingCategory(texture, materialName, flags);
-                anyPending = true;
-            }
+            AddPendingCategory(texture, materialName, flags);
+            pendingCount++;
         }
     }
     
-    if (s_config.debugOutput && anyApplied) {
-        Msg("[AutoCategorisation] Applied flags 0x%X to '%s' (%zu variants)\n", 
-            flags, materialName.c_str(), textureVariants->size());
+    if (s_config.debugOutput && (anyApplied || pendingCount > 0)) {
+        Msg("[AutoCategorisation] Applied flags 0x%X to '%s' (%zu variants, %d applied, %d pending)\n", 
+            flags, materialName.c_str(), textureVariants->size(), 
+            anyApplied ? (int)textureVariants->size() - pendingCount : 0, pendingCount);
     }
     
     return flags;
+}
+
+bool ApplyKnownCategoryToTexture(const std::string& materialName, IDirect3DTexture9* texture) {
+    if (!s_remix || !texture) return false;
+    
+    uint32_t flags = 0;
+    {
+        std::lock_guard<std::recursive_mutex> lock(s_mutex);
+        auto it = s_materialToCategoryFlags.find(materialName);
+        if (it == s_materialToCategoryFlags.end() || it->second == 0) return false;
+        flags = it->second;
+    }
+    
+    auto result = s_remix->dxvk_GetTextureHash(texture);
+    if (!result) return false;
+    
+    uint64_t hash = result.value();
+    
+    if (hash != 0) {
+        ApplyToHash(hash, flags, materialName);
+        if (s_config.debugOutput) {
+            Msg("[AutoCategorisation] Applied stored flags 0x%X to new variant of '%s' (hash 0x%llX)\n",
+                flags, materialName.c_str(), hash);
+        }
+        return true;
+    } else {
+        AddPendingCategory(texture, materialName, flags);
+        return false;
+    }
 }
 
 void ApplyToHash(uint64_t hash, uint32_t flags, const std::string& materialName) {
@@ -647,6 +685,7 @@ void RemoveHashCategoryFlags(uint64_t hash) {
 void ClearHashCategoryMappings() {
     std::lock_guard<std::recursive_mutex> lock(s_mutex);
     s_hashToCategoryFlags.clear();
+    s_materialToCategoryFlags.clear();
 }
 
 bool GetHashCategoryFlags(uint64_t hash, uint32_t* outFlags) {

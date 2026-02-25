@@ -97,6 +97,9 @@ local materialHashCache = {}
 -- Local cache of texture names that have been processed
 local processedTextures = {}
 
+-- Map token to guard against stale timers firing after map change
+local currentMapToken = game.GetMap() or ""
+
 --[[
     Check if a material is self-illuminated (emissive) with proper validation
     @param materialName string - The material name
@@ -111,12 +114,6 @@ function RemixCategoryManager.IsMaterialEmissive(materialName)
     local requireMask = GetConVar("rtx_require_emissive_mask"):GetBool()
     local hasSelfillum = false
     local hasMask = false
-    
-    -- Check Shader Name first - UnlitGeneric is always emissive (no mask needed)
-    local shader = mat:GetShader()
-    if shader and shader:lower() == "unlitgeneric" then
-        return true
-    end
     
     -- Raw VMT File Parse
     local vmtPath = "materials/" .. materialName
@@ -366,16 +363,33 @@ function RemixCategoryManager.IsMaterialDecal(materialName)
     local decalFloat = mat:GetFloat("$decal")
     if decalFloat and decalFloat >= 1 then return true end
     
-    -- Method 4: Check decal shaders
+    -- Method 4: Check decal shaders (prefix match for DX suffixes like DecalModulate_dx6)
     local shader = mat:GetShader()
     if shader then
         local s = shader:lower()
-        if s == "decal" or s == "decalmodulate" then
+        if s:find("^decalmodulate") or 
+           (s:find("^decal") and not s:find("modulate")) then
             return true
         end
     end
     
-    -- Method 5: Raw VMT File Parse
+    -- Method 5: Path-based detection (matches C++ heuristics, exclude light materials)
+    local lowerName = materialName:lower()
+    if (lowerName:find("^decals/") or
+        lowerName:find("/decals/") or
+        lowerName:find("overlay") or
+        lowerName:find("bulleth") or
+        lowerName:find("_blood") or
+        lowerName:find("blood_") or
+        lowerName:find("/blood") or
+        lowerName:find("scorch")) and
+       not lowerName:find("light") and
+       not lowerName:find("/lights/") and
+       not lowerName:find("^lights/") then
+        return true
+    end
+    
+    -- Method 6: Raw VMT File Parse
     local vmtPath = "materials/" .. materialName
     if not string.EndsWith(vmtPath, ".vmt") then
         vmtPath = vmtPath .. ".vmt"
@@ -383,16 +397,13 @@ function RemixCategoryManager.IsMaterialDecal(materialName)
     
     local content = file.Read(vmtPath, "GAME")
     if content then
-        -- Parse line-by-line to properly handle comments
         local lines = string.Explode("\n", content)
         
         for _, line in ipairs(lines) do
             local lowerLine = line:lower()
             
-            -- Skip commented lines
             local trimmedLine = string.Trim(lowerLine)
             if not string.StartsWith(trimmedLine, "//") then
-                -- Check for $decal set to 1 (not commented out)
                 if lowerLine:find('["\']?%$decal["\']?%s+["\']?1["\']?') then
                     return true
                 end
@@ -411,11 +422,13 @@ end
 function RemixCategoryManager.IsMaterialParticle(materialName)
     local lowerName = materialName:lower()
     
-    -- Check common particle paths
+    -- Check common particle paths (both singular and plural forms)
     if lowerName:find("^particles/") or 
+       lowerName:find("^particle/") or
        lowerName:find("^effects/") or 
        lowerName:find("^sprites/") or
        lowerName:find("/particles/") or
+       lowerName:find("/particle/") or
        lowerName:find("/effects/") or
        lowerName:find("/sprites/") then
         return true
@@ -424,16 +437,24 @@ function RemixCategoryManager.IsMaterialParticle(materialName)
     local mat = Material(materialName)
     if not mat or mat:IsError() then return false end
     
-    -- Check shaders used by particles
     local shader = mat:GetShader()
     if shader then
         local s = shader:lower()
-        if s == "sprite" or 
-           s == "spritecard" or 
-           s == "modulate" or
-           s == "refract" or -- Refractive particles
-           s == "cable" then -- Beams/Cables
+        
+        -- Prefix match to handle DX suffixes (e.g. Sprite_dx6, Modulate_dx6)
+        if s:find("^sprite") or 
+           s:find("^cable") or 
+           s:find("^modulate") then
             return true
+        end
+        
+        -- UnlitGeneric with $vertexalpha + $vertexcolor = particle
+        if s:find("^unlitgeneric") then
+            local vertexAlpha = mat:GetInt("$vertexalpha")
+            local vertexColor = mat:GetInt("$vertexcolor")
+            if vertexAlpha == 1 and vertexColor == 1 then
+                return true
+            end
         end
     end
     
@@ -795,7 +816,11 @@ function RemixCategoryManager.SetMaterialCategory(materialName, categoryFlags, c
     RemixMaterial.TrackMaterial(materialName)
     
     -- Wait longer for displacement materials to be rendered (they need Stage 1 textures)
+    local timerMapToken = currentMapToken
     timer.Simple(0.5, function()
+        -- Abort if the map changed since this timer was created
+        if timerMapToken ~= currentMapToken then return end
+        
         local foundDelayed = false
         local delayedHashes = {}
         
@@ -1396,10 +1421,24 @@ function RemixCategoryManager.SmartMarkWorldTextures()
                         MsgC(Color(100, 255, 100), string.format("[RemixCategoryManager] Categorizing displacement: %s\n", materialName))
                     end
                 
-                -- Water textures
+                -- Water textures (validate with shader to avoid false positives like "waterstain")
                 elseif string.find(lowerName, "water") or string.find(lowerName, "slime") then
-                    category = RemixCategoryManager.PRESET.WATER
-                    stats.water = stats.water + 1
+                    local waterMat = Material(materialName)
+                    local isWater = false
+                    if waterMat and not waterMat:IsError() then
+                        local waterShader = (waterMat:GetShader() or ""):lower()
+                        if waterShader:find("water") or waterShader:find("refract") then
+                            isWater = true
+                        end
+                    end
+                    if not isWater then
+                        -- Fallback: if name strongly suggests water (starts with water path)
+                        isWater = lowerName:find("^water/") or lowerName:find("/water/") or lowerName:find("^nature/water")
+                    end
+                    if isWater then
+                        category = RemixCategoryManager.PRESET.WATER
+                        stats.water = stats.water + 1
+                    end
                 
                 -- BSP world geometry textures (faces from brushes) - mark as DECAL_STATIC
                 -- This is ONLY for actual world brushes, not props
@@ -2001,6 +2040,11 @@ end
 hook.Add("InitPostEntity", "RemixCategoryManager_InitFlags", function()
     InitializeCppModuleFlags()
     MsgC(Color(100, 200, 255), "[RemixCategoryManager] C++ module flags initialized from ConVars\n")
+    
+    -- Always clear stale caches on map change regardless of auto-categorize setting
+    processedTextures = {}
+    materialHashCache = {}
+    currentMapToken = game.GetMap() or ""
     
     -- Reset guard flag so auto-categorization runs on each new map load
     autoInitRan = false

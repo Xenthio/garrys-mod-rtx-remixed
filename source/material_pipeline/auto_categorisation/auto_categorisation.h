@@ -74,7 +74,7 @@ struct Config {
     bool emissiveEnabled = true;      // Auto-categorize emissive materials
     bool skyEnabled = true;           // Auto-categorize skybox
     bool waterEnabled = true;         // Auto-categorize water
-    bool toolEnabled = true;          // Auto-categorize tool textures
+    bool toolEnabled = false;         // Auto-categorize tool textures (off by default, left to user)
     bool debugOutput = false;         // Enable debug logging
 };
 
@@ -130,6 +130,13 @@ uint32_t DetectAndApply(const std::string& materialName,
 uint32_t DetectAndApplyAllVariants(const std::string& materialName, 
                                     IMaterial* material,
                                     const std::vector<IDirect3DTexture9*>* textureVariants);
+
+// Apply previously-detected category flags to a newly-discovered texture variant.
+// Uses stored flags from a prior DetectAndApply/DetectAndApplyAllVariants call.
+// @param materialName - Name of the material (lowercase)
+// @param texture - The new D3D9 texture variant
+// @return true if flags were applied immediately, false if queued for pending or no stored flags
+bool ApplyKnownCategoryToTexture(const std::string& materialName, IDirect3DTexture9* texture);
 
 // Detect category for a material without applying
 // @param materialName - Name of the material (lowercase)

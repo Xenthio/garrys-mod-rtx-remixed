@@ -483,6 +483,14 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                         if (Stage == 0) {
                             MaterialPipeline::Pipeline::OnNewMaterialDetected(
                                 tracker.m_currentMaterialName, hash, p2DTexture);
+                            
+                            // For materials that were already categorized, apply stored flags
+                            // to this new variant immediately (or queue for pending if hash==0).
+                            // This handles animated textures where new frames appear over time.
+                            if (textures.size() > 1) {
+                                MaterialPipeline::AutoCategorisation::ApplyKnownCategoryToTexture(
+                                    tracker.m_currentMaterialName, p2DTexture);
+                            }
                         }
                     }
                 } else {

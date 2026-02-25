@@ -877,7 +877,12 @@ int Pipeline::ProcessAllMaterialsThroughPipeline() {
         // -------------------------------------------------------------------------
         // STAGE 3: AutoCategorisation (FAST - runs synchronously)
         // -------------------------------------------------------------------------
-        if (texture) {
+        const std::vector<IDirect3DTexture9*>* variants = 
+            D3D9TextureTracker::Instance().GetTextureVariantsForMaterial(materialName.c_str());
+        
+        if (variants && !variants->empty()) {
+            AutoCategorisation::DetectAndApplyAllVariants(materialName, material, variants);
+        } else if (texture) {
             AutoCategorisation::DetectAndApply(materialName, material, texture);
         }
         
