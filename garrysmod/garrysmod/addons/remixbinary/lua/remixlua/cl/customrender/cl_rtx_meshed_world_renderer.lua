@@ -648,7 +648,10 @@ local function Initialize(token)
 end
 
 -- Hooks
-RenderCore.Register("InitPostEntity", "RTXMeshInit", Initialize)
+RenderCore.Register("InitPostEntity", "RTXMeshInit", function(token)
+    if not CONVARS.ENABLED:GetBool() then return end
+    Initialize(token)
+end)
 
 RenderCore.Register("PostCleanupMap", "RTXMeshRebuild", function()
     RenderCore.RequestRebuild("PostCleanupMap")
@@ -663,7 +666,11 @@ end)
 -- ConVar Changes
 cvars.AddChangeCallback("rtx_mwr_enable", function(_, _, new)
     if tobool(new) then
-        EnableCustomRendering()
+        if not buildState.active and not next(mapMeshes.opaque) and not next(mapMeshes.translucent) then
+            Initialize()
+        else
+            EnableCustomRendering()
+        end
     else
         DisableCustomRendering()
     end

@@ -766,7 +766,10 @@ local function Initialize(token)
     end)
 end
 
-RenderCore.Register("InitPostEntity", "RTXDisp_Init", Initialize)
+RenderCore.Register("InitPostEntity", "RTXDisp_Init", function(token)
+    if not CONVARS.ENABLED:GetBool() then return end
+    Initialize(token)
+end)
 
 RenderCore.Register("PostCleanupMap", "RTXDisp_Rebuild", function()
     RenderCore.RequestRebuild("PostCleanupMap")
@@ -798,7 +801,11 @@ end)
 -- ConVar Changes
 cvars.AddChangeCallback("rtx_dpr_enable", function(_, _, new)
     if tobool(new) then
-        EnableRendering()
+        if not buildState.active and not next(dispMeshes) then
+            Initialize()
+        else
+            EnableRendering()
+        end
     else
         DisableRendering()
     end

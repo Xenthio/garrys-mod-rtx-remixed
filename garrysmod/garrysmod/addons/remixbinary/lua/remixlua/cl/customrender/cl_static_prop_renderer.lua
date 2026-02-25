@@ -635,6 +635,7 @@ local function ProcessStaticProp(propData)
     
     -- Cache BSP clusters for PVS checks (multi-cluster for better precision)
     -- Use AABB to find all clusters this prop touches
+    prop.clusters = {}
     if NikNaks and NikNaks.CurrentMap and meshCache[cacheKey] and not meshCache[cacheKey].error then
         local meshData = meshCache[cacheKey]
         if meshData.mins and meshData.maxs then
@@ -661,35 +662,32 @@ local function ProcessStaticProp(propData)
                 if corner.z > worldMaxs.z then worldMaxs.z = corner.z end
             end
             
-            -- Get all leaves that intersect this AABB
-            prop.clusters = {}
+            -- Get all leaves that intersect this AABB (pcall the entire loop to
+            -- prevent a single bad leaf from killing the caching coroutine)
             if NikNaks.CurrentMap.AABBInLeafs then
                 local ok, leaves = pcall(function() return NikNaks.CurrentMap:AABBInLeafs(0, worldMins, worldMaxs) end)
                 if ok and leaves then
-                    for _, leaf in ipairs(leaves) do
-                        local cl = leaf.GetCluster and leaf:GetCluster() or -1
-                        if cl and cl >= 0 then
-                            prop.clusters[cl] = true
+                    local clusterOk, clusterErr = pcall(function()
+                        for _, leaf in ipairs(leaves) do
+                            local cl = leaf.GetCluster and leaf:GetCluster() or -1
+                            if cl and cl >= 0 then
+                                prop.clusters[cl] = true
+                            end
                         end
+                    end)
+                    if not clusterOk then
+                        DebugPrint("AABB cluster extraction error:", clusterErr)
                     end
                 end
             end
-            -- Fallback to origin-based cluster if multi-cluster failed
-            if not next(prop.clusters) and NikNaks.CurrentMap.ClusterFromPoint then
-                local cl = NikNaks.CurrentMap:ClusterFromPoint(prop.origin) or -1
-                if cl >= 0 then
-                    prop.clusters[cl] = true
-                end
-            end
         end
-    else
-        -- Fallback: single cluster from origin
-        prop.clusters = {}
-        if NikNaks and NikNaks.CurrentMap and NikNaks.CurrentMap.ClusterFromPoint then
-            local cl = NikNaks.CurrentMap:ClusterFromPoint(prop.origin) or -1
-            if cl >= 0 then
-                prop.clusters[cl] = true
-            end
+    end
+    -- Always include the origin-based cluster as a safety net so props whose
+    -- model origin is outside their geometry bounds are never missed by PVS
+    if NikNaks and NikNaks.CurrentMap and NikNaks.CurrentMap.ClusterFromPoint then
+        local cl = NikNaks.CurrentMap:ClusterFromPoint(prop.origin) or -1
+        if cl >= 0 then
+            prop.clusters[cl] = true
         end
     end
     
@@ -894,8 +892,15 @@ local function CacheMapStaticProps()
         return
     end
     
+    -- NikNaks stores static props with 0-based indices; build a sequential list
+    -- so we can safely iterate and count them.
+    local staticPropsList = {}
+    for _, propData in pairs(staticPropsRaw) do
+        staticPropsList[#staticPropsList + 1] = propData
+    end
+    
     -- Debug output
-    print("[Static Render] Retrieved", #staticPropsRaw, "static props")
+    print("[Static Render] Retrieved", #staticPropsList, "static props")
     
     -- Coroutine-driven processing within a per-frame budget
     local processedSoFar = 0
@@ -904,8 +909,8 @@ local function CacheMapStaticProps()
     co = coroutine.create(function()
         local startTime = SysTime()
         local frameBudget = 0.003
-        for i = 1, #staticPropsRaw do
-            local propData = staticPropsRaw[i]
+        for i = 1, #staticPropsList do
+            local propData = staticPropsList[i]
             local prop = ProcessStaticProp(propData)
             if prop then
                 table.insert(cachedStaticProps, prop)
@@ -1215,6 +1220,9 @@ end
 cvars.AddChangeCallback("rtx_spr_enable", function(_, _, new)
     if tobool(new) then
         RunConsoleCommand("r_drawstaticprops", "0")
+        if not isDataReady and not isCachingInProgress then
+            timer.Simple(0.1, CacheMapStaticProps)
+        end
     else
         RunConsoleCommand("r_drawstaticprops", "1")
     end
