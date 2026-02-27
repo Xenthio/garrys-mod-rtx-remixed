@@ -247,6 +247,8 @@ if BRANCH == "x86-64" or BRANCH == "chromium" then
             panel:ControlHelp("Converts source material maps (normal, bump, ssbump, etc) to a pseudo-pbr format for RTX Remix.")
             panel:ControlHelp("This is a work in progress, conversion will never be 100% accurate.")
             panel:ControlHelp("This will use a significant amount of VRAM, disk space, and may cause stability issues.")
+            panel:ControlHelp("")
+            panel:ControlHelp("Requires a map reload to enable.")
             
             -- Experimental metallic generation
             local metallicCheckbox = panel:CheckBox("Experimental Metallic Detection", "rtx_topbr_metallic")
