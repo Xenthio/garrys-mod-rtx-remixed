@@ -133,15 +133,13 @@ local function Draw2DSky()
     local fn = FrameNumber()
     if lastDrawFrame == fn then return end
     lastDrawFrame = fn
-    -- Only draw our sky when engine world is hidden to avoid double sky
-    local cv_world = GetConVar("r_drawworld")
-    local cv_opaque = GetConVar("r_drawopaqueworld")
+    -- Only draw our sky when engine world surface drawing is patched out to avoid double sky.
+    -- With the Shader_DrawChains patch, r_drawworld stays 1 but surfaces aren't drawn.
+    local cv_skip = GetConVar("rtx_patch_skip_world_draw")
     local cv_capture = GetConVar("rtx_capture_mode")
-    local engineWorldOn = true
-    if cv_world and cv_world:GetInt() == 0 then engineWorldOn = false end
-    if cv_opaque and cv_opaque:GetInt() == 0 then engineWorldOn = false end
-    if cv_capture and cv_capture:GetInt() == 1 then engineWorldOn = false end
-    if engineWorldOn then return end
+    local engineWorldHidden = cv_skip and cv_skip:GetInt() == 1
+    if cv_capture and cv_capture:GetInt() == 1 then engineWorldHidden = true end
+    if not engineWorldHidden then return end
 
     local name = getSkyName()
     local mats = getSkyMaterials(name)

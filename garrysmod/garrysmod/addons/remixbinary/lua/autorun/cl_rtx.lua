@@ -24,15 +24,20 @@ end
 local cv_custom_render = CreateClientConVar("rtx_custom_render", "0", true, false, "Toggle Remix custom render preset")
 
 local function ApplyCustomRenderPreset(enable)
-    RunConsoleCommand("r_drawworld", enable and "0" or "1")
-    RunConsoleCommand("r_drawopaqueworld", enable and "0" or "1")
+    -- r_drawworld and r_drawopaqueworld stay at 1 so the engine still collects
+    -- surface data needed for overlay and decal rendering.  Shader_DrawChains is
+    -- patched out instead to prevent double-drawing of world surface polygons.
     RunConsoleCommand("r_drawstaticprops", enable and "0" or "1")
     RunConsoleCommand("r_DrawDisp", enable and "0" or "1")
-    RunConsoleCommand("r_drawdecals", enable and "0" or "1")
     RunConsoleCommand("r_DrawDetailProps", enable and "0" or "1")
     RunConsoleCommand("rtx_mwr_enable", enable and "1" or "0")
     RunConsoleCommand("rtx_spr_enable", enable and "1" or "0")
     RunConsoleCommand("rtx_dpr_enable", enable and "1" or "0")
+
+    -- Patch out Shader_DrawChains so world surfaces aren't drawn by the engine,
+    -- but overlays (OverlayMgr()->RenderOverlays) and decals (DecalSurfaceDraw)
+    -- still render because they run after Shader_DrawChains in Shader_WorldEnd.
+    RunConsoleCommand("rtx_patch_skip_world_draw", enable and "1" or "0")
 
     -- Engine patches: when custom rendering is on, only keep frustum culling + BSP culling patches
     -- When off, enable all patches since engine rendering needs them for RTX

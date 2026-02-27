@@ -26,6 +26,7 @@ static ConVar* cv_world_backfaces2 = nullptr;
 static ConVar* cv_cullnode = nullptr;
 static ConVar* cv_frustumcull_client = nullptr;
 static ConVar* cv_forcenovis = nullptr;
+static ConVar* cv_skip_world_draw = nullptr;
 
 static ConVar* CreatePatchConVar(const char* name, const char* defaultVal, const char* help) {
 	ConVar* cv = nullptr;
@@ -68,6 +69,7 @@ static void RegisterPatchConVars() {
 	cv_cullnode           = CreatePatchConVar("rtx_patch_cullnode", "1", "Disable R_CullNode BSP culling");
 	cv_frustumcull_client = CreatePatchConVar("rtx_patch_frustumcull_client", "1", "Disable client frustum culling");
 	cv_forcenovis         = CreatePatchConVar("rtx_patch_forcenovis", "1", "Force r_novis (disable PVS culling)");
+	cv_skip_world_draw    = CreatePatchConVar("rtx_patch_skip_world_draw", "0", "Skip engine world surface drawing (Shader_DrawChains) so overlays/decals still render");
 
 	Msg("[PatchManager] ConVar registration complete\n");
 }
@@ -115,6 +117,15 @@ static void RegisterCullingPatches() {
 			sig, sizeof(sig) - 1, 0, {0x31, 0xC0, 0xC3}); // xor eax,eax; ret
 	}
 
+	{
+		// Shader_DrawChains - skip world surface polygon drawing so overlays/decals still render.
+		// Signature starts at 'sub rsp, 60h' (2 bytes into the function); offset -2 targets
+		// the actual entry point ('push rbx') with a ret instruction.
+		static const char sig[] = "48 83 EC 60 48 89 6C 24 70 41 0F B6 E8";
+		pm.RegisterPatch("rtx_patch_skip_world_draw", "engine.dll",
+			sig, sizeof(sig) - 1, -2, {0xC3}); // ret
+	}
+
 	// client.dll patches (from applypatch.py patches64)
 	{
 		// c_frustumcull
@@ -147,6 +158,7 @@ static void ApplyInitialPatches() {
 	if (!cv_cullnode || cv_cullnode->GetBool()) pm.ApplyPatch("rtx_patch_cullnode");
 	if (!cv_frustumcull_client || cv_frustumcull_client->GetBool()) pm.ApplyPatch("rtx_patch_frustumcull_client");
 	if (!cv_forcenovis || cv_forcenovis->GetBool()) pm.ApplyPatch("rtx_patch_forcenovis");
+	if (cv_skip_world_draw && cv_skip_world_draw->GetBool()) pm.ApplyPatch("rtx_patch_skip_world_draw");
 }
 
 // ===================================================================
@@ -175,6 +187,7 @@ void SyncCullingPatches() {
 	SyncPatch("rtx_patch_cullnode", cv_cullnode);
 	SyncPatch("rtx_patch_frustumcull_client", cv_frustumcull_client);
 	SyncPatch("rtx_patch_forcenovis", cv_forcenovis);
+	SyncPatch("rtx_patch_skip_world_draw", cv_skip_world_draw);
 }
 
 // ===================================================================

@@ -677,8 +677,9 @@ cvars.AddChangeCallback("rtx_mwr_enable", function(_, _, new)
 end)
 
 cvars.AddChangeCallback("rtx_mwr_capture_mode", function(_, _, new)
-    -- Invert the value: if capture_mode is 1, r_drawworld should be 0 and vice versa
-    RunConsoleCommand("r_drawworld", new == "1" and "0" or "1")
+    -- In capture mode, temporarily restore engine world drawing by disabling the patch.
+    -- r_drawworld stays at 1 so the engine always collects surfaces for overlays/decals.
+    RunConsoleCommand("rtx_patch_skip_world_draw", new == "1" and "0" or "1")
 end)
 
 -- Rebuild sinks and debounce on relevant ConVars

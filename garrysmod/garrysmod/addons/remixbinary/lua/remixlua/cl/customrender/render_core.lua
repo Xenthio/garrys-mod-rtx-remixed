@@ -1023,7 +1023,9 @@ do
     local captureConVar = CreateClientConVar("rtx_capture_mode", "0", true, false, "RTX Remix capture mode")
     cvars.AddChangeCallback("rtx_capture_mode", function(_, _, new)
         local on = (new == "1")
-        RunConsoleCommand("r_drawworld", on and "0" or "1")
+        -- r_drawworld stays at 1 so the engine always collects surfaces for overlays/decals.
+        -- Temporarily restore engine world drawing by disabling the Shader_DrawChains patch.
+        RunConsoleCommand("rtx_patch_skip_world_draw", on and "0" or "1")
         RunConsoleCommand("r_drawstaticprops", on and "0" or "1")
     end, "RemixRenderCoreCapture")
 
