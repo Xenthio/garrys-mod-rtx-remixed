@@ -21,6 +21,7 @@
 #include <fstream>
 #include <sstream>
 #include <direct.h>  // For _mkdir on Windows
+#include <cstdio>    // For std::rename, std::remove (staging file atomic rename)
 
 // External globals
 extern IMaterialSystem* materials;
@@ -4182,9 +4183,19 @@ void TextureProcessor::WriteUSDAIfNeeded() {
         return;
     }
     
+    // Debounce: don't write if we wrote recently and background processing is still active.
+    // This prevents Remix from constantly reloading the mod layer mid-processing,
+    // which causes driver lockups on large maps.
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - m_lastUSDAWriteTime).count();
+    if (elapsed < USDA_WRITE_DEBOUNCE_SECONDS && m_backgroundProcessing.load(std::memory_order_relaxed)) {
+        return;
+    }
+    
     if (WriteModUSDA()) {
         m_needsUSDAUpdate = false;
-        Msg("[MaterialPipeline::ToPBR] USDA updated with %d materials. Restart game for changes to take effect.\n",
+        m_lastUSDAWriteTime = now;
+        Msg("[MaterialPipeline::ToPBR] USDA updated with %d materials.\n",
             (int)m_processedMaterialInfo.size());
     }
 }
@@ -4218,15 +4229,28 @@ bool TextureProcessor::WriteModUSDA() {
         return true;
     }
     
-    // Write mod.usda using USDA module
+    // Write mod.usda using USDA module (this file rarely changes, no staging needed)
     if (!USDA::WriteModUSDAFile(modDir)) {
         return false;
     }
     
-    // Write materials.usda using USDA module
-    if (!USDA::WriteMaterialsUSDAFile(modDir, m_outputDirectory, m_processedMaterialInfo, m_debugOutput)) {
+    // Write materials.usda via staging file + atomic rename to avoid
+    // triggering Remix reloads with a partially-written file
+    std::string stagingPath = modDir + "/materials.usda.tmp";
+    if (!USDA::WriteMaterialsUSDAFile(modDir, m_outputDirectory, m_processedMaterialInfo, m_debugOutput, stagingPath)) {
         return false;
     }
+    
+    // Atomic rename: staging -> final
+    if (std::rename(stagingPath.c_str(), materialsUsdaPath.c_str()) != 0) {
+        std::remove(materialsUsdaPath.c_str());
+        if (std::rename(stagingPath.c_str(), materialsUsdaPath.c_str()) != 0) {
+            Warning("[MaterialPipeline::ToPBR] Failed to rename staging file to materials.usda\n");
+            return false;
+        }
+    }
+    
+    m_lastUSDAWriteTime = std::chrono::steady_clock::now();
     
     Msg("[MaterialPipeline::ToPBR] Wrote mod.usda and materials.usda with %d materials (%d new) to %s\n", 
         (int)m_processedMaterialInfo.size(), newMaterialCount, modDir.c_str());
@@ -4281,28 +4305,65 @@ void TextureProcessor::WorkerThreadFunc() {
         Msg("[MaterialPipeline::ToPBR] Worker thread running\n");
     }
     
+    // Track whether we have pending USDA data that needs flushing
+    bool hasPendingUSDA = false;
+    auto lastProcessedTime = std::chrono::steady_clock::now();
+    
     while (!m_shutdownRequested.load(std::memory_order_relaxed)) {
         std::string materialName;
+        bool gotWork = false;
         
-        // Get next material from queue
+        // Get next material from queue, with a timeout so we can
+        // flush USDA after a quiet period even if no new work arrives
         {
             std::unique_lock<std::mutex> lock(m_queueMutex);
             
-            // Wait for work or shutdown
-            m_queueCondition.wait(lock, [this] {
-                return !m_materialQueue.empty() || m_shutdownRequested.load(std::memory_order_relaxed);
-            });
-            
-            if (m_shutdownRequested.load(std::memory_order_relaxed)) {
-                break;
-            }
-            
             if (m_materialQueue.empty()) {
-                continue;
+                if (hasPendingUSDA) {
+                    // We have pending USDA data - wait with timeout for the debounce period.
+                    // If new materials arrive before the timeout, we'll process them first.
+                    // If the timeout expires with no new work, we flush to disk.
+                    auto waitResult = m_queueCondition.wait_for(lock, 
+                        std::chrono::seconds(USDA_WRITE_DEBOUNCE_SECONDS),
+                        [this] {
+                            return !m_materialQueue.empty() || m_shutdownRequested.load(std::memory_order_relaxed);
+                        });
+                    
+                    if (m_shutdownRequested.load(std::memory_order_relaxed)) {
+                        break;
+                    }
+                    
+                    if (!waitResult) {
+                        // Timeout expired with no new work - flush USDA now
+                        lock.unlock();
+                        Msg("[MaterialPipeline::ToPBR] Debounce period elapsed, flushing USDA to disk\n");
+                        AppendMaterialsToUSDA();
+                        hasPendingUSDA = false;
+                        m_backgroundProcessing.store(false, std::memory_order_relaxed);
+                        continue;
+                    }
+                    // Otherwise new work arrived - fall through to process it
+                } else {
+                    // No pending USDA data - block indefinitely until work arrives
+                    m_queueCondition.wait(lock, [this] {
+                        return !m_materialQueue.empty() || m_shutdownRequested.load(std::memory_order_relaxed);
+                    });
+                    
+                    if (m_shutdownRequested.load(std::memory_order_relaxed)) {
+                        break;
+                    }
+                }
             }
             
-            materialName = m_materialQueue.front();
-            m_materialQueue.pop();
+            if (!m_materialQueue.empty()) {
+                materialName = m_materialQueue.front();
+                m_materialQueue.pop();
+                gotWork = true;
+            }
+        }
+        
+        if (!gotWork) {
+            continue;
         }
         
         // Skip processing when globally disabled; remove from dedup set
@@ -4326,25 +4387,8 @@ void TextureProcessor::WorkerThreadFunc() {
         
         if (success) {
             m_lastProcessedCount.fetch_add(1, std::memory_order_relaxed);
-        }
-        
-        // Check if queue is empty - if so, write pending USDA materials
-        bool queueEmpty = false;
-        size_t queueSize = 0;
-        {
-            std::lock_guard<std::mutex> lock(m_queueMutex);
-            queueEmpty = m_materialQueue.empty();
-            queueSize = m_materialQueue.size();
-        }
-        
-        // Write USDA if queue is empty OR after every 10 materials processed
-        // This ensures USDA is written periodically even during continuous spawning
-        int processedSinceLastWrite = m_lastProcessedCount.load(std::memory_order_relaxed);
-        if (queueEmpty || (processedSinceLastWrite > 0 && processedSinceLastWrite % 10 == 0)) {
-            AppendMaterialsToUSDA();
-            if (queueEmpty) {
-                m_backgroundProcessing.store(false, std::memory_order_relaxed);
-            }
+            hasPendingUSDA = true;
+            lastProcessedTime = std::chrono::steady_clock::now();
         }
     }
     
@@ -4552,49 +4596,31 @@ bool TextureProcessor::AppendMaterialsToUSDA() {
     // Get mod directory
     std::string modDir = USDA::GetModDirectory(m_outputDirectory);
     std::string materialsUsdaPath = modDir + "/materials.usda";
+    std::string stagingPath = modDir + "/materials.usda.tmp";
     
-    // Check if file exists - if not, write full file
-    std::ifstream checkFile(materialsUsdaPath);
-    bool fileExists = checkFile.good();
-    checkFile.close();
-    
-    if (!fileExists) {
-        // Write mod.usda first
-        if (!USDA::WriteModUSDAFile(modDir)) {
-            Warning("[MaterialPipeline::ToPBR] Failed to write mod.usda\n");
-            return false;
-        }
-        
-        // Write full materials.usda with all materials
-        std::lock_guard<std::recursive_mutex> lock(m_mutex);
-        if (!USDA::WriteMaterialsUSDAFile(modDir, m_outputDirectory, m_processedMaterialInfo, m_debugOutput)) {
-            Warning("[MaterialPipeline::ToPBR] Failed to write materials.usda\n");
-            return false;
-        }
-        
-        // Mark all as written
-        for (const auto& pair : m_processedMaterialInfo) {
-            m_materialsWrittenToUSDA.insert(pair.first);
-        }
-        
-        Msg("[MaterialPipeline::ToPBR] Created materials.usda with %d materials\n", 
-            (int)m_processedMaterialInfo.size());
-        return true;
-    }
-    
-    // File exists - just rewrite the whole file with all materials
-    // This is simpler and more reliable than trying to append
-    // The file is small enough that this is not a performance concern
-    
-    // Write mod.usda (in case it's missing)
+    // Write mod.usda (in case it's missing - this file rarely changes so no staging needed)
     USDA::WriteModUSDAFile(modDir);
     
-    // Write full materials.usda with all materials (existing + pending)
+    // Write to a staging file first, then atomic rename.
+    // This prevents Remix's checkForChanges() from seeing a partially-written file
+    // and avoids triggering multiple reloads during continuous processing.
     {
         std::lock_guard<std::recursive_mutex> lock(m_mutex);
-        if (!USDA::WriteMaterialsUSDAFile(modDir, m_outputDirectory, m_processedMaterialInfo, m_debugOutput)) {
-            Warning("[MaterialPipeline::ToPBR] Failed to write materials.usda\n");
+        if (!USDA::WriteMaterialsUSDAFile(modDir, m_outputDirectory, m_processedMaterialInfo, m_debugOutput, stagingPath)) {
+            Warning("[MaterialPipeline::ToPBR] Failed to write staging materials.usda.tmp\n");
             return false;
+        }
+        
+        // Atomic rename: staging file -> final file
+        // On Windows, MoveFileExA with MOVEFILE_REPLACE_EXISTING is atomic on NTFS
+        // On failure, fall back to remove + rename
+        if (std::rename(stagingPath.c_str(), materialsUsdaPath.c_str()) != 0) {
+            // rename() can fail if destination exists on some platforms - try remove first
+            std::remove(materialsUsdaPath.c_str());
+            if (std::rename(stagingPath.c_str(), materialsUsdaPath.c_str()) != 0) {
+                Warning("[MaterialPipeline::ToPBR] Failed to rename staging file to materials.usda\n");
+                return false;
+            }
         }
         
         // Mark all as written
@@ -4602,6 +4628,8 @@ bool TextureProcessor::AppendMaterialsToUSDA() {
             m_materialsWrittenToUSDA.insert(pair.first);
         }
     }
+    
+    m_lastUSDAWriteTime = std::chrono::steady_clock::now();
     
     Msg("[MaterialPipeline::ToPBR] Updated materials.usda with %d total materials (%d new)\n", 
         (int)m_processedMaterialInfo.size(), (int)pendingMaterials.size());

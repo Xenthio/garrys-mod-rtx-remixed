@@ -336,19 +336,26 @@ static void WriteFreshUSDAContent(std::ostream& stream,
 bool WriteMaterialsUSDAFile(const std::string& modDir,
                             const std::string& outputDirectory,
                             const std::unordered_map<uint64_t, TextureProcessor::ProcessedMaterialInfo>& materialInfo,
-                            bool debugOutput) {
-    std::string materialsUsdaPath = modDir + "/materials.usda";
+                            bool debugOutput,
+                            const std::string& overridePath) {
+    // If overridePath is provided, write to that path (staging file).
+    // Otherwise write directly to modDir/materials.usda.
+    std::string materialsUsdaPath = overridePath.empty() ? (modDir + "/materials.usda") : overridePath;
+    
+    // When using a staging path, we still need to read the EXISTING materials.usda
+    // (not the staging file) to know which hashes are already present.
+    std::string existingFilePath = modDir + "/materials.usda";
     
     // First, read existing file content to preserve it
     std::string existingContent;
     std::unordered_set<uint64_t> existingHashes;
     bool fileExists = false;
     
-    // Use LoadExistingHashes to get the hashes, then read full content separately
-    LoadExistingHashes(materialsUsdaPath, existingHashes, false);
+    // Always read from the real materials.usda (not the staging path)
+    LoadExistingHashes(existingFilePath, existingHashes, false);
     
     {
-        std::ifstream existingFile(materialsUsdaPath);
+        std::ifstream existingFile(existingFilePath);
         if (existingFile.is_open()) {
             fileExists = true;
             std::stringstream buffer;

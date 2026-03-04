@@ -47,11 +47,15 @@ bool WriteModUSDAFile(const std::string& modDir);
 // @param modDir - Directory to write to
 // @param outputDirectory - Base output directory for relative path calculation
 // @param materialInfo - Map of processed materials
+// @param debugOutput - Whether to output debug messages
+// @param overridePath - If non-empty, write to this path instead of modDir/materials.usda
+//                       (used for staging file writes to avoid triggering Remix reloads)
 // @return true on success
 bool WriteMaterialsUSDAFile(const std::string& modDir,
                             const std::string& outputDirectory,
                             const std::unordered_map<uint64_t, TextureProcessor::ProcessedMaterialInfo>& materialInfo,
-                            bool debugOutput = false);
+                            bool debugOutput = false,
+                            const std::string& overridePath = "");
 
 // Write a single glass material entry to the stream
 // @param stream - Output stream

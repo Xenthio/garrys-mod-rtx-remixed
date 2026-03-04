@@ -13,6 +13,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <queue>
+#include <chrono>
 
 #include <remix/remix.h>
 #include <remix/remix_c.h>
@@ -529,6 +530,11 @@ private:
     
     // Flag to indicate USDA needs to be rewritten
     bool m_needsUSDAUpdate;
+    
+    // Debounce timer for USDA writes - prevents Remix from constantly reloading
+    // the mod layer while materials are still being processed
+    std::chrono::steady_clock::time_point m_lastUSDAWriteTime{};
+    static constexpr int USDA_WRITE_DEBOUNCE_SECONDS = 10;
     
     // Statistics
     // NOTE: Using recursive_mutex because ProcessSingleMaterial locks, then calls CreatePBRMaterial which also locks
