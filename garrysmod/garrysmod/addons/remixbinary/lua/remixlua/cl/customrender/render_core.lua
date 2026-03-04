@@ -1029,6 +1029,12 @@ do
         RunConsoleCommand("r_drawstaticprops", on and "0" or "1")
     end, "RemixRenderCoreCapture")
 
+    -- Shared 3D skybox geometry toggle
+    local sky3dConVar = GetConVar("rtx_3dsky") or CreateClientConVar("rtx_3dsky", "1", true, false, "Render 3D skybox geometry (map faces, displacements, static props)")
+    function RemixRenderCore.Is3DSkyEnabled()
+        return sky3dConVar:GetBool()
+    end
+
     -- Stats registry for unified debug overlay
     function RemixRenderCore.RegisterStats(id, fn)
         if not id or not isfunction(fn) then return end
@@ -1223,6 +1229,18 @@ do
         print("[ALLOC] Allocation tracking counters cleared.")
     end)
     
+    -- Shared skybox-pass tracking via PreDrawSkyBox / PostDrawSkyBox
+    local inSkyboxPass = false
+    RemixRenderCore.Register("PreDrawSkyBox", "RemixFrame-SkyboxBegin", function()
+        inSkyboxPass = true
+    end)
+    RemixRenderCore.Register("PostDrawSkyBox", "RemixFrame-SkyboxEnd", function()
+        inSkyboxPass = false
+    end)
+    function RemixRenderCore.IsInSkyboxPass()
+        return inSkyboxPass
+    end
+
     -- Centralized flush hooks: begin frame on PreDrawOpaque, flush on PostDraw* passes
     RemixRenderCore.Register("PreDrawOpaqueRenderables", "RemixFrame-Begin", { fn = function(bDrawingDepth, bDrawingSkybox)
         RemixRenderCore.BeginFrame(bDrawingDepth, bDrawingSkybox)

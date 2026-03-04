@@ -31,6 +31,7 @@ local buildState = { active = false, processed = 0, total = 0 }
 if RemixRenderCore then RemixRenderCore._dispBuildState = buildState end
 local stats = { draws = 0, chunksVisited = 0 }
 local lastDebugPrint = 0
+local skyboxWorldMatrix = nil -- Matrix to transform skybox-space meshes to world-space at render time
 
 
 local function IsMaterialAllowed(matName)
@@ -285,6 +286,26 @@ local function BuildDisplacementMeshes(cancelToken)
         local chunks = {}
         local chunkSize = CONVARS.CHUNK_SIZE:GetInt()
         if not chunkSize or chunkSize <= 0 then chunkSize = 65536 end
+
+        -- Determine 3D skybox bounds and transform parameters
+        local hasSkyAABB = false
+        local skyMins, skyMaxs
+        local skyPos, skyScale
+        skyboxWorldMatrix = nil
+        if NikNaks.CurrentMap and NikNaks.CurrentMap.HasSkyBox and NikNaks.CurrentMap:HasSkyBox() and NikNaks.CurrentMap.GetSkyboxSize then
+            local okSky, mins, maxs = pcall(function() return NikNaks.CurrentMap:GetSkyboxSize() end)
+            if okSky and mins and maxs then
+                hasSkyAABB = true
+                skyMins, skyMaxs = mins, maxs
+                skyPos = NikNaks.CurrentMap:GetSkyBoxPos()
+                skyScale = NikNaks.CurrentMap:GetSkyBoxScale() or 16
+                -- Build a matrix: worldPos = (pos - skyPos) * skyScale
+                local m = Matrix()
+                m:Scale(Vector(skyScale, skyScale, skyScale))
+                m:Translate(-skyPos)
+                skyboxWorldMatrix = m
+            end
+        end
         -- For seam-free blending, collect vertex alphas across all displacements and average by position
         local faceRecords = {}
         local alphaMin = math.huge
@@ -368,6 +389,9 @@ local function BuildDisplacementMeshes(cancelToken)
                             cx = cx / #grid cy = cy / #grid cz = cz / #grid
                             local center = Vector(cx, cy, cz)
 
+                            -- Check if displacement is inside the 3D skybox area
+                            local isInSkybox = hasSkyAABB and center:WithinAABox(skyMins, skyMaxs)
+
                             local chunkX = math.floor(center.x / chunkSize)
                             local chunkY = math.floor(center.y / chunkSize)
                             local chunkZ = math.floor(center.z / chunkSize)
@@ -410,7 +434,8 @@ local function BuildDisplacementMeshes(cancelToken)
                                 rawAlphas = rawAlphas,  -- Store raw values
                                 mat = useMat,
                                 matName = useName,
-                                chunkKey = chunkKey
+                                chunkKey = chunkKey,
+                                isSkybox = isInSkybox or false
                             }
                         until true
 
@@ -542,8 +567,11 @@ local function BuildDisplacementMeshes(cancelToken)
 
             local useName = rec.matName
             local useMat = rec.mat
-            materials[useName] = materials[useName] or { material = useMat, _stream = {}, _mins = Vector(math.huge, math.huge, math.huge), _maxs = Vector(-math.huge, -math.huge, -math.huge) }
-            local group = materials[useName]
+            -- Include skybox flag in key so world and skybox displacements with the
+            -- same material never get merged into one group (wrong matrix applied)
+            local groupKey = rec.isSkybox and (useName .. "\0sky") or useName
+            materials[groupKey] = materials[groupKey] or { material = useMat, _stream = {}, _mins = Vector(math.huge, math.huge, math.huge), _maxs = Vector(-math.huge, -math.huge, -math.huge), isSkybox = rec.isSkybox or false }
+            local group = materials[groupKey]
 
             for t = 1, #triangles do
                 local v = triangles[t]
@@ -584,7 +612,8 @@ local function BuildDisplacementMeshes(cancelToken)
                         local meshes = CreateMeshBatchWithAlpha(triStream, material, MAX_VERTICES)
                         dispMeshes[chunkKey][matKey] = {
                             meshes = meshes,
-                            material = material
+                            material = material,
+                            isSkybox = group.isSkybox or false
                         }
                         -- Merge bounds into chunk level
                         local c = dispMeshes[chunkKey]
@@ -704,16 +733,21 @@ local function RenderDisplacements()
         for key, group in pairs(chunkMaterials) do
                 if key ~= "_mins" and key ~= "_maxs" then
                     if group and group.meshes then
-                        local meshes = group.meshes
-                        for i = 1, #meshes do
-                            local m = meshes[i]
-                            if m then
-                                RenderCore.Submit({
-                                    material = group.material,
-                                    mesh = m,
-                                    translucent = false
-                                })
-                                draws = draws + 1
+                        local skipSkybox = group.isSkybox and RenderCore and RenderCore.Is3DSkyEnabled and not RenderCore.Is3DSkyEnabled()
+                        if not skipSkybox then
+                            local meshes = group.meshes
+                            local skyMatrix = group.isSkybox and skyboxWorldMatrix or nil
+                            for i = 1, #meshes do
+                                local m = meshes[i]
+                                if m then
+                                    RenderCore.Submit({
+                                        material = group.material,
+                                        mesh = m,
+                                        matrix = skyMatrix,
+                                        translucent = false
+                                    })
+                                    draws = draws + 1
+                                end
                             end
                         end
                     end
@@ -737,6 +771,7 @@ local function EnableRendering()
     if isEnabled then return end
     isEnabled = true
     RenderCore.Register("PreDrawOpaqueRenderables", "RTXDisp_Draw", function()
+        if RenderCore.IsInSkyboxPass and RenderCore.IsInSkyboxPass() then return end
         RenderDisplacements()
     end)
 end

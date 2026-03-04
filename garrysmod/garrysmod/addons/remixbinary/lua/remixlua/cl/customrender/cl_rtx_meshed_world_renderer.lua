@@ -33,6 +33,7 @@ local table_insert = table.insert
 local MAX_VERTICES = 30000
 local MAX_TOTAL_VERTICES = 10000000 -- 10 million vertex budget (roughly 400MB)
 local totalVertexCount = 0
+local skyboxWorldMatrix = nil -- Matrix to transform skybox-space meshes to world-space at render time
 
 local function IsMaterialAllowed(matName)
     if not matName then return false end
@@ -256,6 +257,7 @@ local function BuildMapMeshes(cancelToken)
         for _, face in ipairs(faces) do
             local verts = face:GenerateVertexTriangleData()
             if verts then
+                
                 local faceValid = true
                 for _, vert in ipairs(verts) do
                     if not ValidateVertex(vert.pos) then
@@ -346,14 +348,24 @@ local function BuildMapMeshes(cancelToken)
             chunkSize = DetermineOptimalChunkSize(faceCount)
         end
 
-        -- Determine 3D skybox bounds (to exclude miniature skybox geometry from world pass)
+        -- Determine 3D skybox bounds and transform parameters
         local hasSkyAABB = false
         local skyMins, skyMaxs
+        local skyPos, skyScale
+        skyboxWorldMatrix = nil
         if NikNaks.CurrentMap and NikNaks.CurrentMap.HasSkyBox and NikNaks.CurrentMap:HasSkyBox() and NikNaks.CurrentMap.GetSkyboxSize then
             local okSky, mins, maxs = pcall(function() return NikNaks.CurrentMap:GetSkyboxSize() end)
             if okSky and mins and maxs then
                 hasSkyAABB = true
                 skyMins, skyMaxs = mins, maxs
+                skyPos = NikNaks.CurrentMap:GetSkyBoxPos()
+                skyScale = NikNaks.CurrentMap:GetSkyBoxScale() or 16
+                -- Build a matrix: worldPos = (pos - skyPos) * skyScale
+                -- Matrix order: Scale first, then Translate by -skyPos*skyScale
+                local m = Matrix()
+                m:Scale(Vector(skyScale, skyScale, skyScale))
+                m:Translate(-skyPos)
+                skyboxWorldMatrix = m
             end
         end
 
@@ -397,29 +409,32 @@ local function BuildMapMeshes(cancelToken)
                                     if vert then _tempCenter:Add(vert) end
                                 end
                                 _tempCenter:Div(vertCount)
-                                if hasSkyAABB and _tempCenter.WithinAABox and _tempCenter:WithinAABox(skyMins, skyMaxs) then
-                                    process = false
-                                else
-                                    local chunkX = math_floor(_tempCenter.x / chunkSize)
-                                    local chunkY = math_floor(_tempCenter.y / chunkSize)
-                                    local chunkZ = math_floor(_tempCenter.z / chunkSize)
-                                    local chunkKey = GetChunkKey(chunkX, chunkY, chunkZ)
-                                    local material = face:GetMaterial()
-                                    if material then
-                                        local matName = material:GetName()
-                                        if matName and IsMaterialAllowed(matName) then
-                                            if RenderCore and RenderCore.GetMaterial then
-                                                material = RenderCore.GetMaterial(matName)
-                                            end
-                                            local chunkGroup = face:IsTranslucent() and chunks.translucent or chunks.opaque
-                                            chunkGroup[chunkKey] = chunkGroup[chunkKey] or {}
-                                            local chunkData = chunkGroup[chunkKey]
-                                            chunkData[matName] = chunkData[matName] or {
-                                                material = material,
-                                                faces = {}
-                                            }
-                                            table_insert(chunkData[matName].faces, face)
+                                -- Check if this face is inside the 3D skybox area
+                                local isInSkybox = hasSkyAABB and _tempCenter.WithinAABox and _tempCenter:WithinAABox(skyMins, skyMaxs)
+                                
+                                local chunkX = math_floor(_tempCenter.x / chunkSize)
+                                local chunkY = math_floor(_tempCenter.y / chunkSize)
+                                local chunkZ = math_floor(_tempCenter.z / chunkSize)
+                                local chunkKey = GetChunkKey(chunkX, chunkY, chunkZ)
+                                local material = face:GetMaterial()
+                                if material then
+                                    local matName = material:GetName()
+                                    if matName and IsMaterialAllowed(matName) then
+                                        if RenderCore and RenderCore.GetMaterial then
+                                            material = RenderCore.GetMaterial(matName)
                                         end
+                                        local chunkGroup = face:IsTranslucent() and chunks.translucent or chunks.opaque
+                                        chunkGroup[chunkKey] = chunkGroup[chunkKey] or {}
+                                        local chunkData = chunkGroup[chunkKey]
+                                        -- Include skybox flag in key so world and skybox faces with
+                                        -- the same material never get merged into one group (wrong matrix)
+                                        local groupKey = isInSkybox and (matName .. "\0sky") or matName
+                                        chunkData[groupKey] = chunkData[groupKey] or {
+                                            material = material,
+                                            faces = {},
+                                            isSkybox = isInSkybox
+                                        }
+                                        table_insert(chunkData[groupKey].faces, face)
                                     end
                                 end
                             end
@@ -471,7 +486,8 @@ local function BuildMapMeshes(cancelToken)
                         if meshes then
                             mapMeshes[renderType][chunkKey][matName] = {
                                 meshes = meshes,
-                                material = group.material
+                                material = group.material,
+                                isSkybox = group.isSkybox or false
                             }
                             -- update chunk bounds
                             local chunkTable = mapMeshes[renderType][chunkKey]
@@ -573,14 +589,17 @@ local function RenderCustomWorld(translucent)
         for key, group in pairs(chunkMaterials) do
             if key == "_mins" or key == "_maxs" then continue end
             if not group or not group.meshes then continue end
+            if group.isSkybox and RenderCore and RenderCore.Is3DSkyEnabled and not RenderCore.Is3DSkyEnabled() then continue end
             -- Submit meshes to central render queue
             local meshes = group.meshes
+            local skyMatrix = group.isSkybox and skyboxWorldMatrix or nil
             for i = 1, #meshes do
                 local m = meshes[i]
                 if m then
                     RenderCore.Submit({
                         material = group.material,
                         mesh = m,
+                        matrix = skyMatrix,
                         translucent = translucent
                     })
                     draws = draws + 1
@@ -611,10 +630,12 @@ local function EnableCustomRendering()
     isEnabled = true
     
     RenderCore.Register("PreDrawOpaqueRenderables", "RTXCustomWorldOpaque", function()
+        if RenderCore.IsInSkyboxPass and RenderCore.IsInSkyboxPass() then return end
         RenderCustomWorld(false)
     end)
     
     RenderCore.Register("PreDrawTranslucentRenderables", "RTXCustomWorldTranslucent", function()
+        if RenderCore.IsInSkyboxPass and RenderCore.IsInSkyboxPass() then return end
         RenderCustomWorld(true)
     end)
 end

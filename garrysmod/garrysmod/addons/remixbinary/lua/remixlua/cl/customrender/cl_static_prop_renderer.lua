@@ -83,17 +83,15 @@ local isCachingInProgress = false
 local cachedStaticProps = {}
 local meshCache = {}  -- Maps model path to IMesh objects
 local lastDebugFrame = 0
-local bDrawingSkybox = false
-local skyboxProps = {}
 local worldProps = {}
 local sprStats = { rendered = 0, total = 0 }
 local sprBuildStats = { startTime = 0, endTime = 0, built = 0, active = false }
 -- Expose build state for progress tracking
 if RemixRenderCore then RemixRenderCore._sprBuildState = sprBuildStats end
 
--- Frame skipping cache (separate for skybox and world)
-local cachedRenderList = { world = {}, skybox = {} }
-local lastUpdateFrame = { world = -1, skybox = -1 }
+-- Frame skipping cache
+local cachedRenderList = { world = {} }
+local lastUpdateFrame = { world = -1 }
 
 -- Combined mesh cache (per material) - built once during initialization
 local combinedMeshes = {} -- [materialName] = { material = IMaterial, mesh = IMesh, propCount = N, props = {prop indices} }
@@ -617,6 +615,7 @@ local function ProcessStaticProp(propData)
 
     -- Check if this is a skybox prop
     local isSkyboxProp = false
+    prop.skyMatrix = nil  -- render-time skybox-to-world matrix (nil for world props)
     if NikNaks and NikNaks.CurrentMap and NikNaks.CurrentMap:HasSkyBox() then
         local skyPos = NikNaks.CurrentMap:GetSkyBoxPos()
         local skyMinBounds, skyMaxBounds = NikNaks.CurrentMap:GetSkyboxSize()
@@ -624,6 +623,18 @@ local function ProcessStaticProp(propData)
         -- Check if the prop is within skybox bounds
         if skyMinBounds and skyMaxBounds and propData.Origin then
             isSkyboxProp = propData.Origin:WithinAABox(skyMinBounds, skyMaxBounds)
+        end
+        
+        -- For skybox props, keep prop.matrix at the original skybox-space transform
+        -- (Translate + Rotate, no scale). Baked vertices will land in skybox space
+        -- (inside BSP) so the engine won't cull them. A separate skybox-to-world
+        -- matrix is applied at render time to visually place them in world space.
+        if isSkyboxProp and skyPos then
+            local skyScale = NikNaks.CurrentMap:GetSkyBoxScale() or 16
+            local m = Matrix()
+            m:Scale(Vector(skyScale, skyScale, skyScale))
+            m:Translate(-skyPos)
+            prop.skyMatrix = m
         end
     end
     
@@ -796,22 +807,30 @@ local function ProcessStaticProp(propData)
         return nil  -- Skip previously failed models
     end
     
-    -- Link to the cached mesh data
+    -- Link to the cached mesh data (shared model-local meshes reused across instances)
     prop.cachedMesh = meshCache[cacheKey]
     prop.vertexCount = meshCache[cacheKey].vertexCount or 0
     
     -- Pre-allocate submit tables to avoid per-frame GC pressure.
-    -- Each entry is a reusable table passed directly to RenderCore.Submit;
-    -- only matrix/color are updated in-place during rendering.
+    -- Each entry is a reusable table passed directly to RenderCore.Submit.
+    -- Shared IMesh objects are drawn with cam.PushModelMatrix for positioning.
+    -- For skybox props, the render matrix composes skybox-to-world on top of the prop transform.
     local cached = meshCache[cacheKey]
     if cached.meshes then
+        local renderMatrix = prop.matrix
+        -- For skybox props, compose skybox-to-world * prop.matrix so the shared
+        -- model-local mesh is positioned in skybox space then scaled to world space.
+        if prop.skyMatrix then
+            renderMatrix = prop.skyMatrix * prop.matrix
+        end
+        
         local submitList = {}
         for _, meshInfo in ipairs(cached.meshes) do
             if meshInfo.mesh and meshInfo.material then
                 submitList[#submitList + 1] = {
                     material = meshInfo.material,
                     mesh = meshInfo.mesh,
-                    matrix = prop.matrix,
+                    matrix = renderMatrix,
                     translucent = false,
                     color = prop.color
                 }
@@ -823,21 +842,20 @@ local function ProcessStaticProp(propData)
     return prop
 end
 
--- Separate skybox props from world props
-local function SeparateSkyboxProps()
-    skyboxProps = {}
+-- Collect all props into world list (skybox props are already transformed to world space)
+local function CollectWorldProps()
     worldProps = {}
+    local skyboxCount = 0
     
     for _, prop in ipairs(cachedStaticProps) do
+        table.insert(worldProps, prop)
         if prop.isSkybox then
-            table.insert(skyboxProps, prop)
-        else
-            table.insert(worldProps, prop)
+            skyboxCount = skyboxCount + 1
         end
     end
     
-    print(string.format("[Static Render] Separated props: %d world props, %d skybox props", 
-                        #worldProps, #skyboxProps))
+    print(string.format("[Static Render] Collected props: %d total (%d from skybox, transformed to world space)", 
+                        #worldProps, skyboxCount))
 end
 
 -- Cache static props from NikNaks data
@@ -934,7 +952,7 @@ local function CacheMapStaticProps()
                 startTime = SysTime()
             end
         end
-        SeparateSkyboxProps()
+        CollectWorldProps()
         
         -- Build combined meshes once after caching
         if convar_UseMeshCombining:GetBool() then
@@ -979,15 +997,6 @@ local function CacheMapStaticProps()
     end)
 end
 
--- Skybox detection hooks
-RenderCore.Register("PreDrawSkyBox", "RTXStaticPropsSkyboxDetection", function()
-    bDrawingSkybox = true
-end)
-
-RenderCore.Register("PostDrawSkyBox", "RTXStaticPropsSkyboxDetection", function()
-    bDrawingSkybox = false
-end)
-
 -- Hook to initiate caching when the map is ready
 RenderCore.Register("InitPostEntity", "CustomStaticRender_InitCache", function()
     -- Only start caching if the addon is enabled
@@ -1007,7 +1016,6 @@ RenderCore.Register("ShutDown", "CustomStaticRender_Cleanup", function()
         RenderCore.DestroyTrackedMeshes()
     end
     table.Empty(cachedStaticProps)
-    table.Empty(skyboxProps)
     table.Empty(worldProps)
     table.Empty(meshCache)
     table.Empty(skinMaterialCache)
@@ -1030,9 +1038,9 @@ RenderCore.Register("PreDrawOpaqueRenderables", "CustomStaticRender_DrawProps", 
         return
     end
     
-    -- Choose which prop list to render based on skybox state
-    local propsToRender = bDrawingSkybox and skyboxProps or worldProps
-    local cacheKey = bDrawingSkybox and "skybox" or "world"
+    -- All props (world + transformed skybox) rendered together
+    local propsToRender = worldProps
+    local cacheKey = "world"
     
     -- Frame skip optimization: only rebuild visibility list every N frames
     local currentFrame = FrameNumber()
@@ -1066,12 +1074,13 @@ RenderCore.Register("PreDrawOpaqueRenderables", "CustomStaticRender_DrawProps", 
     
     -- Cache ConVar checks to avoid duplicate calls
     local useMeshCombining = convar_UseMeshCombining:GetBool()
+    local sky3dEnabled = not (RenderCore and RenderCore.Is3DSkyEnabled and not RenderCore.Is3DSkyEnabled())
     local shouldDebug = convar_Debug:GetBool()
     local frameCount = FrameNumber()
     local isNewFrame = lastDebugFrame ~= frameCount
 
     if shouldDebug and isNewFrame then
-        DebugPrint("Attempting to render", #propsToRender, "props in " .. (bDrawingSkybox and "skybox" or "world"))
+        DebugPrint("Attempting to render", #propsToRender, "props")
     end
     
     -- Build or use cached render list
@@ -1096,29 +1105,41 @@ RenderCore.Register("PreDrawOpaqueRenderables", "CustomStaticRender_DrawProps", 
                 skippedProps = skippedProps + 1
                 continue
             end
-            -- PVS culling for world props only (skip skybox props)
-            if not bDrawingSkybox and pvs and prop.clusters and next(prop.clusters) then
-                -- Safety distance check: always render props very close to player
-                local withinSafetyDistance = false
-                if safetyDist > 0 and playerPos then
-                    local distSqr = prop.origin:DistToSqr(playerPos)
-                    withinSafetyDistance = distSqr < safetyDistSqr
-                end
-                
-                if not withinSafetyDistance then
-                    -- Fast cluster visibility check using pre-computed visible set
-                    local anyVisible = false
-                    for cl in pairs(prop.clusters) do
-                        if visibleClusters[cl] then
-                            anyVisible = true
-                            break
+            -- Skip PVS culling for skybox props — their world-space positions
+            -- are outside the BSP's leaf/cluster structure so PVS lookups
+            -- would incorrectly cull them. Skybox geometry represents distant
+            -- scenery that should always be visible.
+            if not prop.isSkybox then
+                -- PVS culling for regular world props
+                if pvs and prop.clusters and next(prop.clusters) then
+                    -- Safety distance check: always render props very close to player
+                    local withinSafetyDistance = false
+                    if safetyDist > 0 and playerPos then
+                        local distSqr = prop.origin:DistToSqr(playerPos)
+                        withinSafetyDistance = distSqr < safetyDistSqr
+                    end
+                    
+                    if not withinSafetyDistance then
+                        -- Fast cluster visibility check using pre-computed visible set
+                        local anyVisible = false
+                        for cl in pairs(prop.clusters) do
+                            if visibleClusters[cl] then
+                                anyVisible = true
+                                break
+                            end
+                        end
+                        if not anyVisible then
+                            skippedProps = skippedProps + 1
+                            continue
                         end
                     end
-                    if not anyVisible then
-                        skippedProps = skippedProps + 1
-                        continue
-                    end
                 end
+            end
+            
+            -- Skip skybox props if 3D sky rendering is disabled
+            if prop.isSkybox and not sky3dEnabled then
+                skippedProps = skippedProps + 1
+                continue
             end
             
             -- Add to render list
@@ -1136,24 +1157,20 @@ RenderCore.Register("PreDrawOpaqueRenderables", "CustomStaticRender_DrawProps", 
         for matName, combined in pairs(combinedMeshes) do
             -- Fast PVS check using cached cluster set
             local anyVisible = false
-            if not pvs or not bDrawingSkybox then
-                if not pvs then
-                    anyVisible = true -- No PVS, render everything
-                else
-                    -- Check if any cached cluster is visible (much faster than iterating props)
-                    if combined.clusters then
-                        for cl in pairs(combined.clusters) do
-                            if pvs[cl] then
-                                anyVisible = true
-                                break
-                            end
-                        end
-                    else
-                        anyVisible = true -- No cluster data, render to be safe
-                    end
-                end
+            if not pvs then
+                anyVisible = true -- No PVS, render everything
             else
-                anyVisible = true -- Skybox props always visible
+                -- Check if any cached cluster is visible (much faster than iterating props)
+                if combined.clusters then
+                    for cl in pairs(combined.clusters) do
+                        if pvs[cl] then
+                            anyVisible = true
+                            break
+                        end
+                    end
+                else
+                    anyVisible = true -- No cluster data, render to be safe
+                end
             end
             
             if anyVisible and combined.submitData then
@@ -1186,7 +1203,7 @@ RenderCore.Register("PreDrawOpaqueRenderables", "CustomStaticRender_DrawProps", 
     
     -- Debug output
     if shouldDebug and isNewFrame then
-        DebugPrint("Rendered", renderedProps, "props in " .. (bDrawingSkybox and "skybox" or "world"),
+        DebugPrint("Rendered", renderedProps, "props",
                   skippedProps, "skipped")
         lastDebugFrame = frameCount
     end
@@ -1202,7 +1219,6 @@ concommand.Add("rtx_spr_reload", function()
         RenderCore.DestroyTrackedMeshes()
     end
     table.Empty(cachedStaticProps)
-    table.Empty(skyboxProps)
     table.Empty(worldProps)
     table.Empty(meshCache)
     table.Empty(skinMaterialCache)
@@ -1247,7 +1263,6 @@ RenderCore.RegisterRebuildSink("StaticPropsRebuild", function(token, reason)
         RenderCore.DestroyTrackedMeshes()
     end
     table.Empty(cachedStaticProps)
-    table.Empty(skyboxProps)
     table.Empty(worldProps)
     table.Empty(meshCache)
     table.Empty(skinMaterialCache)

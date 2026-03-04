@@ -110,6 +110,42 @@ hook.Add( "PopulateToolMenu", "RTXOptionsClient_Performance", function()
 
         panel:AddItem(pvsCategory)
 
+        -- 3D Skybox toggle
+        local skyCategory = vgui.Create("DCollapsibleCategory", panel)
+        skyCategory:SetLabel("3D Sky")
+        skyCategory:SetExpanded(true)
+        skyCategory:Dock(TOP)
+        skyCategory:DockMargin(0, 8, 0, 0)
+
+        local skyList = vgui.Create("DPanelList", skyCategory)
+        skyList:SetAutoSize(true)
+        skyList:SetSpacing(4)
+        skyList:DockPadding(8, 4, 8, 4)
+        skyCategory:SetContents(skyList)
+
+        local skyCb = vgui.Create("DCheckBoxLabel")
+        skyCb:SetText("Enable 3D Sky")
+        skyCb:SetConVar("rtx_3dsky")
+        skyCb:SetTextColor(Color(0, 0, 0))
+        skyCb:SizeToContents()
+        skyList:AddItem(skyCb)
+
+        local skyHelp = vgui.Create("DLabel")
+        skyHelp:SetText("Renders 3D skybox map faces, displacements, and static props projected into world space. This does not include anything dynamic like particles, entities, etc. This is still WIP so there might be rendering issues on some maps.")
+        skyHelp:SetWrap(true)
+        skyHelp:SetAutoStretchVertical(true)
+        skyHelp:SetTextColor(Color(0, 0, 0))
+        skyList:AddItem(skyHelp)
+
+        skyCategory.Think = function(self)
+            local enabled = cv_custom and cv_custom:GetBool() or false
+            self:SetEnabled(enabled)
+            self:SetAlpha(enabled and 255 or 128)
+            skyCb:SetTextColor(enabled and colorEnabled or colorDisabled)
+        end
+
+        panel:AddItem(skyCategory)
+
         local patchCategory = vgui.Create("DCollapsibleCategory", panel)
         patchCategory:SetLabel("Advanced: Engine Patches")
         patchCategory:SetExpanded(false)
@@ -150,7 +186,7 @@ local function Show3DSkyWarning()
     
     -- Create the warning panel
     local frame = vgui.Create("DFrame")
-    frame:SetTitle("RTX Remix Fixes 2")
+    frame:SetTitle("Garry's Mod RTX Remixed")
     frame:SetSize(400, 200) 
     frame:Center()
     frame:MakePopup()
