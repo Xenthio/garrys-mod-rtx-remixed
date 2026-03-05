@@ -1030,7 +1030,7 @@ do
     end, "RemixRenderCoreCapture")
 
     -- Shared 3D skybox geometry toggle
-    local sky3dConVar = GetConVar("rtx_3dsky") or CreateClientConVar("rtx_3dsky", "1", true, false, "Render 3D skybox geometry (map faces, displacements, static props)")
+    local sky3dConVar = GetConVar("rtx_3dsky") or CreateClientConVar("rtx_3dsky", "0", true, false, "Render 3D skybox geometry (map faces, displacements, static props)")
     function RemixRenderCore.Is3DSkyEnabled()
         return sky3dConVar:GetBool()
     end
