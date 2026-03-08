@@ -559,6 +559,13 @@ hook.Add("HUDPaint", "RemixRTLight_Visualize", function()
     end
 end)
 
+local function onDistantLightCreated()
+    local cv = GetConVar("rtx_api_map_lights_env_brightness_mult")
+    if cv and cv:GetFloat() ~= 0 then
+        RunConsoleCommand("rtx_api_map_lights_env_brightness_mult", "0")
+    end
+end
+
 local function ensure_light(ent)
     -- Add defensive checks to prevent multiple creation attempts
     if not IsValid(ent) then return end
@@ -908,6 +915,13 @@ function ENT:Think()
         ensure_light(self)
     end
     
+    -- Fire onDistantLightCreated when type first becomes distant (NWVars are reliable here)
+    local lt = self:GetNWString("rtx_light_type", "sphere")
+    if lt == "distant" and self.LastSeenLightType ~= "distant" then
+        onDistantLightCreated()
+    end
+    self.LastSeenLightType = lt
+    
     -- Update bonemerged position if applicable
     updateBonemergedPosition(self)
     
@@ -1249,6 +1263,10 @@ local function OpenLightEditor(ent)
             local sel = (sid and typeCombo:GetOptionData(sid)) or ent:GetNWString("rtx_light_type", "sphere")
             ent:SetNWString("rtx_light_type", sel)
             
+            if sel == "distant" then
+                onDistantLightCreated()
+            end
+            
             -- Flag for instant visual update
             ent.NeedsUpdate = true
             
@@ -1427,6 +1445,22 @@ properties.Add("remix_rt_light_edit_attached", {
 function ENT:OnRemove()
     if RemixLight and RemixLight.DestroyLightsForEntity then
         RemixLight.DestroyLightsForEntity(self:EntIndex())
+    end
+    
+    if self:GetNWString("rtx_light_type", "sphere") == "distant" then
+        local hasOtherDistant = false
+        for _, ent in ipairs(ents.FindByClass("remix_rt_light")) do
+            if ent ~= self and IsValid(ent) and ent:GetNWString("rtx_light_type", "sphere") == "distant" then
+                hasOtherDistant = true
+                break
+            end
+        end
+        if not hasOtherDistant then
+            local cv = GetConVar("rtx_api_map_lights_env_brightness_mult")
+            if cv and cv:GetFloat() == 0 then
+                RunConsoleCommand("rtx_api_map_lights_env_brightness_mult", "1")
+            end
+        end
     end
 end
 
