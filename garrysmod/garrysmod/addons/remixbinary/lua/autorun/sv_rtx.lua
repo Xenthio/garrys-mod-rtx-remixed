@@ -139,7 +139,6 @@ if SERVER then
 
         local v
         v = clampf(t.rtx_light_radius, 1, 200);        if v then ent:SetNWFloat("rtx_light_radius", v) end
-        v = clampf(t.rtx_light_brightness, 0, 10);     if v then ent:SetNWFloat("rtx_light_brightness", v) end
         v = clampf(t.rtx_light_volumetric, 0, 5);      if v then ent:SetNWFloat("rtx_light_volumetric", v) end
         if t.rtx_light_shape_enabled ~= nil then ent:SetNWBool("rtx_light_shape_enabled", clampb(t.rtx_light_shape_enabled)) end
         v = clampf(t.rtx_light_shape_cone, 0, 180);    if v then ent:SetNWFloat("rtx_light_shape_cone", v) end
@@ -153,5 +152,9 @@ if SERVER then
         v = clampf(t.rtx_light_distant_angle, 0, 10);  if v then ent:SetNWFloat("rtx_light_distant_angle", v) end
         local s = clampstr(t.rtx_light_dome_tex);       if s and s ~= "" then ent:SetNWString("rtx_light_dome_tex", s) end
         local col = clampvec(t.rtx_light_col);          if col then ent:SetNWVector("rtx_light_col", col) end
+        v = clampf(t.rtx_light_color_r, 0, 255);       if v then ent:SetNWFloat("rtx_light_color_r", v) end
+        v = clampf(t.rtx_light_color_g, 0, 255);       if v then ent:SetNWFloat("rtx_light_color_g", v) end
+        v = clampf(t.rtx_light_color_b, 0, 255);       if v then ent:SetNWFloat("rtx_light_color_b", v) end
+        v = clampf(t.rtx_light_brightness, 0, 10000);  if v then ent:SetNWFloat("rtx_light_brightness", v) end
     end)
 end

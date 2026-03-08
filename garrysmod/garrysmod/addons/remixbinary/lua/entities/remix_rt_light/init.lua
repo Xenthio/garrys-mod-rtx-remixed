@@ -113,30 +113,30 @@ end
 
 local function applyNWTable(ent, t)
     if not istable(t) then return end
-    if t.rtx_light_type then ent:SetNWString("rtx_light_type", t.rtx_light_type) end
-    if t.rtx_light_radius then ent:SetNWFloat("rtx_light_radius", t.rtx_light_radius) end
-    if t.rtx_light_brightness then ent:SetNWFloat("rtx_light_brightness", t.rtx_light_brightness) end
-    if t.rtx_light_volumetric then ent:SetNWFloat("rtx_light_volumetric", t.rtx_light_volumetric) end
+    if t.rtx_light_type ~= nil then ent:SetNWString("rtx_light_type", t.rtx_light_type) end
+    if t.rtx_light_radius ~= nil then ent:SetNWFloat("rtx_light_radius", t.rtx_light_radius) end
+    if t.rtx_light_brightness ~= nil then ent:SetNWFloat("rtx_light_brightness", t.rtx_light_brightness) end
+    if t.rtx_light_volumetric ~= nil then ent:SetNWFloat("rtx_light_volumetric", t.rtx_light_volumetric) end
     if t.rtx_light_shape_enabled ~= nil then ent:SetNWBool("rtx_light_shape_enabled", t.rtx_light_shape_enabled and true or false) end
-    if t.rtx_light_shape_cone then ent:SetNWFloat("rtx_light_shape_cone", t.rtx_light_shape_cone) end
-    if t.rtx_light_shape_softness then ent:SetNWFloat("rtx_light_shape_softness", t.rtx_light_shape_softness) end
-    if t.rtx_light_shape_focus then ent:SetNWFloat("rtx_light_shape_focus", t.rtx_light_shape_focus) end
-    if t.rtx_light_dir_yaw then ent:SetNWFloat("rtx_light_dir_yaw", t.rtx_light_dir_yaw) end
-    if t.rtx_light_dir_pitch then ent:SetNWFloat("rtx_light_dir_pitch", t.rtx_light_dir_pitch) end
-    if t.rtx_light_xsize then ent:SetNWFloat("rtx_light_xsize", t.rtx_light_xsize) end
-    if t.rtx_light_ysize then ent:SetNWFloat("rtx_light_ysize", t.rtx_light_ysize) end
-    if t.rtx_light_xradius then ent:SetNWFloat("rtx_light_xradius", t.rtx_light_xradius) end
-    if t.rtx_light_yradius then ent:SetNWFloat("rtx_light_yradius", t.rtx_light_yradius) end
-    if t.rtx_light_axis_len then ent:SetNWFloat("rtx_light_axis_len", t.rtx_light_axis_len) end
-    if t.rtx_light_distant_angle then ent:SetNWFloat("rtx_light_distant_angle", t.rtx_light_distant_angle) end
-    if t.rtx_light_color_r then ent:SetNWFloat("rtx_light_color_r", t.rtx_light_color_r) end
-    if t.rtx_light_color_g then ent:SetNWFloat("rtx_light_color_g", t.rtx_light_color_g) end
-    if t.rtx_light_color_b then ent:SetNWFloat("rtx_light_color_b", t.rtx_light_color_b) end
+    if t.rtx_light_shape_cone ~= nil then ent:SetNWFloat("rtx_light_shape_cone", t.rtx_light_shape_cone) end
+    if t.rtx_light_shape_softness ~= nil then ent:SetNWFloat("rtx_light_shape_softness", t.rtx_light_shape_softness) end
+    if t.rtx_light_shape_focus ~= nil then ent:SetNWFloat("rtx_light_shape_focus", t.rtx_light_shape_focus) end
+    if t.rtx_light_dir_yaw ~= nil then ent:SetNWFloat("rtx_light_dir_yaw", t.rtx_light_dir_yaw) end
+    if t.rtx_light_dir_pitch ~= nil then ent:SetNWFloat("rtx_light_dir_pitch", t.rtx_light_dir_pitch) end
+    if t.rtx_light_xsize ~= nil then ent:SetNWFloat("rtx_light_xsize", t.rtx_light_xsize) end
+    if t.rtx_light_ysize ~= nil then ent:SetNWFloat("rtx_light_ysize", t.rtx_light_ysize) end
+    if t.rtx_light_xradius ~= nil then ent:SetNWFloat("rtx_light_xradius", t.rtx_light_xradius) end
+    if t.rtx_light_yradius ~= nil then ent:SetNWFloat("rtx_light_yradius", t.rtx_light_yradius) end
+    if t.rtx_light_axis_len ~= nil then ent:SetNWFloat("rtx_light_axis_len", t.rtx_light_axis_len) end
+    if t.rtx_light_distant_angle ~= nil then ent:SetNWFloat("rtx_light_distant_angle", t.rtx_light_distant_angle) end
+    if t.rtx_light_color_r ~= nil then ent:SetNWFloat("rtx_light_color_r", t.rtx_light_color_r) end
+    if t.rtx_light_color_g ~= nil then ent:SetNWFloat("rtx_light_color_g", t.rtx_light_color_g) end
+    if t.rtx_light_color_b ~= nil then ent:SetNWFloat("rtx_light_color_b", t.rtx_light_color_b) end
     if t.rtx_light_is_bonemerged ~= nil then ent:SetNWBool("rtx_light_is_bonemerged", t.rtx_light_is_bonemerged) end
-    if t.rtx_light_parent_id then ent:SetNWInt("rtx_light_parent_id", t.rtx_light_parent_id) end
-    if t.rtx_light_bone_id then ent:SetNWInt("rtx_light_bone_id", t.rtx_light_bone_id) end
-    if t.rtx_light_offset_pos then ent:SetNWVector("rtx_light_offset_pos", t.rtx_light_offset_pos) end
-    if t.rtx_light_offset_ang then ent:SetNWAngle("rtx_light_offset_ang", t.rtx_light_offset_ang) end
+    if t.rtx_light_parent_id ~= nil then ent:SetNWInt("rtx_light_parent_id", t.rtx_light_parent_id) end
+    if t.rtx_light_bone_id ~= nil then ent:SetNWInt("rtx_light_bone_id", t.rtx_light_bone_id) end
+    if t.rtx_light_offset_pos ~= nil then ent:SetNWVector("rtx_light_offset_pos", t.rtx_light_offset_pos) end
+    if t.rtx_light_offset_ang ~= nil then ent:SetNWAngle("rtx_light_offset_ang", t.rtx_light_offset_ang) end
 end
 
 function ENT:PreEntityCopy()
