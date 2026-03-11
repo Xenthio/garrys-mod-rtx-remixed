@@ -34,6 +34,8 @@ local MAX_VERTICES = 30000
 local MAX_TOTAL_VERTICES = 10000000 -- 10 million vertex budget (roughly 400MB)
 local totalVertexCount = 0
 local skyboxWorldMatrix = nil -- Matrix to transform skybox-space meshes to world-space at render time
+local flatOpaqueList = {}
+local flatTranslucentList = {}
 
 local function IsMaterialAllowed(matName)
     if not matName then return false end
@@ -125,59 +127,32 @@ end
 
 local function CreateMeshBatch(vertices, material, maxVertsPerMesh)
     local meshes = {}
-    local currentVerts = {}
-    local vertCount = 0
-    
-    for i = 1, #vertices, 3 do -- Process in triangles
-        -- Add all three vertices of the triangle
-        for j = 0, 2 do
-            if vertices[i + j] then
-                table_insert(currentVerts, vertices[i + j])
-                vertCount = vertCount + 1
-            end
-        end
-        
-        -- Create new mesh when we hit the vertex limit
-        if vertCount >= maxVertsPerMesh - 3 then -- Leave room for one more triangle
-            local newMesh = Mesh(material)
-            mesh.Begin(newMesh, MATERIAL_TRIANGLES, #currentVerts / 3)
-            for _, vert in ipairs(currentVerts) do
-                mesh.Position(vert.pos)
-                mesh.Normal(vert.normal)
-                mesh.TexCoord(0, vert.u or 0, vert.v or 0)
-                mesh.Color(255, 255, 255, 255)
-                mesh.AdvanceVertex()
-            end
-            mesh.End()
-            
-            table_insert(meshes, newMesh)
-            if RenderCore and RenderCore.TrackMesh then
-                RenderCore.TrackMesh(newMesh)
-            end
-            currentVerts = {}
-            vertCount = 0
-        end
-    end
-    
-    -- Handle remaining vertices
-    if #currentVerts > 0 then
+    local n = #vertices
+    if n == 0 then return meshes end
+    local i = 1
+    while i <= n do
+        local batchSize = n - i + 1
+        if batchSize > maxVertsPerMesh then batchSize = maxVertsPerMesh end
+        batchSize = batchSize - (batchSize % 3) -- keep on a triangle boundary
+        if batchSize <= 0 then break end
         local newMesh = Mesh(material)
-        mesh.Begin(newMesh, MATERIAL_TRIANGLES, #currentVerts / 3)
-        for _, vert in ipairs(currentVerts) do
-            mesh.Position(vert.pos)
-            mesh.Normal(vert.normal)
-            mesh.TexCoord(0, vert.u or 0, vert.v or 0)
+        mesh.Begin(newMesh, MATERIAL_TRIANGLES, batchSize / 3)
+        local endIdx = i + batchSize - 1
+        for vi = i, endIdx do
+            local v = vertices[vi]
+            mesh.Position(v.pos)
+            mesh.Normal(v.normal)
+            mesh.TexCoord(0, v.u or 0, v.v or 0)
             mesh.Color(255, 255, 255, 255)
             mesh.AdvanceVertex()
         end
         mesh.End()
-        
-        table_insert(meshes, newMesh)
+        meshes[#meshes + 1] = newMesh
         if RenderCore and RenderCore.TrackMesh then
             RenderCore.TrackMesh(newMesh)
         end
+        i = endIdx + 1
     end
-    
     return meshes
 end
 
@@ -230,6 +205,43 @@ local function CleanupMeshes()
     return destroyed, failed
 end
 
+-- Flatten mapMeshes into two sequential arrays of pre-initialized Submit item tables.
+-- Called once after the build coroutine finishes. The flat arrays are then reused on every render frame
+local function BuildFlatRenderList()
+    local oList = {}
+    local tList = {}
+    local function fill(renderGroups, list, isTranslucent)
+        for _, chunkMaterials in pairs(renderGroups) do
+            for key, group in pairs(chunkMaterials) do
+                if key == "_mins" or key == "_maxs" then continue end
+                if not group or not group.meshes then continue end
+                local skyMatrix = (group.isSkybox and not group.bakedToWorld) and skyboxWorldMatrix or nil
+                local isSkybox  = group.isSkybox or false
+                local mat       = group.material
+                local meshList  = group.meshes
+                for i = 1, #meshList do
+                    local m = meshList[i]
+                    if m then
+                        list[#list + 1] = {
+                            material   = mat,
+                            mesh       = m,
+                            matrix     = skyMatrix,
+                            translucent = isTranslucent,
+                            isSkybox   = isSkybox,
+                        }
+                    end
+                end
+            end
+        end
+    end
+    fill(mapMeshes.opaque,      oList, false)
+    fill(mapMeshes.translucent, tList, true)
+    flatOpaqueList      = oList
+    flatTranslucentList = tList
+    print(string.format("[WorldRenderer] Flat render list: %d opaque + %d translucent items",
+        #oList, #tList))
+end
+
 -- Main Mesh Building Function
 local function BuildMapMeshes(cancelToken)
     -- Clean up existing meshes first
@@ -239,7 +251,9 @@ local function BuildMapMeshes(cancelToken)
         opaque = {},
         translucent = {},
     }
-    
+
+    flatOpaqueList      = {}
+    flatTranslucentList = {}
     totalVertexCount = 0
     
     if not NikNaks or not NikNaks.CurrentMap then return end
@@ -784,6 +798,7 @@ local function BuildMapMeshes(cancelToken)
             end
         end
         buildState.active = false
+        BuildFlatRenderList()
         print(string.format("[RTX Fixes] Built chunked meshes in %.2f seconds (total vertices: %d, memory: ~%.1fMB)", 
             SysTime() - frameStartTime, totalVertexCount, (totalVertexCount * 40) / (1024 * 1024)))
         if mwrSkyClipStats.groupsIn > 0 then
@@ -837,45 +852,34 @@ end
 -- Rendering Functions
 local function RenderCustomWorld(translucent)
     if not isEnabled then return end
-    
+
     -- Skip rendering world in offscreen RTs (e.g., rear-view camera with dynamic_only filter)
-    if RenderCore and RenderCore.IsOffscreen and RenderCore.IsOffscreen() then
-        return
-    end
+    if RenderCore and RenderCore.IsOffscreen and RenderCore.IsOffscreen() then return end
 
+    local list = translucent and flatTranslucentList or flatOpaqueList
+    local n = #list
+    if n == 0 then return end
+
+    -- Hoist the skybox-enabled check outside the loop and pick a fast path.
+    local sky3DEnabled = not (RenderCore and RenderCore.Is3DSkyEnabled) or RenderCore.Is3DSkyEnabled()
     local draws = 0
-    local chunksVisited = 0
-    
-    -- Regular faces
-    local groups = translucent and mapMeshes.translucent or mapMeshes.opaque
-
-    for _, chunkMaterials in pairs(groups) do
-        chunksVisited = chunksVisited + 1
-        for key, group in pairs(chunkMaterials) do
-            if key == "_mins" or key == "_maxs" then continue end
-            if not group or not group.meshes then continue end
-            if group.isSkybox and RenderCore and RenderCore.Is3DSkyEnabled and not RenderCore.Is3DSkyEnabled() then continue end
-            -- Submit meshes to central render queue
-            local meshes = group.meshes
-            -- Baked skybox groups are already in world space: no runtime matrix needed.
-            local skyMatrix = (group.isSkybox and not group.bakedToWorld) and skyboxWorldMatrix or nil
-            for i = 1, #meshes do
-                local m = meshes[i]
-                if m then
-                    RenderCore.Submit({
-                        material = group.material,
-                        mesh = m,
-                        matrix = skyMatrix,
-                        translucent = translucent
-                    })
-                    draws = draws + 1
-                end
+    if sky3DEnabled then
+        for i = 1, n do
+            RenderCore.Submit(list[i])
+        end
+        draws = n
+    else
+        for i = 1, n do
+            local item = list[i]
+            if not item.isSkybox then
+                RenderCore.Submit(item)
+                draws = draws + 1
             end
         end
     end
-    
+
     renderStats.draws = draws
-    renderStats.chunksVisited = chunksVisited
+    renderStats.chunksVisited = n
 end
 
 -- Stats provider for unified overlay
