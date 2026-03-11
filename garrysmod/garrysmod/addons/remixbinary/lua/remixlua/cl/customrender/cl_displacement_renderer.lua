@@ -806,9 +806,6 @@ RenderCore.Register("InitPostEntity", "RTXDisp_Init", function(token)
     Initialize(token)
 end)
 
-RenderCore.Register("PostCleanupMap", "RTXDisp_Rebuild", function()
-    RenderCore.RequestRebuild("PostCleanupMap")
-end)
 
 RenderCore.Register("ShutDown", "RTXDisp_Shutdown", function()
     DisableRendering()

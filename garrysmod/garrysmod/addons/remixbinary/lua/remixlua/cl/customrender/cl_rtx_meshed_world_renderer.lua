@@ -201,7 +201,13 @@ local function CleanupMeshes()
                     for _, m in ipairs(group.meshes) do
                         if m then
                             if RenderCore and RenderCore.DestroyMesh then
-                                if RenderCore.DestroyMesh(m) then
+                                local result = RenderCore.DestroyMesh(m)
+                                if result == true then
+                                    destroyed = destroyed + 1
+                                elseif result == nil then
+                                    -- Mesh was not tracked: already cleaned up by another system
+                                    -- (e.g. DestroyTrackedMeshes from a concurrent rebuild sink).
+                                    -- This is not a failure; count it as gone.
                                     destroyed = destroyed + 1
                                 else
                                     failed = failed + 1
@@ -674,9 +680,6 @@ RenderCore.Register("InitPostEntity", "RTXMeshInit", function(token)
     Initialize(token)
 end)
 
-RenderCore.Register("PostCleanupMap", "RTXMeshRebuild", function()
-    RenderCore.RequestRebuild("PostCleanupMap")
-end)
 
 RenderCore.Register("ShutDown", "RTXCustomWorldShutdown", function()
     DisableCustomRendering()

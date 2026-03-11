@@ -932,7 +932,8 @@ do
 
     function RemixRenderCore.DestroyMesh(meshObj)
         if not meshObj then return false end
-        if not meshRefs[meshObj] then return false end
+        -- Return nil (not false) to distinguish "not tracked / already cleaned up" from a real failure.
+        if not meshRefs[meshObj] then return nil end
         
         local ok, err = pcall(function()
             if meshObj.Destroy then

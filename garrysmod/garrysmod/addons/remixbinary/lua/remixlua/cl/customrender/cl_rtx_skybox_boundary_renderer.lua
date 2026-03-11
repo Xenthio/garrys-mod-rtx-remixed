@@ -342,7 +342,6 @@ end
 
 -- Hooks & Commands
 RenderCore.Register("InitPostEntity", "RTXSBRInit", Initialize)
-RenderCore.Register("PostCleanupMap", "RTXSBRRebuild", function() RenderCore.RequestRebuild("PostCleanupMap") end)
 RenderCore.RegisterRebuildSink("RTXSBRRebuildSink", Initialize)
 
 cvars.AddChangeCallback("rtx_sbr_enable", function(_, _, new)
