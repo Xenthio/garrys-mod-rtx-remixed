@@ -8,7 +8,6 @@ local RenderCore = include("remixlua/cl/customrender/render_core.lua") or RemixR
 local CONVARS = {
     ENABLED = CreateClientConVar("rtx_mwr_enable", "1", true, false, "Forces custom mesh rendering of map"),
     DEBUG = CreateClientConVar("rtx_mwr_debug", "0", true, false, "Shows debug info for mesh rendering"),
-    CHUNK_SIZE = CreateClientConVar("rtx_mwr_chunk_size", "65536", true, false, "Size of chunks for mesh combining"),
     CAPTURE_MODE = CreateClientConVar("rtx_mwr_capture_mode", "0", true, false, "Toggles r_drawworld for capture mode"),
     MAT_WHITELIST = CreateClientConVar("rtx_mwr_mat_whitelist", "", true, false, "Comma-separated material name substrings to include"),
     MAT_BLACKLIST = CreateClientConVar("rtx_mwr_mat_blacklist", "toolsskybox,skybox/", true, false, "Comma-separated material name substrings to exclude")
@@ -88,43 +87,6 @@ local function IsSkyboxFace(face)
            matName:find("skybox/", 1, true) ~= nil
 end
 
--- Forward declare to allow usage in SplitChunk
-local GetChunkKey
-
-local function SplitChunk(faces, chunkSize)
-    local subChunks = {}
-    for _, face in ipairs(faces) do
-        local vertices = face:GetVertexs()
-        if not vertices or #vertices == 0 then continue end
-        
-        -- Calculate face center
-        local center = Vector(0, 0, 0)
-        for _, vert in ipairs(vertices) do
-            center:Add(vert)
-        end
-        center:Div(#vertices)
-        
-        -- Use smaller chunk size for subdivision
-        local subX = math_floor(center.x / (chunkSize/2))
-        local subY = math_floor(center.y / (chunkSize/2))
-        local subZ = math_floor(center.z / (chunkSize/2))
-        local subKey = GetChunkKey(subX, subY, subZ)
-        
-        subChunks[subKey] = subChunks[subKey] or {}
-        table_insert(subChunks[subKey], face)
-    end
-    return subChunks
-end
-
-local function DetermineOptimalChunkSize(totalFaces)
-    -- Base chunk size on face density, but keep within reasonable bounds
-    if not totalFaces or totalFaces <= 0 then return 65536 end
-    local density = totalFaces / (16384 * 16384 * 16384) -- Approximate map volume
-    local size = math_max(8192, math_min(131072, math_floor(1 / density * 32768)))
-    print("[RTX Fixes] Auto-determined chunk size: " .. size .. " for " .. totalFaces .. " faces")
-    return size
-end
-
 local function CreateMeshBatch(vertices, material, maxVertsPerMesh)
     local meshes = {}
     local n = #vertices
@@ -156,12 +118,47 @@ local function CreateMeshBatch(vertices, material, maxVertsPerMesh)
     return meshes
 end
 
-GetChunkKey = function(x, y, z)
-    -- Use integer hash from RenderCore instead of string concat
-    if RenderCore and RenderCore.HashChunkKey then
-        return RenderCore.HashChunkKey(x, y, z)
+-- Morton-code (Z-order curve) spatial sort for face records.
+-- Triangles sorted by Morton code are spatially coherent, which gives the
+-- GPU BVH builder better BLAS quality and improves ray traversal performance.
+--
+-- Each face record is {face=..., cx=..., cy=..., cz=...} where cx/cy/cz is the
+-- face centroid.  Source maps fit inside ±32768 world units; we map that range
+-- to [0, 1023] for 10-bit per-axis Morton encoding (30-bit total code).
+local _bit = bit
+local _MORTON_HALF  = 32768.0
+local _MORTON_SCALE = 1023.0 / 65536.0  -- maps [-32768, +32768] → [0, 1023]
+
+local function _mortonSplit3(x)
+    -- Spread 10 bits into every third bit position (bit 0, 3, 6, … 27)
+    x = _bit.band(x, 0x3ff)
+    x = _bit.band(_bit.bor(x, _bit.lshift(x, 16)), 0x30000ff)
+    x = _bit.band(_bit.bor(x, _bit.lshift(x,  8)), 0x300f00f)
+    x = _bit.band(_bit.bor(x, _bit.lshift(x,  4)), 0x30c30c3)
+    x = _bit.band(_bit.bor(x, _bit.lshift(x,  2)), 0x9249249)
+    return x
+end
+
+local function _mortonCode3(ix, iy, iz)
+    return _bit.bor(_mortonSplit3(ix),
+                    _bit.lshift(_mortonSplit3(iy), 1),
+                    _bit.lshift(_mortonSplit3(iz), 2))
+end
+
+local function SortFaceRecordsByMorton(recs)
+    local scale  = _MORTON_SCALE
+    local half   = _MORTON_HALF
+    local clamp0 = math.max
+    local min1   = math.min
+    local ifloor = math_floor
+    for i = 1, #recs do
+        local r  = recs[i]
+        local ix = clamp0(0, min1(1023, ifloor((r.cx + half) * scale)))
+        local iy = clamp0(0, min1(1023, ifloor((r.cy + half) * scale)))
+        local iz = clamp0(0, min1(1023, ifloor((r.cz + half) * scale)))
+        r._morton = _mortonCode3(ix, iy, iz)
     end
-    return x .. "," .. y .. "," .. z  -- Fallback
+    table.sort(recs, function(a, b) return a._morton < b._morton end)
 end
 
 -- Cleanup helper with proper error tracking
@@ -169,28 +166,26 @@ local function CleanupMeshes()
     local destroyed = 0
     local failed = 0
     
-    for renderType, chunks in pairs(mapMeshes) do
-        for chunkKey, materials in pairs(chunks) do
-            for matName, group in pairs(materials) do
-                if group.meshes then
-                    for _, m in ipairs(group.meshes) do
-                        if m then
-                            if RenderCore and RenderCore.DestroyMesh then
-                                local result = RenderCore.DestroyMesh(m)
-                                if result == true then
-                                    destroyed = destroyed + 1
-                                elseif result == nil then
-                                    -- Mesh was not tracked: already cleaned up by another system
-                                    -- (e.g. DestroyTrackedMeshes from a concurrent rebuild sink).
-                                    -- This is not a failure; count it as gone.
-                                    destroyed = destroyed + 1
-                                else
-                                    failed = failed + 1
-                                end
+    for renderType, matGroups in pairs(mapMeshes) do
+        for _, group in pairs(matGroups) do
+            if group.meshes then
+                for _, m in ipairs(group.meshes) do
+                    if m then
+                        if RenderCore and RenderCore.DestroyMesh then
+                            local result = RenderCore.DestroyMesh(m)
+                            if result == true then
+                                destroyed = destroyed + 1
+                            elseif result == nil then
+                                -- Mesh was not tracked: already cleaned up by another system
+                                -- (e.g. DestroyTrackedMeshes from a concurrent rebuild sink).
+                                -- This is not a failure; count it as gone.
+                                destroyed = destroyed + 1
                             else
-                                local ok = pcall(function() if m.Destroy then m:Destroy() end end)
-                                if ok then destroyed = destroyed + 1 else failed = failed + 1 end
+                                failed = failed + 1
                             end
+                        else
+                            local ok = pcall(function() if m.Destroy then m:Destroy() end end)
+                            if ok then destroyed = destroyed + 1 else failed = failed + 1 end
                         end
                     end
                 end
@@ -211,25 +206,22 @@ local function BuildFlatRenderList()
     local oList = {}
     local tList = {}
     local function fill(renderGroups, list, isTranslucent)
-        for _, chunkMaterials in pairs(renderGroups) do
-            for key, group in pairs(chunkMaterials) do
-                if key == "_mins" or key == "_maxs" then continue end
-                if not group or not group.meshes then continue end
-                local skyMatrix = (group.isSkybox and not group.bakedToWorld) and skyboxWorldMatrix or nil
-                local isSkybox  = group.isSkybox or false
-                local mat       = group.material
-                local meshList  = group.meshes
-                for i = 1, #meshList do
-                    local m = meshList[i]
-                    if m then
-                        list[#list + 1] = {
-                            material   = mat,
-                            mesh       = m,
-                            matrix     = skyMatrix,
-                            translucent = isTranslucent,
-                            isSkybox   = isSkybox,
-                        }
-                    end
+        for _, group in pairs(renderGroups) do
+            if not group or not group.meshes then continue end
+            local skyMatrix = (group.isSkybox and not group.bakedToWorld) and skyboxWorldMatrix or nil
+            local isSkybox  = group.isSkybox or false
+            local mat       = group.material
+            local meshList  = group.meshes
+            for i = 1, #meshList do
+                local m = meshList[i]
+                if m then
+                    list[#list + 1] = {
+                        material    = mat,
+                        mesh        = m,
+                        matrix      = skyMatrix,
+                        translucent = isTranslucent,
+                        isSkybox    = isSkybox,
+                    }
                 end
             end
         end
@@ -274,8 +266,8 @@ local function BuildMapMeshes(cancelToken)
         local batchVerts = {}
         local batchCount = 0
         local processed = 0
-        for _, face in ipairs(faces) do
-            local verts = face:GenerateVertexTriangleData()
+        for _, rec in ipairs(faces) do
+            local verts = rec.face:GenerateVertexTriangleData()
             if verts then
                 
                 local faceValid = true
@@ -346,27 +338,10 @@ local function BuildMapMeshes(cancelToken)
         local frameStartTime = SysTime()
         local frameBudget = 0.003 -- start ~3ms per frame
 
-        -- Prepare chunk table and inputs inside coroutine
+        -- Global material groups: all faces sharing the same material go into one group
+        -- regardless of position.  This minimises TLAS entries and lets the BVH builder
+        -- see the full set of triangles for each material at once.
         local chunks = { opaque = {}, translucent = {} }
-        local chunkSize = CONVARS.CHUNK_SIZE:GetInt()
-        if not chunkSize or chunkSize <= 0 then
-            -- Auto-determine chunk size if not set or invalid
-            local faceCount = 0
-            if NikNaks and NikNaks.CurrentMap and NikNaks.CurrentMap.GetLeafs then
-                local ok, leafs = pcall(function() return NikNaks.CurrentMap:GetLeafs() end)
-                if ok and leafs then
-                    for _, leaf in pairs(leafs) do
-                        if leaf and leaf.GetFaces then
-                            local ok2, faces = pcall(function() return leaf:GetFaces(false) end)
-                            if ok2 and faces then
-                                faceCount = faceCount + #faces
-                            end
-                        end
-                    end
-                end
-            end
-            chunkSize = DetermineOptimalChunkSize(faceCount)
-        end
 
         -- Determine 3D skybox bounds and transform parameters
         local hasSkyAABB = false
@@ -450,10 +425,6 @@ local function BuildMapMeshes(cancelToken)
                                     end
                                 end
 
-                                local chunkX = math_floor(_tempCenter.x / chunkSize)
-                                local chunkY = math_floor(_tempCenter.y / chunkSize)
-                                local chunkZ = math_floor(_tempCenter.z / chunkSize)
-                                local chunkKey = GetChunkKey(chunkX, chunkY, chunkZ)
                                 local material = face:GetMaterial()
                                 if material then
                                     local matName = material:GetName()
@@ -462,17 +433,22 @@ local function BuildMapMeshes(cancelToken)
                                             material = RenderCore.GetMaterial(matName)
                                         end
                                         local chunkGroup = face:IsTranslucent() and chunks.translucent or chunks.opaque
-                                        chunkGroup[chunkKey] = chunkGroup[chunkKey] or {}
-                                        local chunkData = chunkGroup[chunkKey]
                                         -- Include skybox flag in key so world and skybox faces with
                                         -- the same material never get merged into one group (wrong matrix)
                                         local groupKey = isInSkybox and (matName .. "\0sky") or matName
-                                        chunkData[groupKey] = chunkData[groupKey] or {
+                                        chunkGroup[groupKey] = chunkGroup[groupKey] or {
                                             material = material,
-                                            faces = {},
+                                            faces    = {},
                                             isSkybox = isInSkybox
                                         }
-                                        table_insert(chunkData[groupKey].faces, face)
+                                        -- Store face + centroid so Morton sort can run after the scan
+                                        local rec = chunkGroup[groupKey].faces
+                                        rec[#rec + 1] = {
+                                            face = face,
+                                            cx   = _tempCenter.x,
+                                            cy   = _tempCenter.y,
+                                            cz   = _tempCenter.z,
+                                        }
                                     end
                                 end
                             end
@@ -560,26 +536,24 @@ local function BuildMapMeshes(cancelToken)
             local hasInside       = false
             local maxOvershoot    = 0
             local function scanSkyFaces(chunkSet)
-                for _, chunkData in pairs(chunkSet) do
-                    for _, groupData in pairs(chunkData) do
-                        if groupData.isSkybox then
-                            for _, face in ipairs(groupData.faces) do
-                                local verts = face:GetVertexs()
-                                if verts then
-                                    for _, vert in ipairs(verts) do
-                                        local px = (vert.x - spx) * sc
-                                        local py = (vert.y - spy) * sc
-                                        local pz = (vert.z - spz) * sc
-                                        if pz >= wmz then
-                                            if px >= wmx and px <= wMx and py >= wmy and py <= wMy then
-                                                hasInside = true
-                                            else
-                                                local ox = math.max(0, px - wMx, wmx - px)
-                                                local oy = math.max(0, py - wMy, wmy - py)
-                                                local ov = math.max(ox, oy)
-                                                if ov <= cap and ov > maxOvershoot then
-                                                    maxOvershoot = ov
-                                                end
+                for _, groupData in pairs(chunkSet) do
+                    if groupData.isSkybox then
+                        for _, rec in ipairs(groupData.faces) do
+                            local verts = rec.face:GetVertexs()
+                            if verts then
+                                for _, vert in ipairs(verts) do
+                                    local px = (vert.x - spx) * sc
+                                    local py = (vert.y - spy) * sc
+                                    local pz = (vert.z - spz) * sc
+                                    if pz >= wmz then
+                                        if px >= wmx and px <= wMx and py >= wmy and py <= wMy then
+                                            hasInside = true
+                                        else
+                                            local ox = math.max(0, px - wMx, wmx - px)
+                                            local oy = math.max(0, py - wMy, wmy - py)
+                                            local ov = math.max(ox, oy)
+                                            if ov <= cap and ov > maxOvershoot then
+                                                maxOvershoot = ov
                                             end
                                         end
                                     end
@@ -665,8 +639,8 @@ local function BuildMapMeshes(cancelToken)
 
             -- Collect all face vertices, bake to world space
             local allVerts = {}
-            for _, face in ipairs(faces) do
-                local verts = face:GenerateVertexTriangleData()
+            for _, rec in ipairs(faces) do
+                local verts = rec.face:GenerateVertexTriangleData()
                 if verts then
                     for _, vert in ipairs(verts) do
                         if ValidateVertex(vert.pos) then
@@ -741,59 +715,43 @@ local function BuildMapMeshes(cancelToken)
             return meshes, minBounds, maxBounds
         end
 
-        for renderType, chunkGroup in pairs(chunks) do
-            for chunkKey, materials in pairs(chunkGroup) do
-                mapMeshes[renderType][chunkKey] = {}
-                for matName, group in pairs(materials) do
-                    if cancelToken and cancelToken.cancelled then return end
-                    if group.faces and #group.faces > 0 then
-                        local meshes, mins, maxs
-                        if group.isSkybox and skyPos then
-                            meshes, mins, maxs = CreateSkyboxMeshGroupBaked(group.faces, group.material)
-                        else
-                            meshes, mins, maxs = CreateRegularMeshGroup(group.faces, group.material)
-                        end
-                        if meshes then
-                            mapMeshes[renderType][chunkKey][matName] = {
-                                meshes = meshes,
-                                material = group.material,
-                                isSkybox = group.isSkybox or false,
-                                bakedToWorld = (group.isSkybox and skyPos ~= nil) or false,
-                            }
-                            -- update chunk bounds
-                            local chunkTable = mapMeshes[renderType][chunkKey]
-                            if mins and maxs then
-                                local cmins = chunkTable._mins
-                                local cmaxs = chunkTable._maxs
-                                if not cmins or not cmaxs then
-                                    chunkTable._mins = mins
-                                    chunkTable._maxs = maxs
-                                else
-                                    cmins.x = math_min(cmins.x, mins.x)
-                                    cmins.y = math_min(cmins.y, mins.y)
-                                    cmins.z = math_min(cmins.z, mins.z)
-                                    cmaxs.x = math_max(cmaxs.x, maxs.x)
-                                    cmaxs.y = math_max(cmaxs.y, maxs.y)
-                                    cmaxs.z = math_max(cmaxs.z, maxs.z)
-                                end
-                            end
+        for renderType, matGroups in pairs(chunks) do
+            for matName, group in pairs(matGroups) do
+                if cancelToken and cancelToken.cancelled then return end
+                if group.faces and #group.faces > 0 then
+                    -- Sort triangles spatially before baking so the BVH builder sees
+                    -- coherent primitive runs, improving BLAS quality and traversal speed.
+                    SortFaceRecordsByMorton(group.faces)
+
+                    local meshes, mins, maxs
+                    if group.isSkybox and skyPos then
+                        meshes, mins, maxs = CreateSkyboxMeshGroupBaked(group.faces, group.material)
+                    else
+                        meshes, mins, maxs = CreateRegularMeshGroup(group.faces, group.material)
+                    end
+                    if meshes then
+                        mapMeshes[renderType][matName] = {
+                            meshes       = meshes,
+                            material     = group.material,
+                            isSkybox     = group.isSkybox or false,
+                            bakedToWorld = (group.isSkybox and skyPos ~= nil) or false,
+                        }
+                    end
+                end
+                if cancelToken and cancelToken.cancelled then return end
+                if SysTime() - frameStartTime > frameBudget then
+                    coroutine.yield()
+                    local spent = SysTime() - frameStartTime
+                    if RenderCore and RenderCore.UpdateFrameBudget then
+                        frameBudget = RenderCore.UpdateFrameBudget(spent, frameBudget)
+                    else
+                        if spent > frameBudget * 1.2 then
+                            frameBudget = math.max(0.001, frameBudget * 0.95)
+                        elseif spent < frameBudget * 0.8 then
+                            frameBudget = math.min(0.006, frameBudget * 1.05)
                         end
                     end
-                    if cancelToken and cancelToken.cancelled then return end
-                    if SysTime() - frameStartTime > frameBudget then
-                        coroutine.yield()
-                        local spent = SysTime() - frameStartTime
-                        if RenderCore and RenderCore.UpdateFrameBudget then
-                            frameBudget = RenderCore.UpdateFrameBudget(spent, frameBudget)
-                        else
-                            if spent > frameBudget * 1.2 then
-                                frameBudget = math.max(0.001, frameBudget * 0.95)
-                            elseif spent < frameBudget * 0.8 then
-                                frameBudget = math.min(0.006, frameBudget * 1.05)
-                            end
-                        end
-                        frameStartTime = SysTime()
-                    end
+                    frameStartTime = SysTime()
                 end
             end
         end
@@ -981,7 +939,6 @@ local function DebounceRebuildOnCvar(name)
     end, "RTXMeshRebuild-" .. name)
 end
 
- DebounceRebuildOnCvar("rtx_mwr_chunk_size")
  DebounceRebuildOnCvar("rtx_mwr_mat_whitelist")
  DebounceRebuildOnCvar("rtx_mwr_mat_blacklist")
 
