@@ -50,17 +50,17 @@ hook.Add( "PopulateToolMenu", "RTXOptionsClient_Performance", function()
         panel:ControlHelp("Enables custom renderers to replace engine rendered world geometry and static props. Also controls engine culling patches. This will break mesh replacements in Remix when enabled.")
 
         -- PVS Culling settings (only relevant when custom rendering is enabled)
-        local pvsCategory = vgui.Create("DCollapsibleCategory", panel)
-        pvsCategory:SetLabel("PVS Culling")
-        pvsCategory:SetExpanded(false)
-        pvsCategory:Dock(TOP)
-        pvsCategory:DockMargin(0, 8, 0, 0)
+        local cullingCategory = vgui.Create("DCollapsibleCategory", panel)
+        cullingCategory:SetLabel("Culling")
+        cullingCategory:SetExpanded(false)
+        cullingCategory:Dock(TOP)
+        cullingCategory:DockMargin(0, 8, 0, 0)
 
-        local pvsList = vgui.Create("DPanelList", pvsCategory)
+        local pvsList = vgui.Create("DPanelList", cullingCategory)
         pvsList:SetAutoSize(true)
         pvsList:SetSpacing(4)
         pvsList:DockPadding(8, 4, 8, 4)
-        pvsCategory:SetContents(pvsList)
+        cullingCategory:SetContents(pvsList)
 
         local pvsCb = vgui.Create("DCheckBoxLabel")
         pvsCb:SetText("Static Props")
@@ -86,29 +86,43 @@ hook.Add( "PopulateToolMenu", "RTXOptionsClient_Performance", function()
         pvsList:AddItem(pvsSlider)
 
         local pvsSliderHelp = vgui.Create("DLabel")
-        pvsSliderHelp:SetText("Props within this distance always render, bypassing PVS. (Default: 0)")
+        pvsSliderHelp:SetText("Props within this distance always render, bypassing PVS. (0 = disabled)")
         pvsSliderHelp:SetWrap(true)
         pvsSliderHelp:SetAutoStretchVertical(true)
         pvsSliderHelp:SetTextColor(Color(0, 0, 0))
         pvsList:AddItem(pvsSliderHelp)
 
-        -- Track all PVS child controls for graying out
-        local pvsControls = { pvsCb, pvsSlider }
+        local distSlider = vgui.Create("DNumSlider")
+        distSlider:SetText("Distance Culling")
+        distSlider:SetConVar("rtx_spr_cull_distance")
+        distSlider:SetMin(0)
+        distSlider:SetMax(32768)
+        distSlider:SetDecimals(0)
+        if distSlider.Label then distSlider.Label:SetTextColor(Color(0, 0, 0)) end
+        pvsList:AddItem(distSlider)
+
+        local distSliderHelp = vgui.Create("DLabel")
+        distSliderHelp:SetText("Sphere-based culling for static props. With PVS on: applied after PVS as an extra filter. With PVS off: sole culling method. (0 = disabled)")
+        distSliderHelp:SetWrap(true)
+        distSliderHelp:SetAutoStretchVertical(true)
+        distSliderHelp:SetTextColor(Color(0, 0, 0))
+        pvsList:AddItem(distSliderHelp)
 
         -- Gray out PVS section when custom rendering is disabled
         local cv_custom = GetConVar("rtx_custom_render")
         local colorEnabled = Color(0, 0, 0)
         local colorDisabled = Color(140, 140, 140)
-        pvsCategory.Think = function(self)
+        cullingCategory.Think = function(self)
             local enabled = cv_custom and cv_custom:GetBool() or false
             self:SetEnabled(enabled)
             self:SetAlpha(enabled and 255 or 128)
             local col = enabled and colorEnabled or colorDisabled
             pvsCb:SetTextColor(col)
             if pvsSlider.Label then pvsSlider.Label:SetTextColor(col) end
+            if distSlider.Label then distSlider.Label:SetTextColor(col) end
         end
 
-        panel:AddItem(pvsCategory)
+        panel:AddItem(cullingCategory)
 
         -- 3D Skybox toggle
         local skyCategory = vgui.Create("DCollapsibleCategory", panel)

@@ -11,6 +11,7 @@ local convar_UsePVS = CreateClientConVar("rtx_spr_use_pvs", "1", true, false, "E
 local convar_PVSSafetyDistance = CreateClientConVar("rtx_spr_pvs_safety_distance", "0", true, false, "Distance within which PVS culling is disabled (prevents close-range culling bugs)")
 local convar_FrameSkip = CreateClientConVar("rtx_spr_frame_skip", "2", true, false, "Update prop visibility every N frames (2 = every other frame, 1 = every frame)")
 local convar_UseMeshCombining = CreateClientConVar("rtx_spr_mesh_combining", "0", true, false, "Combine props into single meshes per material to reduce draw calls")
+local convar_CullDistance = CreateClientConVar("rtx_spr_cull_distance", "0", true, false, "Sphere-based max render distance for static props (0 = disabled). With PVS on: additional post-PVS filter. With PVS off: sole culling method.")
 
 -- Per-map PVS safety distance persistence
 local PVS_SAFETY_FILE = "rtx_pvs_safety_distances.txt"
@@ -1099,6 +1100,10 @@ RenderCore.Register("PreDrawOpaqueRenderables", "CustomStaticRender_DrawProps", 
         local safetyDist = convar_PVSSafetyDistance:GetFloat()
         local safetyDistSqr = safetyDist * safetyDist
         
+        -- Compute distance culling threshold once (nil = disabled)
+        local cullDist = convar_CullDistance:GetFloat()
+        local cullDistSqr = (cullDist > 0) and (cullDist * cullDist) or nil
+        
         for _, prop in ipairs(propsToRender) do
             local meshData = prop.cachedMesh
             if not meshData or not meshData.meshes then
@@ -1140,6 +1145,16 @@ RenderCore.Register("PreDrawOpaqueRenderables", "CustomStaticRender_DrawProps", 
             if prop.isSkybox and not sky3dEnabled then
                 skippedProps = skippedProps + 1
                 continue
+            end
+            
+            -- Distance culling (non-skybox only).
+            -- When PVS is on:  additional filter applied to props that already passed PVS.
+            -- When PVS is off: sole culling method (pvs is nil so the PVS block above was skipped).
+            if cullDistSqr and not prop.isSkybox then
+                if prop.origin:DistToSqr(playerPos) > cullDistSqr then
+                    skippedProps = skippedProps + 1
+                    continue
+                end
             end
             
             -- Add to render list
