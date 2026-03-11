@@ -94,6 +94,9 @@ if RemixRenderCore then RemixRenderCore._sprBuildState = sprBuildStats end
 local cachedRenderList = { world = {} }
 local lastUpdateFrame = { world = -1 }
 
+-- Set to true once the world geometry AABB becomes available and we log that culling is active.
+local _skyAABBCullLogged = false
+
 -- Combined mesh cache (per material) - built once during initialization
 local combinedMeshes = {} -- [materialName] = { material = IMaterial, mesh = IMesh, propCount = N, props = {prop indices} }
 local combinedMeshesBuilt = false
@@ -636,9 +639,16 @@ local function ProcessStaticProp(propData)
             m:Scale(Vector(skyScale, skyScale, skyScale))
             m:Translate(-skyPos)
             prop.skyMatrix = m
+            -- Pre-compute the world-space origin for AABB-based culling in CollectWorldProps.
+            prop.worldOrigin = Vector(
+                (propData.Origin.x - skyPos.x) * skyScale,
+                (propData.Origin.y - skyPos.y) * skyScale,
+                (propData.Origin.z - skyPos.z) * skyScale
+            )
+            prop.skyWorldScale = skyScale
         end
     end
-    
+
     -- Store this information in the prop data
     prop.isSkybox = isSkyboxProp
     
@@ -847,15 +857,19 @@ end
 local function CollectWorldProps()
     worldProps = {}
     local skyboxCount = 0
-    
+    _skyAABBCullLogged = false
+
+    -- Note: AABB-based skybox prop culling runs at render time (in the per-frame
+    -- visibility loop) so it automatically picks up the world AABB once the geometry
+    -- renderers finish their build pass — no ordering dependency here.
     for _, prop in ipairs(cachedStaticProps) do
-        table.insert(worldProps, prop)
         if prop.isSkybox then
             skyboxCount = skyboxCount + 1
         end
+        table.insert(worldProps, prop)
     end
-    
-    print(string.format("[Static Render] Collected props: %d total (%d from skybox, transformed to world space)", 
+
+    print(string.format("[Static Render] Collected props: %d total (%d skybox — culling applied at render time)",
                         #worldProps, skyboxCount))
 end
 
@@ -1080,6 +1094,19 @@ RenderCore.Register("PreDrawOpaqueRenderables", "CustomStaticRender_DrawProps", 
     local frameCount = FrameNumber()
     local isNewFrame = lastDebugFrame ~= frameCount
 
+    -- Fetch the current world geometry AABB for skybox prop culling.
+    -- This is populated by the geometry renderers after their build pass, so the first
+    -- few frames after map load may not have it yet — that's fine, we just skip culling.
+    local wAABBMins, wAABBMaxs
+    if RenderCore and RenderCore.GetWorldGeometryAABB then
+        wAABBMins, wAABBMaxs = RenderCore.GetWorldGeometryAABB()
+    end
+    if wAABBMins and not _skyAABBCullLogged then
+        _skyAABBCullLogged = true
+        print(string.format("[StaticProps] World AABB now available — skybox prop culling active: (%.0f,%.0f,%.0f)-(%.0f,%.0f,%.0f)",
+            wAABBMins.x, wAABBMins.y, wAABBMins.z, wAABBMaxs.x, wAABBMaxs.y, wAABBMaxs.z))
+    end
+
     if shouldDebug and isNewFrame then
         DebugPrint("Attempting to render", #propsToRender, "props")
     end
@@ -1145,6 +1172,29 @@ RenderCore.Register("PreDrawOpaqueRenderables", "CustomStaticRender_DrawProps", 
             if prop.isSkybox and not sky3dEnabled then
                 skippedProps = skippedProps + 1
                 continue
+            end
+
+            -- Cull skybox props whose world-space AABB is fully inside the main map AABB.
+            -- The world AABB is populated by the geometry renderers; on the first few frames
+            -- after load it may be nil, in which case we skip culling for this prop.
+            if prop.isSkybox and wAABBMins and prop.worldOrigin then
+                local wOrigin = prop.worldOrigin
+                local sc = prop.skyWorldScale or 1
+                local cacheKey2 = prop.model .. "_skin" .. (prop.skin or 0)
+                local md = meshCache[cacheKey2]
+                local pMins, pMaxs
+                if md and md.mins and md.maxs then
+                    pMins = Vector(wOrigin.x + md.mins.x * sc, wOrigin.y + md.mins.y * sc, wOrigin.z + md.mins.z * sc)
+                    pMaxs = Vector(wOrigin.x + md.maxs.x * sc, wOrigin.y + md.maxs.y * sc, wOrigin.z + md.maxs.z * sc)
+                else
+                    pMins = wOrigin
+                    pMaxs = wOrigin
+                end
+                if pMins.x >= wAABBMins.x and pMins.y >= wAABBMins.y and pMins.z >= wAABBMins.z
+                and pMaxs.x <= wAABBMaxs.x and pMaxs.y <= wAABBMaxs.y and pMaxs.z <= wAABBMaxs.z then
+                    skippedProps = skippedProps + 1
+                    continue
+                end
             end
             
             -- Distance culling (non-skybox only).

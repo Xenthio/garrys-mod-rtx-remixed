@@ -1242,6 +1242,167 @@ do
         return inSkyboxPass
     end
 
+    -- Shared world geometry AABB (union of bounds from all geometry renderers).
+    -- Each renderer expands this during its build phase. Used by 3D skybox renderers to
+    -- clip projected geometry so it doesn't overlap with the main map.
+    local _worldAABBMins, _worldAABBMaxs
+
+    -- Extra XY padding added to the world AABB when building the clip volume used to
+    -- remove 3D skybox geometry that bleeds into the main map.
+    --
+    -- Why XY only?  The back-face artifacts (black geometry in interiors/rooms) come from
+    -- the projected skybox ground shell sitting at the *same Z level* as the map but at
+    -- positions just outside the strict map AABB.  Expanding XY clips that near-map shell
+    -- while Z is left alone so the height range of the clip volume stays accurate.
+    --
+    -- 0 (default) = automatic: each renderer inspects its own projected sky geometry at
+    -- build time and computes the minimum margin needed to clip near-map bleed geometry
+    -- while leaving properly-placed distant terrain untouched.
+    -- Any positive value overrides the automatic calculation for that map.
+    local _skyClipMarginConVar = CreateClientConVar(
+        "rtx_3dsky_clip_margin", "0", true, false,
+        "World units to expand the skybox clip volume beyond the map geometry bounds in " ..
+        "the XY plane.  0 (default) = automatic: the margin is derived from the actual " ..
+        "projected sky geometry so well-placed skies get no extra clip while bleeding " ..
+        "geometry is removed.  Set a positive value to override per-map.")
+
+    function RemixRenderCore.GetSkyClipMargin()
+        return _skyClipMarginConVar:GetFloat()
+    end
+
+    -- Returns the world geometry AABB expanded by the configured XY clip margin.
+    -- This is the volume used to decide which baked skybox triangles to remove.
+    function RemixRenderCore.GetExpandedClipAABB()
+        if not _worldAABBMins then return nil, nil end
+        local m = _skyClipMarginConVar:GetFloat()
+        if m <= 0 then return _worldAABBMins, _worldAABBMaxs end
+        return Vector(_worldAABBMins.x - m, _worldAABBMins.y - m, _worldAABBMins.z),
+               Vector(_worldAABBMaxs.x + m, _worldAABBMaxs.y + m, _worldAABBMaxs.z)
+    end
+
+    function RemixRenderCore.ExpandWorldGeometryAABB(mins, maxs)
+        if not mins or not maxs then return end
+        if not _worldAABBMins then
+            _worldAABBMins = Vector(mins.x, mins.y, mins.z)
+            _worldAABBMaxs = Vector(maxs.x, maxs.y, maxs.z)
+        else
+            if mins.x < _worldAABBMins.x then _worldAABBMins.x = mins.x end
+            if mins.y < _worldAABBMins.y then _worldAABBMins.y = mins.y end
+            if mins.z < _worldAABBMins.z then _worldAABBMins.z = mins.z end
+            if maxs.x > _worldAABBMaxs.x then _worldAABBMaxs.x = maxs.x end
+            if maxs.y > _worldAABBMaxs.y then _worldAABBMaxs.y = maxs.y end
+            if maxs.z > _worldAABBMaxs.z then _worldAABBMaxs.z = maxs.z end
+        end
+    end
+
+    function RemixRenderCore.GetWorldGeometryAABB()
+        return _worldAABBMins, _worldAABBMaxs
+    end
+
+    function RemixRenderCore.ClearWorldGeometryAABB()
+        _worldAABBMins = nil
+        _worldAABBMaxs = nil
+    end
+
+    RemixRenderCore.Register("InitPostEntity", "RemixRenderCore-ClearWorldAABB", function()
+        RemixRenderCore.ClearWorldGeometryAABB()
+    end)
+
+    -- Sutherland-Hodgman: split a convex polygon against one AABB half-space.
+    -- Returns (outPoly, inPoly) where outPoly is outside the half-space.
+    -- minSide=true → outside means v[axis] < limit; false → outside means v[axis] > limit.
+    local function _AABBClipOnePlane(poly, axis, limit, minSide)
+        if #poly < 3 then return {}, {} end
+        local outPoly, inPoly = {}, {}
+        local prev = poly[#poly]
+        local prevOut = minSide and (prev.pos[axis] < limit) or (prev.pos[axis] > limit)
+        for i = 1, #poly do
+            local curr = poly[i]
+            local currOut = minSide and (curr.pos[axis] < limit) or (curr.pos[axis] > limit)
+            if prevOut ~= currOut then
+                local pa, ca = prev.pos[axis], curr.pos[axis]
+                local dv = ca - pa
+                local t = math.abs(dv) > 1e-6 and ((limit - pa) / dv) or 0.5
+                local function lerp(a, b) return a + (b - a) * t end
+                local iv = {
+                    pos = Vector(lerp(prev.pos.x, curr.pos.x), lerp(prev.pos.y, curr.pos.y), lerp(prev.pos.z, curr.pos.z)),
+                    u   = lerp(prev.u or 0, curr.u or 0),
+                    v   = lerp(prev.v or 0, curr.v or 0),
+                }
+                if prev.normal and curr.normal then
+                    local nx = lerp(prev.normal.x, curr.normal.x)
+                    local ny = lerp(prev.normal.y, curr.normal.y)
+                    local nz = lerp(prev.normal.z, curr.normal.z)
+                    local nl = math.sqrt(nx * nx + ny * ny + nz * nz)
+                    iv.normal = nl > 1e-6 and Vector(nx / nl, ny / nl, nz / nl) or Vector(0, 0, 1)
+                end
+                if prev.u1 ~= nil or curr.u1 ~= nil then
+                    iv.u1 = lerp(prev.u1 or 0, curr.u1 or 0)
+                    iv.v1 = lerp(prev.v1 or 0, curr.v1 or 0)
+                end
+                if prev._alpha ~= nil or curr._alpha ~= nil then
+                    iv._alpha = lerp(prev._alpha or 1, curr._alpha or 1)
+                end
+                outPoly[#outPoly + 1] = iv
+                inPoly[#inPoly + 1]   = iv
+            end
+            if currOut then outPoly[#outPoly + 1] = curr else inPoly[#inPoly + 1] = curr end
+            prev, prevOut = curr, currOut
+        end
+        return outPoly, inPoly
+    end
+
+    -- Clip a flat triangle list (groups of 3 vertices) keeping only geometry that lies
+    -- OUTSIDE the AABB wMins..wMaxs.  Straddling triangles are split at each face plane
+    -- via a recursive Sutherland-Hodgman peel; fully-inside triangles are discarded.
+    -- Vertex format: {pos=Vector, normal=Vector?, u, v, u1?, v1?, _alpha?}
+    -- Returns a new flat vertex list (still groups of 3).
+    function RemixRenderCore.ClipTrianglesOutsideAABB(triangles, wMins, wMaxs)
+        if not wMins or not wMaxs then return triangles end
+        if wMins.x >= wMaxs.x or wMins.y >= wMaxs.y or wMins.z >= wMaxs.z then return triangles end
+        local planes = {
+            { "x", wMins.x, true  }, { "x", wMaxs.x, false },
+            { "y", wMins.y, true  }, { "y", wMaxs.y, false },
+            { "z", wMins.z, true  }, { "z", wMaxs.z, false },
+        }
+        local result = {}
+        local function isInside(v)
+            local p = v.pos
+            return p.x >= wMins.x and p.x <= wMaxs.x
+               and p.y >= wMins.y and p.y <= wMaxs.y
+               and p.z >= wMins.z and p.z <= wMaxs.z
+        end
+        local function fan(poly)
+            for i = 2, #poly - 1 do
+                result[#result + 1] = poly[1]
+                result[#result + 1] = poly[i]
+                result[#result + 1] = poly[i + 1]
+            end
+        end
+        local function split(poly, pi)
+            if #poly < 3 or pi > 6 then return end
+            local pl = planes[pi]
+            local outP, inP = _AABBClipOnePlane(poly, pl[1], pl[2], pl[3])
+            if #outP >= 3 then fan(outP) end
+            if #inP  >= 3 then split(inP, pi + 1) end
+        end
+        for i = 1, #triangles - 2, 3 do
+            local v1, v2, v3 = triangles[i], triangles[i + 1], triangles[i + 2]
+            if v1 and v2 and v3 then
+                local in1, in2, in3 = isInside(v1), isInside(v2), isInside(v3)
+                if not in1 and not in2 and not in3 then
+                    result[#result + 1] = v1
+                    result[#result + 1] = v2
+                    result[#result + 1] = v3
+                elseif not (in1 and in2 and in3) then
+                    split({ v1, v2, v3 }, 1)
+                end
+                -- all-inside: discard
+            end
+        end
+        return result
+    end
+
     -- Centralized flush hooks: begin frame on PreDrawOpaque, flush on PostDraw* passes
     RemixRenderCore.Register("PreDrawOpaqueRenderables", "RemixFrame-Begin", { fn = function(bDrawingDepth, bDrawingSkybox)
         RemixRenderCore.BeginFrame(bDrawingDepth, bDrawingSkybox)

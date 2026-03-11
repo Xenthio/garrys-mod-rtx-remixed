@@ -542,7 +542,136 @@ local function BuildDisplacementMeshes(cancelToken)
         gnx, gny, gnz = nil, nil, nil -- free accumulator memory
         DebugPrint(string.format("Computed %d globally averaged vertex normals", table.Count(avgNormals)))
 
+        -- Compute world displacement AABB from all non-skybox face records.
+        -- This is used to clip 3D skybox displacements so they don't overlap the main map.
+        local worldDispMins, worldDispMaxs
+        local hasWorldAABB = false
+        if hasSkyAABB then
+            local wMins = Vector(math.huge, math.huge, math.huge)
+            local wMaxs = Vector(-math.huge, -math.huge, -math.huge)
+            local worldFaceCount = 0
+            for fi = 1, #faceRecords do
+                if not faceRecords[fi].isSkybox then
+                    worldFaceCount = worldFaceCount + 1
+                    for _, gv in ipairs(faceRecords[fi].grid) do
+                        local p = gv.pos
+                        if p.x < wMins.x then wMins.x = p.x end
+                        if p.y < wMins.y then wMins.y = p.y end
+                        if p.z < wMins.z then wMins.z = p.z end
+                        if p.x > wMaxs.x then wMaxs.x = p.x end
+                        if p.y > wMaxs.y then wMaxs.y = p.y end
+                        if p.z > wMaxs.z then wMaxs.z = p.z end
+                    end
+                end
+            end
+            local skyFaceCount = #faceRecords - worldFaceCount
+            if wMins.x < math.huge then
+                worldDispMins = wMins
+                worldDispMaxs = wMaxs
+                hasWorldAABB = true
+                if RenderCore and RenderCore.ExpandWorldGeometryAABB then
+                    RenderCore.ExpandWorldGeometryAABB(wMins, wMaxs)
+                end
+                print(string.format("[DispRenderer] World AABB: (%.0f,%.0f,%.0f)-(%.0f,%.0f,%.0f)  world faces: %d  sky faces: %d",
+                    wMins.x, wMins.y, wMins.z, wMaxs.x, wMaxs.y, wMaxs.z, worldFaceCount, skyFaceCount))
+            else
+                print(string.format("[DispRenderer] Sky present but no world displacement faces found (sky faces: %d) — no clip possible", skyFaceCount))
+            end
+        else
+            print("[DispRenderer] No 3D skybox detected, skipping clip pass")
+        end
+
+        -- Expand the clip AABB with whatever the world-face renderer has published so far.
+        -- It runs concurrently and publishes incrementally, so by the time we reach clip
+        -- pass the shared AABB may already include wall/ceiling height (not just ground).
+        if hasWorldAABB and RenderCore and RenderCore.GetWorldGeometryAABB then
+            local sm, sM = RenderCore.GetWorldGeometryAABB()
+            if sm then
+                if sm.x < worldDispMins.x then worldDispMins.x = sm.x end
+                if sm.y < worldDispMins.y then worldDispMins.y = sm.y end
+                if sm.z < worldDispMins.z then worldDispMins.z = sm.z end
+                if sM.x > worldDispMaxs.x then worldDispMaxs.x = sM.x end
+                if sM.y > worldDispMaxs.y then worldDispMaxs.y = sM.y end
+                if sM.z > worldDispMaxs.z then worldDispMaxs.z = sM.z end
+                print(string.format("[DispRenderer] Clip AABB after shared union: (%.0f,%.0f,%.0f)-(%.0f,%.0f,%.0f)",
+                    worldDispMins.x, worldDispMins.y, worldDispMins.z, worldDispMaxs.x, worldDispMaxs.y, worldDispMaxs.z))
+            end
+        end
+
+        -- Auto clip margin: same algorithm as the world-face renderer — scan projected
+        -- displacement grid vertices to find bleed geometry above the map floor.
+        local dispAutoMargin = 0
+        if hasWorldAABB and hasSkyAABB and skyPos and skyScale then
+            local spx, spy, spz = skyPos.x, skyPos.y, skyPos.z
+            local sc              = skyScale
+            local wmx, wmy, wmz   = worldDispMins.x, worldDispMins.y, worldDispMins.z
+            local wMx, wMy        = worldDispMaxs.x, worldDispMaxs.y
+            local cap             = sc * 64
+            local hasInside       = false
+            local maxOvershoot    = 0
+            for fi = 1, #faceRecords do
+                if faceRecords[fi].isSkybox then
+                    for _, gv in ipairs(faceRecords[fi].grid) do
+                        local p  = gv.pos
+                        local px = (p.x - spx) * sc
+                        local py = (p.y - spy) * sc
+                        local pz = (p.z - spz) * sc
+                        if pz >= wmz then
+                            if px >= wmx and px <= wMx and py >= wmy and py <= wMy then
+                                hasInside = true
+                            else
+                                local ox = math.max(0, px - wMx, wmx - px)
+                                local oy = math.max(0, py - wMy, wmy - py)
+                                local ov = math.max(ox, oy)
+                                if ov <= cap and ov > maxOvershoot then
+                                    maxOvershoot = ov
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+            if hasInside then
+                dispAutoMargin = maxOvershoot + sc
+                print(string.format("[DispRenderer] Auto clip margin: %.0f (%.0f overshoot + %.0f skyunit buffer, cap=%.0f)",
+                    dispAutoMargin, maxOvershoot, sc, cap))
+            else
+                print("[DispRenderer] Auto clip margin: 0 — no sky displacement bleeds above map floor")
+            end
+        end
+
+        -- Apply XY clip margin: expand the clip volume outward beyond the map geometry bounds.
+        -- This removes near-map skybox ground geometry that sits just outside the strict map
+        -- AABB but at the same Z level, causing it to appear through building roofs/walls.
+        -- Z min is also extended downward to remove underground skybox geometry (flat floor
+        -- planes, etc.) that fall within the XY clip footprint.
+        if hasWorldAABB then
+            local manualMargin = (RenderCore and RenderCore.GetSkyClipMargin and RenderCore.GetSkyClipMargin()) or 0
+            local margin = (manualMargin > 0) and manualMargin or dispAutoMargin
+            if margin > 0 then
+                worldDispMins = Vector(worldDispMins.x - margin, worldDispMins.y - margin, worldDispMins.z)
+                worldDispMaxs = Vector(worldDispMaxs.x + margin, worldDispMaxs.y + margin, worldDispMaxs.z)
+            end
+            -- Extend Z downward proportional to skyScale so underground skybox geometry
+            -- within the clip XY footprint is also removed.
+            local sc = skyScale and skyScale or 16
+            worldDispMins.z = worldDispMins.z - (sc * 256)
+            local marginSrc = (manualMargin > 0) and "manual" or "auto"
+            print(string.format("[DispRenderer] Clip AABB with %.0f margin/%s (+%.0f Z down): (%.0f,%.0f,%.0f)-(%.0f,%.0f,%.0f)",
+                margin, marginSrc, sc * 256, worldDispMins.x, worldDispMins.y, worldDispMins.z, worldDispMaxs.x, worldDispMaxs.y, worldDispMaxs.z))
+        end
+
+        -- Clipping stats accumulated across all skybox face records in pass 2
+        local skyClipStats = { facesIn = 0, facesOut = 0, trisIn = 0, trisOut = 0, facesFullyClipped = 0 }
+
+        -- Bounds accumulated across all baked skybox displacement faces (pre-clip world space).
+        local skyBakedMins = Vector(math.huge, math.huge, math.huge)
+        local skyBakedMaxs = Vector(-math.huge, -math.huge, -math.huge)
+
         -- Pass 2: stream triangles using averaged normalized alphas into chunk/material groups
+        local skyPosX = skyPos and skyPos.x or 0
+        local skyPosY = skyPos and skyPos.y or 0
+        local skyPosZ = skyPos and skyPos.z or 0
         for i = 1, #faceRecords do
             local rec = faceRecords[i]
             local grid = rec.grid
@@ -558,19 +687,90 @@ local function BuildDisplacementMeshes(cancelToken)
                     alphas[gi] = math.Clamp((rawAlpha - alphaMin) / alphaScale, 0, 1)
                 end
             end
+            -- Apply smoothed normals before any baking (keys are in skybox/BSP space)
             ApplyAveragedNormals(grid, posKey, avgNormals)
-            local triangles = GridToTriangles(grid, alphas)
 
+            -- For skybox faces, bake vertex positions to world space before triangulating
+            -- so we can clip against the world AABB and store without a runtime matrix.
+            local workGrid = grid
+            local bakedToWorld = false
+            if rec.isSkybox and skyPos and skyScale then
+                bakedToWorld = true
+                workGrid = {}
+                for gi = 1, #grid do
+                    local gv = grid[gi]
+                    local p = gv.pos
+                    workGrid[gi] = {
+                        pos    = Vector((p.x - skyPosX) * skyScale, (p.y - skyPosY) * skyScale, (p.z - skyPosZ) * skyScale),
+                        normal = gv.normal,
+                        u = gv.u, v = gv.v, u1 = gv.u1, v1 = gv.v1,
+                    }
+                end
+            end
+
+            local triangles = GridToTriangles(workGrid, alphas)
+
+            -- Clip baked skybox triangles to remove the parts that overlap the main map.
+            if bakedToWorld then
+                -- Track the world-space extent of the baked skybox terrain.
+                for gi = 1, #workGrid do
+                    local p = workGrid[gi].pos
+                    if p.x < skyBakedMins.x then skyBakedMins.x = p.x end
+                    if p.y < skyBakedMins.y then skyBakedMins.y = p.y end
+                    if p.z < skyBakedMins.z then skyBakedMins.z = p.z end
+                    if p.x > skyBakedMaxs.x then skyBakedMaxs.x = p.x end
+                    if p.y > skyBakedMaxs.y then skyBakedMaxs.y = p.y end
+                    if p.z > skyBakedMaxs.z then skyBakedMaxs.z = p.z end
+                end
+            end
+            if bakedToWorld and hasWorldAABB and RenderCore and RenderCore.ClipTrianglesOutsideAABB then
+                local trisBefore = #triangles
+                skyClipStats.facesIn = skyClipStats.facesIn + 1
+                skyClipStats.trisIn  = skyClipStats.trisIn + trisBefore
+                triangles = RenderCore.ClipTrianglesOutsideAABB(triangles, worldDispMins, worldDispMaxs)
+                local trisAfter = triangles and #triangles or 0
+                skyClipStats.trisOut = skyClipStats.trisOut + trisAfter
+                if trisAfter == 0 then
+                    skyClipStats.facesFullyClipped = skyClipStats.facesFullyClipped + 1
+                    if cancelToken and cancelToken.cancelled then return end
+                    continue
+                else
+                    skyClipStats.facesOut = skyClipStats.facesOut + 1
+                end
+            elseif bakedToWorld then
+                -- Baked but no clip (no world AABB available) — still count it
+                skyClipStats.facesIn  = skyClipStats.facesIn + 1
+                skyClipStats.facesOut = skyClipStats.facesOut + 1
+                skyClipStats.trisIn   = skyClipStats.trisIn + #triangles
+                skyClipStats.trisOut  = skyClipStats.trisOut + #triangles
+            end
+
+            -- For baked skybox faces, re-derive the chunk key from the world-space center.
             local chunkKey = rec.chunkKey
+            if bakedToWorld and #workGrid > 0 then
+                local cx, cy, cz = 0, 0, 0
+                for gi = 1, #workGrid do
+                    local p = workGrid[gi].pos
+                    cx = cx + p.x; cy = cy + p.y; cz = cz + p.z
+                end
+                local n = #workGrid
+                chunkKey = GetChunkKey(math.floor((cx / n) / chunkSize), math.floor((cy / n) / chunkSize), math.floor((cz / n) / chunkSize))
+            end
+
             local materials = chunks[chunkKey] or {}
             chunks[chunkKey] = materials
 
             local useName = rec.matName
             local useMat = rec.mat
             -- Include skybox flag in key so world and skybox displacements with the
-            -- same material never get merged into one group (wrong matrix applied)
+            -- same material never get merged into one group (wrong transform applied)
             local groupKey = rec.isSkybox and (useName .. "\0sky") or useName
-            materials[groupKey] = materials[groupKey] or { material = useMat, _stream = {}, _mins = Vector(math.huge, math.huge, math.huge), _maxs = Vector(-math.huge, -math.huge, -math.huge), isSkybox = rec.isSkybox or false }
+            materials[groupKey] = materials[groupKey] or {
+                material = useMat, _stream = {},
+                _mins = Vector(math.huge, math.huge, math.huge), _maxs = Vector(-math.huge, -math.huge, -math.huge),
+                isSkybox = rec.isSkybox or false,
+                bakedToWorld = bakedToWorld,
+            }
             local group = materials[groupKey]
 
             for t = 1, #triangles do
@@ -613,7 +813,8 @@ local function BuildDisplacementMeshes(cancelToken)
                         dispMeshes[chunkKey][matKey] = {
                             meshes = meshes,
                             material = material,
-                            isSkybox = group.isSkybox or false
+                            isSkybox = group.isSkybox or false,
+                            bakedToWorld = group.bakedToWorld or false,
                         }
                         -- Merge bounds into chunk level
                         local c = dispMeshes[chunkKey]
@@ -662,9 +863,21 @@ local function BuildDisplacementMeshes(cancelToken)
             end
         end
         totalFaces = table.Count(seenFaces)
-        DebugPrint(string.format("Built %d displacement chunks with %d material groups from %d faces", totalChunks, totalMeshes, totalFaces))
+        print(string.format("[DispRenderer] Built %d chunks, %d material groups, %d faces", totalChunks, totalMeshes, totalFaces))
         DebugPrint(string.format("Skipped faces: %d total, %d not disp, %d duplicate, %d no material, %d filtered, %d no grid",
             skipStats.total, skipStats.notDisp, skipStats.duplicate, skipStats.noMaterial, skipStats.filtered, skipStats.noGrid))
+        if skyBakedMins.x < math.huge then
+            print(string.format("[DispRenderer] Sky baked world extent (pre-clip): (%.0f,%.0f,%.0f)-(%.0f,%.0f,%.0f)",
+                skyBakedMins.x, skyBakedMins.y, skyBakedMins.z, skyBakedMaxs.x, skyBakedMaxs.y, skyBakedMaxs.z))
+        end
+        if skyClipStats.facesIn > 0 then
+            local pctRemoved = (1 - skyClipStats.trisOut / math.max(1, skyClipStats.trisIn)) * 100
+            print(string.format("[DispRenderer] Sky clip: %d sky faces in → %d out (%d fully removed)  |  %d/%d tris kept (%.1f%% removed)",
+                skyClipStats.facesIn, skyClipStats.facesOut, skyClipStats.facesFullyClipped,
+                skyClipStats.trisOut / 3, skyClipStats.trisIn / 3, pctRemoved))
+        else
+            print("[DispRenderer] Sky clip: no skybox displacement faces processed")
+        end
     end)
 
     -- Drive coroutine
@@ -736,7 +949,8 @@ local function RenderDisplacements()
                         local skipSkybox = group.isSkybox and RenderCore and RenderCore.Is3DSkyEnabled and not RenderCore.Is3DSkyEnabled()
                         if not skipSkybox then
                             local meshes = group.meshes
-                            local skyMatrix = group.isSkybox and skyboxWorldMatrix or nil
+                            -- Baked skybox groups are already in world space: no runtime matrix needed.
+                            local skyMatrix = (group.isSkybox and not group.bakedToWorld) and skyboxWorldMatrix or nil
                             for i = 1, #meshes do
                                 local m = meshes[i]
                                 if m then
