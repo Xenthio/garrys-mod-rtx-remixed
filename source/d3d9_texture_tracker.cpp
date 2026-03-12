@@ -6,6 +6,7 @@
 #include <materialsystem/imaterialsystem.h>
 #include <materialsystem/imaterial.h>
 #include <materialsystem/imaterialvar.h>
+#include <materialsystem/itexture.h>
 #include <filesystem.h>
 #include <algorithm>
 #include <functional>
@@ -233,6 +234,9 @@ void D3D9TextureTracker::EnsureBindHook() {
 void D3D9TextureTracker::SetCurrentMaterial(IMaterial* pMaterial) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_currentMaterial = pMaterial;
+    // Reset per-draw-call state so the previous material's Stage 0 texture
+    // doesn't bleed into the overlay-pass detection of the next material.
+    m_currentStage0Texture = nullptr;
     
     if (pMaterial) {
         const char* name = pMaterial->GetName();
@@ -361,6 +365,8 @@ void D3D9TextureTracker::ClearCache() {
         }
     }
     m_textureCache.clear();
+    m_detailTextureCache.clear();
+    m_currentMaterialDetailStage = 0;
     
     // Also clear pending categorizations
     for (auto& pending : m_pendingCategories) {
@@ -443,6 +449,64 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                     if (Stage == 1) {
                         trackingName += "_stage1";
                     }
+
+                    // At Stage 0: determine which D3D9 stage the $detail texture will be
+                    // bound at for this material (0 = no detail).  The result is cached so
+                    // FindVar / GetShaderName are only called once per unique material name.
+                    //
+                    // detailStage values:
+                    //   0 = no $detail
+                    //   1 = VertexLitGeneric/UnlitGeneric: detail at Stage 1
+                    //   2 = LightmappedGeneric (no bumpmap): detail at Stage 2
+                    //   3 = LightmappedGeneric + $bumpmap: detail is rendered in a separate
+                    //       overlay pass where the engine calls SetTexture(0/1, detail).
+                    //       The normal Stage 2 path is not used in this case.
+                    if (Stage == 0) {
+                        auto cacheIt = tracker.m_detailTextureCache.find(tracker.m_currentMaterialName);
+                        if (cacheIt != tracker.m_detailTextureCache.end()) {
+                            tracker.m_currentMaterialDetailStage = cacheIt->second;
+                        } else {
+                            int detailStage = 0;
+                            if (tracker.m_currentMaterial) {
+                                bool found = false;
+                                IMaterialVar* pDetailVar = tracker.m_currentMaterial->FindVar("$detail", &found, false);
+                                // GetStringValue() returns "" for resolved texture vars; use
+                                // GetTextureValue() which is reliable for both loaded and
+                                // not-yet-loaded textures.
+                                bool hasDetail = found && pDetailVar &&
+                                    pDetailVar->GetTextureValue() &&
+                                    !pDetailVar->GetTextureValue()->IsError();
+                                if (hasDetail) {
+                                    const char* shaderName = tracker.m_currentMaterial->GetShaderName();
+                                    if (shaderName) {
+                                        std::string lowerShader = shaderName;
+                                        std::transform(lowerShader.begin(), lowerShader.end(),
+                                            lowerShader.begin(), [](unsigned char c){ return std::tolower(c); });
+                                        if (lowerShader.find("vertexlitgeneric") == 0 ||
+                                            lowerShader.find("unlitgeneric") == 0) {
+                                            // VertexLitGeneric / UnlitGeneric: no lightmap, detail at Stage 1.
+                                            detailStage = 1;
+                                        } else {
+                                            // LightmappedGeneric (and similar): check for $bumpmap.
+                                            // When $bumpmap is also present the shader uses Stage 2 for
+                                            // the normal map and renders $detail in a separate overlay
+                                            // pass using SetTexture(0, detail) + SetTexture(1, detail).
+                                            bool foundBump = false;
+                                            IMaterialVar* pBumpVar = tracker.m_currentMaterial->FindVar("$bumpmap", &foundBump, false);
+                                            bool hasBump = foundBump && pBumpVar &&
+                                                pBumpVar->GetTextureValue() &&
+                                                !pBumpVar->GetTextureValue()->IsError();
+                                            detailStage = hasBump ? 3 : 2;
+                                        }
+                                    } else {
+                                        detailStage = 2; // safe default
+                                    }
+                                }
+                            }
+                            tracker.m_detailTextureCache[tracker.m_currentMaterialName] = detailStage;
+                            tracker.m_currentMaterialDetailStage = detailStage;
+                        }
+                    }
                     
                     auto& textures = tracker.m_textureCache[trackingName];
                     
@@ -492,6 +556,48 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                                     tracker.m_currentMaterialName, p2DTexture);
                             }
                         }
+
+                        // Track the most-recently bound Stage 0 texture.
+                        // Used below to detect the bumpmapped LMG detail overlay pass.
+                        if (Stage == 0) {
+                            tracker.m_currentStage0Texture = p2DTexture;
+                        }
+
+                        // VertexLitGeneric + $detail: Stage 1 is the detail texture.
+                        // Apply IGNORED so RTX Remix skips it.
+                        if (Stage == 1 && tracker.m_currentMaterialDetailStage == 1 && g_remix) {
+                            using namespace MaterialPipeline::AutoCategorisation::CategoryFlags;
+                            if (hash != 0) {
+                                uint32_t existingFlags = 0;
+                                tracker.GetHashCategoryFlags(hash, &existingFlags);
+                                // Apply whenever not already IGNORED — ApplyCategoryToHash will
+                                // also remove from rtx.decalTextures if DECAL_STATIC was set.
+                                if (!(existingFlags & IGNORED)) {
+                                    if (tracker.m_enableDebugOutput) {
+                                        Msg("[D3D9TextureTracker] Ignoring detail texture (Stage1/VLG) for '%s' (hash 0x%llX)\n",
+                                            tracker.m_currentMaterialName.c_str(), hash);
+                                    }
+                                    tracker.ApplyCategoryToHash(hash, IGNORED, trackingName.c_str());
+                                }
+                            } else {
+                                // Hash not ready — queue for retry with its own ref
+                                bool alreadyPending = false;
+                                for (const auto& pc : tracker.m_pendingCategories) {
+                                    if (pc.texture == p2DTexture && pc.categoryFlags == IGNORED) {
+                                        alreadyPending = true;
+                                        break;
+                                    }
+                                }
+                                if (!alreadyPending) {
+                                    p2DTexture->AddRef();
+                                    PendingCategory pc;
+                                    pc.texture = p2DTexture;
+                                    pc.materialName = trackingName + "_detail";
+                                    pc.categoryFlags = IGNORED;
+                                    tracker.m_pendingCategories.push_back(pc);
+                                }
+                            }
+                        }
                     }
                 } else {
                     // DEBUG: Log textures that are set without a material name
@@ -511,6 +617,94 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                                 Msg("[D3D9TextureTracker] Untracked texture hash: 0x%llX\n", result.value());
                             }
                         }
+                    }
+                }
+            }
+        }
+
+        // LightmappedGeneric + $bumpmap + $detail (detailStage==3):
+        // The engine renders $detail in a separate overlay pass using two consecutive
+        // SetTexture calls:  SetTexture(0, detail)  then  SetTexture(1, detail).
+        // The reliable signal is that Stage 1 receives the SAME D3D9 pointer as Stage 0.
+        // We check this every frame (not just for new variants) so that IGNORED persists
+        // even after AutoCat's pending-retry may have re-added the hash to rtx.decalTextures.
+        if (Stage == 1 && tracker.m_currentMaterialDetailStage == 3 &&
+            pTexture && tracker.m_currentStage0Texture && g_remix) {
+            D3DRESOURCETYPE resType = pTexture->GetType();
+            if (resType == D3DRTYPE_TEXTURE) {
+                IDirect3DTexture9* p2DTexture = static_cast<IDirect3DTexture9*>(pTexture);
+                if (p2DTexture == tracker.m_currentStage0Texture) {
+                    using namespace MaterialPipeline::AutoCategorisation::CategoryFlags;
+                    auto result = g_remix->dxvk_GetTextureHash(p2DTexture);
+                    if (result && result.value() != 0) {
+                        uint64_t hash = result.value();
+                        uint32_t existingFlags = 0;
+                        tracker.GetHashCategoryFlags(hash, &existingFlags);
+                        if (!(existingFlags & IGNORED)) {
+                            if (tracker.m_enableDebugOutput) {
+                                Msg("[D3D9TextureTracker] Ignoring detail overlay texture (Stage1/LMG+bump) for '%s' (hash 0x%llX)\n",
+                                    tracker.m_currentMaterialName.c_str(), hash);
+                            }
+                            tracker.ApplyCategoryToHash(hash, IGNORED, tracker.m_currentMaterialName.c_str());
+                        }
+                    } else if (result) {
+                        // Hash not ready — queue for retry
+                        bool alreadyPending = false;
+                        for (const auto& pc : tracker.m_pendingCategories) {
+                            if (pc.texture == p2DTexture && pc.categoryFlags == IGNORED) {
+                                alreadyPending = true;
+                                break;
+                            }
+                        }
+                        if (!alreadyPending) {
+                            p2DTexture->AddRef();
+                            PendingCategory pc;
+                            pc.texture = p2DTexture;
+                            pc.materialName = tracker.m_currentMaterialName + "_detail_overlay";
+                            pc.categoryFlags = IGNORED;
+                            tracker.m_pendingCategories.push_back(pc);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Stage 2: detail texture for LightmappedGeneric — mark as IGNORED so RTX Remix skips it.
+        // LightmappedGeneric binds: Stage 0 = base, Stage 1 = lightmap, Stage 2 = $detail.
+        // We only fire when Stage 0 determined the detail is at Stage 2 (LightmappedGeneric path).
+        if (Stage == 2 && pTexture && tracker.m_currentMaterialDetailStage == 2 && g_remix) {
+            D3DRESOURCETYPE resType = pTexture->GetType();
+            if (resType == D3DRTYPE_TEXTURE) {
+                IDirect3DTexture9* p2DTexture = static_cast<IDirect3DTexture9*>(pTexture);
+                using namespace MaterialPipeline::AutoCategorisation::CategoryFlags;
+
+                auto result = g_remix->dxvk_GetTextureHash(p2DTexture);
+                if (result && result.value() != 0) {
+                    uint64_t hash = result.value();
+                    uint32_t existingFlags = 0;
+                    tracker.GetHashCategoryFlags(hash, &existingFlags);
+                    // Apply whenever not already IGNORED — ApplyCategoryToHash will
+                    // also remove from rtx.decalTextures if DECAL_STATIC was set.
+                    if (!(existingFlags & IGNORED)) {
+                        if (tracker.m_enableDebugOutput) {
+                            Msg("[D3D9TextureTracker] Ignoring detail texture for '%s' (hash 0x%llX)\n",
+                                tracker.m_currentMaterialName.c_str(), hash);
+                        }
+                        tracker.ApplyCategoryToHash(hash, IGNORED, tracker.m_currentMaterialName.c_str());
+                    }
+                } else if (result) {
+                    // Hash not ready yet — queue for retry
+                    bool alreadyPending = false;
+                    for (const auto& pending : tracker.m_pendingCategories) {
+                        if (pending.texture == p2DTexture) { alreadyPending = true; break; }
+                    }
+                    if (!alreadyPending) {
+                        p2DTexture->AddRef();
+                        PendingCategory pc;
+                        pc.texture = p2DTexture;
+                        pc.materialName = tracker.m_currentMaterialName + "_detail";
+                        pc.categoryFlags = IGNORED;
+                        tracker.m_pendingCategories.push_back(pc);
                     }
                 }
             }
@@ -788,6 +982,12 @@ void D3D9TextureTracker::ApplyCategoryToHash(uint64_t hash, uint32_t categoryFla
     }
     if (categoryFlags & IGNORED) {
         g_remix->AddTextureHash("rtx.ignoreTextures", hashStr);
+        // IGNORED takes precedence over DECAL: a detail texture that was already
+        // recorded as world geometry must be removed from the decal list so RTX
+        // Remix doesn't try to use it as a decal surface.  This happens because
+        // Source Engine re-binds the detail texture at Stage 0 in a separate detail
+        // overlay pass, causing it to be collected by the world-geometry scan.
+        g_remix->RemoveTextureHash("rtx.decalTextures", hashStr);
         if (m_enableDebugOutput) {
             Msg("[D3D9] Categorized IGNORE: '%s' -> %s\n", materialName, hashStr);
         }
@@ -817,10 +1017,16 @@ void D3D9TextureTracker::ApplyCategoryToHash(uint64_t hash, uint32_t categoryFla
         }
     }
     
-    // Update local tracking (without WORLD_UI bit)
+    // Update local tracking.
+    // When IGNORED is applied it wins over DECAL: clear any stale DECAL flags so
+    // GetHashCategory accurately reflects that this texture is being ignored.
     uint32_t currentFlags = 0;
     GetHashCategoryFlags(hash, &currentFlags);
-    SetHashCategoryFlags(hash, currentFlags | categoryFlags);
+    uint32_t newFlags = currentFlags | categoryFlags;
+    if (newFlags & IGNORED) {
+        newFlags &= ~(DECAL_STATIC | DECAL_DYNAMIC);
+    }
+    SetHashCategoryFlags(hash, newFlags);
 }
 
 int D3D9TextureTracker::RetryPendingCategories() {

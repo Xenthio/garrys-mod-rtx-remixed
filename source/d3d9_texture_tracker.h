@@ -169,7 +169,29 @@ private:
     // Current material being rendered (set by Bind hooks)
     std::string m_currentMaterialName;
     IMaterial* m_currentMaterial = nullptr;
-    
+
+    // D3D9 stage at which the current material's $detail texture is bound.
+    //   0 = no $detail
+    //   1 = VertexLitGeneric / UnlitGeneric: detail at Stage 1
+    //   2 = LightmappedGeneric (no $bumpmap): detail at Stage 2
+    //   3 = LightmappedGeneric + $bumpmap: detail rendered in a separate overlay
+    //       pass where the engine calls SetTexture(0, detail) then SetTexture(1, detail).
+    //       Detected at Stage 1 by comparing the texture pointer against
+    //       m_currentStage0Texture (same pointer = overlay pass).
+    // Set at Stage 0; read at Stage 1/2 to apply IGNORED to the detail texture.
+    int m_currentMaterialDetailStage = 0;
+
+    // Per-material cache: maps material name -> detail stage (0/1/2/3).
+    // Avoids calling FindVar + GetShaderName on every Stage 0 call for the same material.
+    std::unordered_map<std::string, int> m_detailTextureCache;
+
+    // Last D3D9 texture bound at Stage 0 for the current material.
+    // Used to detect the bumpmapped LightmappedGeneric detail overlay pass:
+    // when Stage 1 is bound with the same pointer as Stage 0, both are the
+    // detail texture and should be marked IGNORED.
+    // Reset to nullptr on each Bind call.
+    IDirect3DTexture9* m_currentStage0Texture = nullptr;
+
     // Cache: material name -> set of D3D9 textures (materials can have multiple texture variants)
     std::unordered_map<std::string, std::vector<IDirect3DTexture9*>> m_textureCache;
     
