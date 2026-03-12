@@ -811,10 +811,9 @@ LUA_FUNCTION(RemixMaterial_SetHashCategory) {
         }
     }
     
-    // Also store locally for querying
-    if (success) {
-        D3D9TextureTracker::Instance().SetHashCategoryFlags(textureHash, categoryFlags);
-    }
+    // Always store locally so GetHashCategory reflects the intent regardless of
+    // whether the Remix API accepted the call this frame.
+    D3D9TextureTracker::Instance().SetHashCategoryFlags(textureHash, categoryFlags);
     
     LUA->PushBool(success);
     return 1;

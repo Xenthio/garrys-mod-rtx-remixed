@@ -3,11 +3,8 @@
 // =========================================================================
 // Automatically detects and categorizes materials based on their properties:
 // - Particles, effects, sprites
-// - Skybox textures
-// - Water/refract materials
 // - Decals (static/dynamic)
 // - Emissive/self-illuminated materials
-// - Tool textures (nodraw, clip, etc.)
 //
 // Pipeline Stage: Detection
 // This runs during material detection to classify materials for Remix.
@@ -72,9 +69,6 @@ struct Config {
     bool particleEnabled = true;      // Auto-categorize particles
     bool decalEnabled = true;         // Auto-categorize decals
     bool emissiveEnabled = true;      // Auto-categorize emissive materials
-    bool skyEnabled = true;           // Auto-categorize skybox
-    bool waterEnabled = true;         // Auto-categorize water
-    bool toolEnabled = false;         // Auto-categorize tool textures (off by default, left to user)
     bool debugOutput = false;         // Enable debug logging
 };
 
@@ -228,9 +222,6 @@ struct Stats {
     int particlesCategorized = 0;
     int decalsCategorized = 0;
     int emissivesCategorized = 0;
-    int skyCategorized = 0;
-    int waterCategorized = 0;
-    int ignoredCategorized = 0;
     int pendingCategories = 0;
 };
 

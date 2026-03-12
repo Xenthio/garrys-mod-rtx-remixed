@@ -269,35 +269,7 @@ uint32_t DetectCategory(const std::string& materialName, IMaterial* material) {
     
     uint32_t flags = 0;
     
-    // === PRIORITY 1: SKY ===
-    if (s_config.skyEnabled) {
-        if (lowerName.find("tools/toolsskybox") != std::string::npos ||
-            lowerName.find("skybox/") == 0 ||
-            lowerName.find("/skybox/") != std::string::npos) {
-            flags = CategoryFlags::SKY;
-            s_stats.skyCategorized++;
-            return flags;
-        }
-    }
-    
-    // === PRIORITY 2: IGNORE (tool textures) ===
-    if (s_config.toolEnabled) {
-        if (lowerName.find("tools/toolsnodraw") != std::string::npos ||
-            lowerName.find("tools/toolsinvisible") != std::string::npos ||
-            lowerName.find("tools/toolsclip") != std::string::npos ||
-            lowerName.find("tools/toolsplayerclip") != std::string::npos ||
-            lowerName.find("tools/toolsnpcclip") != std::string::npos ||
-            lowerName.find("tools/toolstrigger") != std::string::npos ||
-            lowerName.find("tools/toolsblocklight") != std::string::npos ||
-            lowerName.find("tools/toolsareaportal") != std::string::npos ||
-            lowerName.find("tools/toolsoccluder") != std::string::npos) {
-            flags = CategoryFlags::IGNORED;
-            s_stats.ignoredCategorized++;
-            return flags;
-        }
-    }
-    
-    // === PRIORITY 3: PARTICLES ===
+    // === PRIORITY 1: PARTICLES ===
     if (s_config.particleEnabled) {
         if (lowerName.find("particles/") == 0 || 
             lowerName.find("particle/") == 0 ||
@@ -356,30 +328,7 @@ uint32_t DetectCategory(const std::string& materialName, IMaterial* material) {
         }
     }
     
-    // === PRIORITY 4: WATER ===
-    if (s_config.waterEnabled) {
-        if (lowerName.find("water") != std::string::npos ||
-            lowerName.find("slime") != std::string::npos) {
-            if (material) {
-                std::string shaderName = GetShaderName(material);
-                std::transform(shaderName.begin(), shaderName.end(), shaderName.begin(), SafeToLower);
-                if (shaderName.find("water") != std::string::npos || 
-                    shaderName.find("refract") != std::string::npos) {
-                    flags = CategoryFlags::ANIMATED_WATER;
-                    s_stats.waterCategorized++;
-                    return flags;
-                }
-            }
-            // Fallback if name contains water
-            if (flags == 0) {
-                flags = CategoryFlags::ANIMATED_WATER;
-                s_stats.waterCategorized++;
-                return flags;
-            }
-        }
-    }
-    
-    // === PRIORITY 5: DECALS ===
+    // === PRIORITY 2: DECALS ===
     if (s_config.decalEnabled) {
         bool isDecal = false;
         
@@ -603,20 +552,11 @@ void ApplyToHash(uint64_t hash, uint32_t flags, const std::string& materialName)
     std::string hashStr = HashToString(hash);
     
     // Apply to Remix API
-    if (flags & CategoryFlags::SKY) {
-        s_remix->AddTextureHash("rtx.skyBoxTextures", hashStr.c_str());
-    }
-    if (flags & CategoryFlags::IGNORED) {
-        s_remix->AddTextureHash("rtx.ignoreTextures", hashStr.c_str());
-    }
     if (flags & CategoryFlags::PARTICLE) {
         s_remix->AddTextureHash("rtx.particleTextures", hashStr.c_str());
     }
     if (flags & CategoryFlags::DECAL_STATIC) {
         s_remix->AddTextureHash("rtx.decalTextures", hashStr.c_str());
-    }
-    if (flags & CategoryFlags::ANIMATED_WATER) {
-        s_remix->AddTextureHash("rtx.animatedWaterTextures", hashStr.c_str());
     }
     if (flags & CategoryFlags::EMISSIVE) {
         s_remix->AddTextureHash("rtx.legacyEmissiveTextures", hashStr.c_str());
@@ -741,20 +681,11 @@ int RetryPendingCategories() {
             std::string hashStr = HashToString(hash);
             
             // Apply to Remix API - all category types (same as ApplyToHash)
-            if (it->categoryFlags & CategoryFlags::SKY) {
-                s_remix->AddTextureHash("rtx.skyBoxTextures", hashStr.c_str());
-            }
-            if (it->categoryFlags & CategoryFlags::IGNORED) {
-                s_remix->AddTextureHash("rtx.ignoreTextures", hashStr.c_str());
-            }
             if (it->categoryFlags & CategoryFlags::PARTICLE) {
                 s_remix->AddTextureHash("rtx.particleTextures", hashStr.c_str());
             }
             if (it->categoryFlags & CategoryFlags::DECAL_STATIC) {
                 s_remix->AddTextureHash("rtx.decalTextures", hashStr.c_str());
-            }
-            if (it->categoryFlags & CategoryFlags::ANIMATED_WATER) {
-                s_remix->AddTextureHash("rtx.animatedWaterTextures", hashStr.c_str());
             }
             if (it->categoryFlags & CategoryFlags::EMISSIVE) {
                 s_remix->AddTextureHash("rtx.legacyEmissiveTextures", hashStr.c_str());
@@ -814,15 +745,6 @@ std::unordered_map<std::string, std::vector<uint64_t>> GetCategorizedHashes() {
         }
         if (flags & CategoryFlags::EMISSIVE) {
             result["legacyEmissiveTextures"].push_back(hash);
-        }
-        if (flags & CategoryFlags::SKY) {
-            result["skyBoxTextures"].push_back(hash);
-        }
-        if (flags & CategoryFlags::ANIMATED_WATER) {
-            result["animatedWaterTextures"].push_back(hash);
-        }
-        if (flags & CategoryFlags::IGNORED) {
-            result["ignoreTextures"].push_back(hash);
         }
         if (flags & CategoryFlags::BEAM) {
             result["beamTextures"].push_back(hash);
@@ -973,15 +895,6 @@ LUA_FUNCTION(AutoCat_GetStats) {
     
     LUA->PushNumber(stats.emissivesCategorized);
     LUA->SetField(-2, "emissivesCategorized");
-    
-    LUA->PushNumber(stats.skyCategorized);
-    LUA->SetField(-2, "skyCategorized");
-    
-    LUA->PushNumber(stats.waterCategorized);
-    LUA->SetField(-2, "waterCategorized");
-    
-    LUA->PushNumber(stats.ignoredCategorized);
-    LUA->SetField(-2, "ignoredCategorized");
     
     LUA->PushNumber(stats.pendingCategories);
     LUA->SetField(-2, "pendingCategories");
