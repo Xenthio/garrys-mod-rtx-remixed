@@ -3556,12 +3556,14 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     // NOTE: $surfaceprop "glass" alone is NOT enough - materials like nukwindowa have it for physics sounds
     //       but are not meant to be transparent. They need $translucent=1 to actually be glass.
     {
-        // Check if shader name indicates glass/refraction
+        // Check if shader name is exactly "Refract" (case-insensitive).
+        // Substring matching is intentionally avoided so shaders like "EyeRefract"
+        // do not get treated as refractive glass.
         bool isRefractShader = false;
         if (!outProps.shaderName.empty()) {
             std::string shaderLower = outProps.shaderName;
             std::transform(shaderLower.begin(), shaderLower.end(), shaderLower.begin(), ::tolower);
-            isRefractShader = (shaderLower.find("refract") != std::string::npos);
+            isRefractShader = (shaderLower == "refract");
         }
         
         // Check if surfaceprop is glass
@@ -3580,7 +3582,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
             if (!vmtParsed.shaderName.empty()) {
                 std::string vmtShaderLower = vmtParsed.shaderName;
                 std::transform(vmtShaderLower.begin(), vmtShaderLower.end(), vmtShaderLower.begin(), ::tolower);
-                vmtIsRefract = (vmtShaderLower.find("refract") != std::string::npos);
+                vmtIsRefract = (vmtShaderLower == "refract");
             }
             vmtHasRefractAmount = vmtParsed.hasRefractAmount;
             
