@@ -6,7 +6,6 @@ local RenderCore = include("remixlua/cl/customrender/render_core.lua") or RemixR
 local CONVARS = {
     ENABLED = CreateClientConVar("rtx_dpr_enable", "1", true, false, "Enable custom displacement rendering"),
     DEBUG = CreateClientConVar("rtx_dpr_debug", "0", true, false, "Debug prints for displacement renderer"),
-    CHUNK_SIZE = CreateClientConVar("rtx_dpr_chunk_size", "65536", true, false, "Size of chunks for displacement grouping"),
     MAT_WHITELIST = CreateClientConVar("rtx_dpr_mat_whitelist", "", true, false, "Comma-separated material name substrings to include"),
     MAT_BLACKLIST = CreateClientConVar("rtx_dpr_mat_blacklist", "toolsskybox,skybox/", true, false, "Comma-separated material name substrings to exclude"),
     ALPHA_SCALE = CreateClientConVar("rtx_dpr_alpha_scale", "0", true, false, "Alpha scaling: 0=auto-normalize, >0=manual scale"),
@@ -21,10 +20,6 @@ end
 
 -- Local state
 local dispMeshes = {}
--- dispMeshes[chunkKey] = {
---   _mins=Vector,_maxs=Vector,_clusters={ [cluster]=true },
---   [matKey] = { material=IMaterial, meshes=IMesh[] }
--- }
 
 local buildState = { active = false, processed = 0, total = 0 }
 -- Expose build state for progress tracking
@@ -40,14 +35,6 @@ local function IsMaterialAllowed(matName)
         return RenderCore.IsMaterialAllowed(matName, CONVARS.MAT_WHITELIST:GetString(), CONVARS.MAT_BLACKLIST:GetString())
     end
     return true
-end
-
-local function GetChunkKey(x, y, z)
-    -- Use integer hash from RenderCore instead of string concat
-    if RenderCore and RenderCore.HashChunkKey then
-        return RenderCore.HashChunkKey(x, y, z)
-    end
-    return x .. "," .. y .. "," .. z  -- Fallback
 end
 
 -- Try to get or build a material that supports 2-texture blending.
@@ -155,6 +142,45 @@ local function CreateMeshBatchWithAlpha(vertices, material, maxVertsPerMesh)
     return meshes
 end
 
+-- Morton-code (Z-order curve) spatial sort for face records.
+-- Sorting before pass 2 ensures triangles land in the stream in spatially coherent order,
+-- giving the BVH builder better BLAS quality.
+local _bit = bit
+local _MORTON_HALF  = 32768.0
+local _MORTON_SCALE = 1023.0 / 65536.0
+
+local function _mortonSplit3(x)
+    x = _bit.band(x, 0x3ff)
+    x = _bit.band(_bit.bor(x, _bit.lshift(x, 16)), 0x30000ff)
+    x = _bit.band(_bit.bor(x, _bit.lshift(x,  8)), 0x300f00f)
+    x = _bit.band(_bit.bor(x, _bit.lshift(x,  4)), 0x30c30c3)
+    x = _bit.band(_bit.bor(x, _bit.lshift(x,  2)), 0x9249249)
+    return x
+end
+
+local function _mortonCode3(ix, iy, iz)
+    return _bit.bor(_mortonSplit3(ix),
+                    _bit.lshift(_mortonSplit3(iy), 1),
+                    _bit.lshift(_mortonSplit3(iz), 2))
+end
+
+local function SortFaceRecordsByMorton(recs)
+    local scale  = _MORTON_SCALE
+    local half   = _MORTON_HALF
+    local ifloor = math.floor
+    for i = 1, #recs do
+        local r  = recs[i]
+        local ix = math.max(0, math.min(1023, ifloor((r.cx + half) * scale)))
+        local iy = math.max(0, math.min(1023, ifloor((r.cy + half) * scale)))
+        local iz = math.max(0, math.min(1023, ifloor((r.cz + half) * scale)))
+        r._morton = _mortonCode3(ix, iy, iz)
+    end
+    table.sort(recs, function(a, b) return a._morton < b._morton end)
+end
+
+-- Pre-built flat array reused every render frame (populated after each build).
+local flatDispList = {}
+
 -- Accumulate face normals from a displacement grid into global normal accumulators keyed by position.
 -- Called once per grid in pass 1; normals are averaged and written back in pass 1.5.
 local function AccumulateGridNormals(grid, posKeyFn, gnx, gny, gnz)
@@ -261,13 +287,13 @@ end
 
 -- Build all displacement meshes in a coroutine with a frame budget
 local function BuildDisplacementMeshes(cancelToken)
+    -- Clear flat list first so the render loop sees nothing during the rebuild.
+    flatDispList = {}
     -- Cleanup existing
-    for chunkKey, materials in pairs(dispMeshes) do
-        for matKey, group in pairs(materials) do
-            if type(group) == "table" and group.meshes then
-                for _, m in ipairs(group.meshes) do
-                    if m and m.Destroy then pcall(function() m:Destroy() end) end
-                end
+    for _, group in pairs(dispMeshes) do
+        if type(group) == "table" and group.meshes then
+            for _, m in ipairs(group.meshes) do
+                if m and m.Destroy then pcall(function() m:Destroy() end) end
             end
         end
     end
@@ -282,10 +308,8 @@ local function BuildDisplacementMeshes(cancelToken)
         local startTime = SysTime()
         local frameBudget = 0.003
 
-        -- Prepare chunk table
+        -- Global material groups: all displacement faces sharing the same material are merged.
         local chunks = {}
-        local chunkSize = CONVARS.CHUNK_SIZE:GetInt()
-        if not chunkSize or chunkSize <= 0 then chunkSize = 65536 end
 
         -- Determine 3D skybox bounds and transform parameters
         local hasSkyAABB = false
@@ -392,14 +416,6 @@ local function BuildDisplacementMeshes(cancelToken)
                             -- Check if displacement is inside the 3D skybox area
                             local isInSkybox = hasSkyAABB and center:WithinAABox(skyMins, skyMaxs)
 
-                            local chunkX = math.floor(center.x / chunkSize)
-                            local chunkY = math.floor(center.y / chunkSize)
-                            local chunkZ = math.floor(center.z / chunkSize)
-                            local chunkKey = GetChunkKey(chunkX, chunkY, chunkZ)
-
-                            chunks[chunkKey] = chunks[chunkKey] or {}
-                            local chunkData = chunks[chunkKey]
-
                             -- Build per-vertex alpha from disp verts (pass 1: accumulate by position)
                             local dispInfo = face.GetDisplacementInfo and face:GetDisplacementInfo() or nil
                             local power = dispInfo and dispInfo.power or 2
@@ -431,10 +447,11 @@ local function BuildDisplacementMeshes(cancelToken)
                             faceRecords[#faceRecords + 1] = {
                                 grid = grid,
                                 alphaKeys = alphaKeys,
-                                rawAlphas = rawAlphas,  -- Store raw values
+                                rawAlphas = rawAlphas,
                                 mat = useMat,
                                 matName = useName,
-                                chunkKey = chunkKey,
+                                -- Centroid used for Morton sort before pass 2
+                                cx = cx, cy = cy, cz = cz,
                                 isSkybox = isInSkybox or false
                             }
                         until true
@@ -668,7 +685,31 @@ local function BuildDisplacementMeshes(cancelToken)
         local skyBakedMins = Vector(math.huge, math.huge, math.huge)
         local skyBakedMaxs = Vector(-math.huge, -math.huge, -math.huge)
 
-        -- Pass 2: stream triangles using averaged normalized alphas into chunk/material groups
+        -- Sort face records spatially before pass 2 so the triangle stream is coherent,
+        -- giving the BVH builder better BLAS quality for displacement geometry.
+        -- Sort world and skybox records separately: skybox centroids are in a tiny
+        -- BSP sub-space (the skybox island) and must not be interleaved with the
+        -- world-space range used by world faces, or the Morton codes would mix them.
+        local worldRecs = {}
+        local skyRecs   = {}
+        for i = 1, #faceRecords do
+            local r = faceRecords[i]
+            if r.isSkybox then
+                skyRecs[#skyRecs + 1] = r
+            else
+                worldRecs[#worldRecs + 1] = r
+            end
+        end
+        SortFaceRecordsByMorton(worldRecs)
+        SortFaceRecordsByMorton(skyRecs)
+        -- Rebuild faceRecords: world first, then skybox.  The groups they land in are
+        -- always separate (different groupKey suffixes), so relative order between the
+        -- two categories does not matter.
+        local idx = 1
+        for i = 1, #worldRecs do faceRecords[idx] = worldRecs[i]; idx = idx + 1 end
+        for i = 1, #skyRecs   do faceRecords[idx] = skyRecs[i];   idx = idx + 1 end
+
+        -- Pass 2: stream triangles using averaged normalized alphas into material groups
         local skyPosX = skyPos and skyPos.x or 0
         local skyPosY = skyPos and skyPos.y or 0
         local skyPosZ = skyPos and skyPos.z or 0
@@ -745,44 +786,22 @@ local function BuildDisplacementMeshes(cancelToken)
                 skyClipStats.trisOut  = skyClipStats.trisOut + #triangles
             end
 
-            -- For baked skybox faces, re-derive the chunk key from the world-space center.
-            local chunkKey = rec.chunkKey
-            if bakedToWorld and #workGrid > 0 then
-                local cx, cy, cz = 0, 0, 0
-                for gi = 1, #workGrid do
-                    local p = workGrid[gi].pos
-                    cx = cx + p.x; cy = cy + p.y; cz = cz + p.z
-                end
-                local n = #workGrid
-                chunkKey = GetChunkKey(math.floor((cx / n) / chunkSize), math.floor((cy / n) / chunkSize), math.floor((cz / n) / chunkSize))
-            end
-
-            local materials = chunks[chunkKey] or {}
-            chunks[chunkKey] = materials
-
             local useName = rec.matName
             local useMat = rec.mat
             -- Include skybox flag in key so world and skybox displacements with the
             -- same material never get merged into one group (wrong transform applied)
             local groupKey = rec.isSkybox and (useName .. "\0sky") or useName
-            materials[groupKey] = materials[groupKey] or {
-                material = useMat, _stream = {},
-                _mins = Vector(math.huge, math.huge, math.huge), _maxs = Vector(-math.huge, -math.huge, -math.huge),
-                isSkybox = rec.isSkybox or false,
+            chunks[groupKey] = chunks[groupKey] or {
+                material     = useMat,
+                _stream      = {},
+                isSkybox     = rec.isSkybox or false,
                 bakedToWorld = bakedToWorld,
             }
-            local group = materials[groupKey]
+            local group = chunks[groupKey]
 
+            local stream = group._stream
             for t = 1, #triangles do
-                local v = triangles[t]
-                group._stream[#group._stream + 1] = v
-                local p = v.pos
-                if p.x < group._mins.x then group._mins.x = p.x end
-                if p.y < group._mins.y then group._mins.y = p.y end
-                if p.z < group._mins.z then group._mins.z = p.z end
-                if p.x > group._maxs.x then group._maxs.x = p.x end
-                if p.y > group._maxs.y then group._maxs.y = p.y end
-                if p.z > group._maxs.z then group._maxs.z = p.z end
+                stream[#stream + 1] = triangles[t]
             end
 
             if cancelToken and cancelToken.cancelled then return end
@@ -802,68 +821,60 @@ local function BuildDisplacementMeshes(cancelToken)
             end
         end
 
-        -- Build IMeshes per chunk/material
-        for chunkKey, materials in pairs(chunks) do
-            dispMeshes[chunkKey] = {}
-            for matKey, group in pairs(materials) do
-                    local material = group.material
-                    local triStream = group._stream
-                    if triStream and #triStream > 0 and material then
-                        local meshes = CreateMeshBatchWithAlpha(triStream, material, MAX_VERTICES)
-                        dispMeshes[chunkKey][matKey] = {
-                            meshes = meshes,
-                            material = material,
-                            isSkybox = group.isSkybox or false,
-                            bakedToWorld = group.bakedToWorld or false,
-                        }
-                        -- Merge bounds into chunk level
-                        local c = dispMeshes[chunkKey]
-                        if not c._mins then
-                            c._mins = group._mins
-                            c._maxs = group._maxs
-                        else
-                            local cmins = c._mins
-                            local cmaxs = c._maxs
-                            local gmins = group._mins
-                            local gmaxs = group._maxs
-                            if gmins.x < cmins.x then cmins.x = gmins.x end
-                            if gmins.y < cmins.y then cmins.y = gmins.y end
-                            if gmins.z < cmins.z then cmins.z = gmins.z end
-                            if gmaxs.x > cmaxs.x then cmaxs.x = gmaxs.x end
-                            if gmaxs.y > cmaxs.y then cmaxs.y = gmaxs.y end
-                            if gmaxs.z > cmaxs.z then cmaxs.z = gmaxs.z end
-                        end
-                    end
-                end
-                if cancelToken and cancelToken.cancelled then return end
-                if SysTime() - startTime > frameBudget then
-                    coroutine.yield()
-                    local spent = SysTime() - startTime
-                    if RenderCore and RenderCore.UpdateFrameBudget then
-                        frameBudget = RenderCore.UpdateFrameBudget(spent, frameBudget)
-                    else
-                        if spent > frameBudget * 1.2 then
-                            frameBudget = math.max(0.001, frameBudget * 0.95)
-                        elseif spent < frameBudget * 0.8 then
-                            frameBudget = math.min(0.006, frameBudget * 1.05)
-                        end
-                    end
-                    startTime = SysTime()
-                end
+        -- Build IMeshes per material group
+        for groupKey, group in pairs(chunks) do
+            local material = group.material
+            local triStream = group._stream
+            if triStream and #triStream > 0 and material then
+                local meshes = CreateMeshBatchWithAlpha(triStream, material, MAX_VERTICES)
+                dispMeshes[groupKey] = {
+                    meshes       = meshes,
+                    material     = material,
+                    isSkybox     = group.isSkybox or false,
+                    bakedToWorld = group.bakedToWorld or false,
+                }
             end
-
-        buildState.active = false
-        local totalChunks = 0
-        local totalMeshes = 0
-        local totalFaces = 0
-        for _, mats in pairs(chunks) do
-            totalChunks = totalChunks + 1
-            for k, _ in pairs(mats) do
-                if k ~= "_clusters" then totalMeshes = totalMeshes + 1 end
+            if cancelToken and cancelToken.cancelled then return end
+            if SysTime() - startTime > frameBudget then
+                coroutine.yield()
+                local spent = SysTime() - startTime
+                if RenderCore and RenderCore.UpdateFrameBudget then
+                    frameBudget = RenderCore.UpdateFrameBudget(spent, frameBudget)
+                else
+                    if spent > frameBudget * 1.2 then
+                        frameBudget = math.max(0.001, frameBudget * 0.95)
+                    elseif spent < frameBudget * 0.8 then
+                        frameBudget = math.min(0.006, frameBudget * 1.05)
+                    end
+                end
+                startTime = SysTime()
             end
         end
-        totalFaces = table.Count(seenFaces)
-        print(string.format("[DispRenderer] Built %d chunks, %d material groups, %d faces", totalChunks, totalMeshes, totalFaces))
+
+        buildState.active = false
+        -- Build flat render list for O(n) per-frame iteration with no per-frame allocs.
+        flatDispList = {}
+        for _, group in pairs(dispMeshes) do
+            if not group or not group.meshes then continue end
+            local skyMatrix = (group.isSkybox and not group.bakedToWorld) and skyboxWorldMatrix or nil
+            local meshList = group.meshes
+            for i = 1, #meshList do
+                local m = meshList[i]
+                if m then
+                    flatDispList[#flatDispList + 1] = {
+                        material    = group.material,
+                        mesh        = m,
+                        matrix      = skyMatrix,
+                        translucent = false,
+                        isSkybox    = group.isSkybox or false,
+                    }
+                end
+            end
+        end
+        local totalGroups = 0
+        for _ in pairs(dispMeshes) do totalGroups = totalGroups + 1 end
+        local totalFaces = table.Count(seenFaces)
+        print(string.format("[DispRenderer] Built %d material groups, %d faces, %d render items", totalGroups, totalFaces, #flatDispList))
         DebugPrint(string.format("Skipped faces: %d total, %d not disp, %d duplicate, %d no material, %d filtered, %d no grid",
             skipStats.total, skipStats.notDisp, skipStats.duplicate, skipStats.noMaterial, skipStats.filtered, skipStats.noGrid))
         if skyBakedMins.x < math.huge then
@@ -895,22 +906,21 @@ local function BuildDisplacementMeshes(cancelToken)
             buildState.processed = 0
             buildState.total = 0
             -- Clean up partial meshes
-            for chunkKey, materials in pairs(dispMeshes) do
-                for matKey, group in pairs(materials) do
-                    if type(group) == "table" and group.meshes then
-                        for _, m in ipairs(group.meshes) do
-                            if m then
-                                if RenderCore and RenderCore.DestroyMesh then
-                                    RenderCore.DestroyMesh(m)
-                                else
-                                    pcall(function() if m.Destroy then m:Destroy() end end)
-                                end
+            for _, group in pairs(dispMeshes) do
+                if type(group) == "table" and group.meshes then
+                    for _, m in ipairs(group.meshes) do
+                        if m then
+                            if RenderCore and RenderCore.DestroyMesh then
+                                RenderCore.DestroyMesh(m)
+                            else
+                                pcall(function() if m.Destroy then m:Destroy() end end)
                             end
                         end
                     end
                 end
             end
             dispMeshes = {}
+            flatDispList = {}
             return false
         end
         
@@ -932,50 +942,39 @@ end
 -- Render
 local function RenderDisplacements()
     if not CONVARS.ENABLED:GetBool() then return end
-    
-    -- Skip rendering displacements in offscreen RTs (e.g., rear-view camera with dynamic_only filter)
-    if RenderCore and RenderCore.IsOffscreen and RenderCore.IsOffscreen() then
+    if RenderCore and RenderCore.IsOffscreen and RenderCore.IsOffscreen() then return end
+
+    local list = flatDispList
+    local n = #list
+    if n == 0 then
+        stats.draws = 0
+        stats.chunksVisited = 0
         return
     end
-    
-    local draws = 0
-    local chunksVisited = 0
 
-    for _, chunkMaterials in pairs(dispMeshes) do
-        chunksVisited = chunksVisited + 1
-        for key, group in pairs(chunkMaterials) do
-                if key ~= "_mins" and key ~= "_maxs" then
-                    if group and group.meshes then
-                        local skipSkybox = group.isSkybox and RenderCore and RenderCore.Is3DSkyEnabled and not RenderCore.Is3DSkyEnabled()
-                        if not skipSkybox then
-                            local meshes = group.meshes
-                            -- Baked skybox groups are already in world space: no runtime matrix needed.
-                            local skyMatrix = (group.isSkybox and not group.bakedToWorld) and skyboxWorldMatrix or nil
-                            for i = 1, #meshes do
-                                local m = meshes[i]
-                                if m then
-                                    RenderCore.Submit({
-                                        material = group.material,
-                                        mesh = m,
-                                        matrix = skyMatrix,
-                                        translucent = false
-                                    })
-                                    draws = draws + 1
-                                end
-                            end
-                        end
-                    end
-                end
+    local sky3DEnabled = not (RenderCore and RenderCore.Is3DSkyEnabled) or RenderCore.Is3DSkyEnabled()
+    local draws = 0
+    if sky3DEnabled then
+        for i = 1, n do
+            RenderCore.Submit(list[i])
+        end
+        draws = n
+    else
+        for i = 1, n do
+            local item = list[i]
+            if not item.isSkybox then
+                RenderCore.Submit(item)
+                draws = draws + 1
             end
+        end
     end
 
     stats.draws = draws
-    stats.chunksVisited = chunksVisited
-    
-    -- Only log once per second to avoid console spam
+    stats.chunksVisited = n
+
     if CONVARS.DEBUG:GetBool() and (SysTime() - lastDebugPrint) > 1.0 then
         lastDebugPrint = SysTime()
-        DebugPrint(string.format("Rendered: %d draws from %d chunks", draws, chunksVisited))
+        DebugPrint(string.format("Rendered: %d draws from %d items", draws, n))
     end
 end
 
@@ -1023,16 +1022,15 @@ end)
 
 RenderCore.Register("ShutDown", "RTXDisp_Shutdown", function()
     DisableRendering()
-    for _, mats in pairs(dispMeshes) do
-        for _, group in pairs(mats) do
-            if type(group) == "table" and group.meshes then
-                for _, m in ipairs(group.meshes) do
-                    if m and m.Destroy then pcall(function() m:Destroy() end) end
-                end
+    for _, group in pairs(dispMeshes) do
+        if type(group) == "table" and group.meshes then
+            for _, m in ipairs(group.meshes) do
+                if m and m.Destroy then pcall(function() m:Destroy() end) end
             end
         end
     end
     dispMeshes = {}
+    flatDispList = {}
 end)
 
 -- Stats
@@ -1068,7 +1066,6 @@ local function DebounceRebuildOnCvar(name)
     end, "RTXDispRebuild-" .. name)
 end
 
-DebounceRebuildOnCvar("rtx_dpr_chunk_size")
 DebounceRebuildOnCvar("rtx_dpr_mat_whitelist")
 DebounceRebuildOnCvar("rtx_dpr_mat_blacklist")
 DebounceRebuildOnCvar("rtx_dpr_alpha_scale")
