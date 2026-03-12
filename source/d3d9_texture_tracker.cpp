@@ -487,16 +487,28 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                                             // VertexLitGeneric / UnlitGeneric: no lightmap, detail at Stage 1.
                                             detailStage = 1;
                                         } else {
-                                            // LightmappedGeneric (and similar): check for $bumpmap.
-                                            // When $bumpmap is also present the shader uses Stage 2 for
-                                            // the normal map and renders $detail in a separate overlay
-                                            // pass using SetTexture(0, detail) + SetTexture(1, detail).
+                                            // LightmappedGeneric (and similar): check whether the
+                                            // shader occupies Stage 2 for something other than $detail.
+                                            //
+                                            // $bumpmap → normal map at Stage 2; detail in overlay pass.
+                                            // $basetexture2 → second base at Stage 1, lightmap shifts
+                                            //   to Stage 2; detail also rendered in overlay pass.
+                                            //
+                                            // In both cases set detailStage=3 so we detect the detail
+                                            // via the Stage 0/Stage 1 co-binding heuristic.
                                             bool foundBump = false;
                                             IMaterialVar* pBumpVar = tracker.m_currentMaterial->FindVar("$bumpmap", &foundBump, false);
                                             bool hasBump = foundBump && pBumpVar &&
                                                 pBumpVar->GetTextureValue() &&
                                                 !pBumpVar->GetTextureValue()->IsError();
-                                            detailStage = hasBump ? 3 : 2;
+
+                                            bool foundBase2 = false;
+                                            IMaterialVar* pBase2Var = tracker.m_currentMaterial->FindVar("$basetexture2", &foundBase2, false);
+                                            bool hasBase2 = foundBase2 && pBase2Var &&
+                                                pBase2Var->GetTextureValue() &&
+                                                !pBase2Var->GetTextureValue()->IsError();
+
+                                            detailStage = (hasBump || hasBase2) ? 3 : 2;
                                         }
                                     } else {
                                         detailStage = 2; // safe default

@@ -174,8 +174,9 @@ private:
     //   0 = no $detail
     //   1 = VertexLitGeneric / UnlitGeneric: detail at Stage 1
     //   2 = LightmappedGeneric (no $bumpmap): detail at Stage 2
-    //   3 = LightmappedGeneric + $bumpmap: detail rendered in a separate overlay
-    //       pass where the engine calls SetTexture(0, detail) then SetTexture(1, detail).
+    //   3 = LightmappedGeneric + $bumpmap or $basetexture2: Stage 2 is occupied
+    //       (normal map or lightmap-after-blend-shift), so $detail is rendered in
+    //       a separate overlay pass: SetTexture(0, detail) then SetTexture(1, detail).
     //       Detected at Stage 1 by comparing the texture pointer against
     //       m_currentStage0Texture (same pointer = overlay pass).
     // Set at Stage 0; read at Stage 1/2 to apply IGNORED to the detail texture.
