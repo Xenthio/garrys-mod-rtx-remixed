@@ -534,7 +534,7 @@ private:
     // Debounce timer for USDA writes - prevents Remix from constantly reloading
     // the mod layer while materials are still being processed
     std::chrono::steady_clock::time_point m_lastUSDAWriteTime{};
-    static constexpr int USDA_WRITE_DEBOUNCE_SECONDS = 10;
+    static constexpr int USDA_WRITE_DEBOUNCE_SECONDS = 3;
     
     // Statistics
     // NOTE: Using recursive_mutex because ProcessSingleMaterial locks, then calls CreatePBRMaterial which also locks
