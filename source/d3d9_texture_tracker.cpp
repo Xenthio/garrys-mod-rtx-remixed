@@ -378,6 +378,13 @@ void D3D9TextureTracker::ClearCache() {
         }
     }
     m_pendingCategories.clear();
+
+    for (auto& pending : m_pendingBSPHashes) {
+        if (pending.texture) {
+            pending.texture->Release();
+        }
+    }
+    m_pendingBSPHashes.clear();
     
     Msg("[D3D9TextureTracker] Cache cleared\n");
 }
@@ -566,17 +573,27 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                                 lowerMatName.begin(), [](unsigned char c){ return std::tolower(c); });
 
                             using namespace MaterialPipeline::AutoCategorisation::CategoryFlags;
+
+                            // Query BOTH flag maps.  PARTICLE/DECAL_STATIC applied via
+                            // AutoCategorisation::ApplyToHash live in its own s_hashToCategoryFlags
+                            // and are NOT mirrored into the tracker's m_hashToCategoryFlags.
+                            // Checking only the tracker map means we silently miss those tags.
                             uint32_t existingFlags = 0;
-                            bool hasExisting = tracker.GetHashCategoryFlags(hash, &existingFlags);
+                            tracker.GetHashCategoryFlags(hash, &existingFlags);
+                            uint32_t acFlags = 0;
+                            MaterialPipeline::AutoCategorisation::GetHashCategoryFlags(hash, &acFlags);
+                            uint32_t allExistingFlags = existingFlags | acFlags;
 
                             if (tracker.m_bspWorldMaterials.count(lowerMatName)) {
                                 // BSP world material: remove any stale PARTICLE tag that was
                                 // applied before the BSP scan identified this as world geometry.
-                                if (hasExisting && (existingFlags & PARTICLE)) {
+                                if (allExistingFlags & PARTICLE) {
                                     char hashStr[32];
                                     sprintf_s(hashStr, "0x%llX", hash);
                                     g_remix->RemoveTextureHash("rtx.particleTextures", hashStr);
                                     tracker.SetHashCategoryFlags(hash, existingFlags & ~PARTICLE);
+                                    MaterialPipeline::AutoCategorisation::SetHashCategoryFlags(
+                                        hash, acFlags & ~PARTICLE);
                                     if (tracker.m_enableDebugOutput) {
                                         Msg("[D3D9TextureTracker] Removed stale PARTICLE for BSP world material '%s' (hash %s)\n",
                                             tracker.m_currentMaterialName.c_str(), hashStr);
@@ -591,17 +608,35 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                             // mark it as permanently contested and remove the tag.  The contested
                             // state prevents RecheckWorldTextures from silently re-applying it.
                             if (!tracker.IsWorldTexture(tracker.m_currentMaterialName)) {
-                                if (hasExisting && (existingFlags & DECAL_STATIC)) {
+                                if (allExistingFlags & DECAL_STATIC) {
                                     char hashStr[32];
                                     sprintf_s(hashStr, "0x%llX", hash);
                                     tracker.m_contestedDecalHashes.insert(hash);
                                     g_remix->RemoveTextureHash("rtx.decalTextures", hashStr);
                                     tracker.SetHashCategoryFlags(hash, existingFlags & ~DECAL_STATIC);
+                                    MaterialPipeline::AutoCategorisation::SetHashCategoryFlags(
+                                        hash, acFlags & ~DECAL_STATIC);
                                     if (tracker.m_enableDebugOutput) {
                                         Msg("[D3D9TextureTracker] Hash %s contested: removed DECAL_STATIC for non-decal material '%s'\n",
                                             hashStr, tracker.m_currentMaterialName.c_str());
                                     }
                                 }
+                            }
+                        }
+
+                        // When a Stage 0 BSP world material variant has hash=0 (RTX Remix hasn't
+                        // processed the texture yet), queue it for deferred hash resolution.
+                        // BSP world materials with no detectable category (e.g. translucent brushes)
+                        // are never added to the normal pending-categories queue, so this is the
+                        // only mechanism that lets us retroactively remove a stale PARTICLE tag
+                        // once the hash is resolved and we discover the collision.
+                        if (Stage == 0 && hash == 0) {
+                            std::string lowerForBSP = tracker.m_currentMaterialName;
+                            std::transform(lowerForBSP.begin(), lowerForBSP.end(),
+                                lowerForBSP.begin(), [](unsigned char c){ return std::tolower(c); });
+                            if (tracker.m_bspWorldMaterials.count(lowerForBSP)) {
+                                p2DTexture->AddRef();
+                                tracker.m_pendingBSPHashes.push_back({p2DTexture, tracker.m_currentMaterialName});
                             }
                         }
 
@@ -1058,9 +1093,21 @@ void D3D9TextureTracker::ApplyCategoryToHash(uint64_t hash, uint32_t categoryFla
         }
     }
     if (categoryFlags & PARTICLE) {
-        g_remix->AddTextureHash("rtx.particleTextures", hashStr);
-        if (m_enableDebugOutput) {
-            Msg("[D3D9] Categorized PARTICLE: '%s' -> %s\n", materialName, hashStr);
+        // Guard: never tag a hash as particle if a BSP world material shares it.
+        // This protects translucent/excluded world brushes (registered via
+        // RegisterBSPWorldMaterial) when PARTICLE reaches this path through
+        // RetryPendingCategories, bypassing the AutoCategorisation::ApplyToHash guard.
+        if (IsAnyBSPWorldMaterialForHash(hash)) {
+            categoryFlags &= ~PARTICLE;
+            if (m_enableDebugOutput) {
+                Msg("[D3D9] Skipping PARTICLE for hash %s ('%s'): shares hash with BSP world material\n",
+                    hashStr, materialName);
+            }
+        } else {
+            g_remix->AddTextureHash("rtx.particleTextures", hashStr);
+            if (m_enableDebugOutput) {
+                Msg("[D3D9] Categorized PARTICLE: '%s' -> %s\n", materialName, hashStr);
+            }
         }
     }
     if (categoryFlags & DECAL_STATIC) {
@@ -1175,7 +1222,48 @@ int D3D9TextureTracker::RetryPendingCategories() {
         Msg("[D3D9] RetryPendingCategories: %d categorized, %zu still pending\n", 
             successCount, m_pendingCategories.size());
     }
-    
+
+    // Process deferred BSP world material hash resolution.
+    // These are textures whose hash was 0 at discovery time; once resolved we update
+    // m_hashToMaterials and remove any stale PARTICLE tag (applied before the collision
+    // was detected) from both the Remix API and both flag maps.
+    if (!m_pendingBSPHashes.empty()) {
+        std::vector<PendingBSPHash> stillPendingBSP;
+        for (auto& pending : m_pendingBSPHashes) {
+            auto result = g_remix->dxvk_GetTextureHash(pending.texture);
+            if (!result || result.value() == 0) {
+                stillPendingBSP.push_back(pending);
+                continue;
+            }
+            uint64_t hash = result.value();
+
+            std::string lowerName = pending.materialName;
+            std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(),
+                [](unsigned char c){ return std::tolower(c); });
+
+            m_hashToMaterials[hash].insert(lowerName);
+
+            uint32_t existingFlags = 0;
+            GetHashCategoryFlags(hash, &existingFlags);
+            uint32_t acFlags = 0;
+            MaterialPipeline::AutoCategorisation::GetHashCategoryFlags(hash, &acFlags);
+            if ((existingFlags | acFlags) & PARTICLE) {
+                char hashStr[32];
+                sprintf_s(hashStr, "0x%llX", hash);
+                g_remix->RemoveTextureHash("rtx.particleTextures", hashStr);
+                SetHashCategoryFlags(hash, existingFlags & ~PARTICLE);
+                MaterialPipeline::AutoCategorisation::SetHashCategoryFlags(hash, acFlags & ~PARTICLE);
+                if (m_enableDebugOutput) {
+                    Msg("[D3D9TextureTracker] RetryBSP: Removed stale PARTICLE for BSP world material '%s' (hash %s)\n",
+                        pending.materialName.c_str(), hashStr);
+                }
+            }
+
+            pending.texture->Release();
+        }
+        m_pendingBSPHashes = std::move(stillPendingBSP);
+    }
+
     return successCount;
 }
 
@@ -1433,16 +1521,25 @@ void D3D9TextureTracker::RegisterBSPWorldMaterial(const std::string& materialNam
             auto result = g_remix->dxvk_GetTextureHash(tex);
             if (!result) continue;
             uint64_t hash = result.value();
-            if (hash == 0) continue;
+            if (hash == 0) {
+                // Hash not yet assigned by RTX Remix — queue for deferred resolution.
+                tex->AddRef();
+                m_pendingBSPHashes.push_back({tex, materialName});
+                continue;
+            }
 
             m_hashToMaterials[hash].insert(lowerName);
 
             uint32_t existingFlags = 0;
-            if (GetHashCategoryFlags(hash, &existingFlags) && (existingFlags & PARTICLE)) {
+            GetHashCategoryFlags(hash, &existingFlags);
+            uint32_t acFlags = 0;
+            MaterialPipeline::AutoCategorisation::GetHashCategoryFlags(hash, &acFlags);
+            if ((existingFlags | acFlags) & PARTICLE) {
                 char hashStr[32];
                 sprintf_s(hashStr, "0x%llX", hash);
                 g_remix->RemoveTextureHash("rtx.particleTextures", hashStr);
                 SetHashCategoryFlags(hash, existingFlags & ~PARTICLE);
+                MaterialPipeline::AutoCategorisation::SetHashCategoryFlags(hash, acFlags & ~PARTICLE);
                 if (m_enableDebugOutput) {
                     Msg("[D3D9TextureTracker] RegisterBSPWorldMaterial: Removed stale PARTICLE for '%s' (hash %s)\n",
                         materialName.c_str(), hashStr);

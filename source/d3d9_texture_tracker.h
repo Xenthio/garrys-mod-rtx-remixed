@@ -161,6 +161,15 @@ private:
         std::string materialName;
         uint32_t categoryFlags;  // Combined category flags (SKY, PARTICLE, WATER, etc.)
     };
+
+    // Pending BSP hash resolution entry.
+    // When a BSP world material's new texture variant has hash=0 (RTX Remix hasn't
+    // assigned it yet), we queue it here so RetryPendingCategories can resolve the
+    // hash later and retroactively remove any stale PARTICLE tag.
+    struct PendingBSPHash {
+        IDirect3DTexture9* texture;
+        std::string materialName;
+    };
     D3D9TextureTracker() = default;
     ~D3D9TextureTracker();
 
@@ -247,6 +256,11 @@ private:
     
     // Pending categorizations (textures that returned hash=0)
     std::vector<PendingCategory> m_pendingCategories;
+
+    // BSP world material textures whose hash was 0 at discovery time.
+    // Resolved by RetryPendingCategories; on success, updates m_hashToMaterials
+    // and removes any stale PARTICLE tag from the resolved hash.
+    std::vector<PendingBSPHash> m_pendingBSPHashes;
     
     // World texture names from BSP (for DECAL_STATIC marking)
     std::unordered_set<std::string> m_worldTextureNames;
