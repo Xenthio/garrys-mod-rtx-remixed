@@ -155,7 +155,7 @@ void D3D9TextureTracker::Shutdown() {
     }
 
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         
         // Release all texture references before clearing
         for (auto& entry : m_textureCache) {
@@ -232,7 +232,7 @@ void D3D9TextureTracker::EnsureBindHook() {
 }
 
 void D3D9TextureTracker::SetCurrentMaterial(IMaterial* pMaterial) {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     m_currentMaterial = pMaterial;
     // Reset per-draw-call state so the previous material's Stage 0 texture
     // doesn't bleed into the overlay-pass detection of the next material.
@@ -255,7 +255,7 @@ void D3D9TextureTracker::SetCurrentMaterial(IMaterial* pMaterial) {
 }
 
 IDirect3DTexture9* D3D9TextureTracker::GetTextureForMaterial(const char* materialName) {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!materialName || !materialName[0]) {
         return nullptr;
     }
@@ -276,7 +276,7 @@ IDirect3DTexture9* D3D9TextureTracker::GetTextureForMaterial(const char* materia
 }
 
 const std::vector<IDirect3DTexture9*>* D3D9TextureTracker::GetTextureVariantsForMaterial(const char* materialName) {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!materialName || !materialName[0]) {
         return nullptr;
     }
@@ -295,7 +295,7 @@ const std::vector<IDirect3DTexture9*>* D3D9TextureTracker::GetTextureVariantsFor
 }
 
 size_t D3D9TextureTracker::InvalidateMaterialCache(const char* materialName) {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!materialName || !materialName[0]) {
         return 0;
     }
@@ -354,7 +354,7 @@ size_t D3D9TextureTracker::InvalidateMaterialCache(const char* materialName) {
 }
 
 void D3D9TextureTracker::ClearCache() {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     
     // Release all texture references before clearing
     for (auto& entry : m_textureCache) {
@@ -366,6 +366,9 @@ void D3D9TextureTracker::ClearCache() {
     }
     m_textureCache.clear();
     m_detailTextureCache.clear();
+    m_hashToMaterials.clear();
+    m_bspWorldMaterials.clear();
+    m_contestedDecalHashes.clear();
     m_currentMaterialDetailStage = 0;
     
     // Also clear pending categorizations
@@ -407,7 +410,7 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
     }
 
     {
-        std::lock_guard<std::mutex> lock(tracker.m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(tracker.m_mutex);
 
         // Always log if we have a current material to help debug
 #ifdef _DEBUG
@@ -552,6 +555,56 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                                 Stage == 1 ? " [STAGE1]" : "", hash);
                         }
                             
+                        // Reverse map: record hash → materialName for collision detection.
+                        // Also handle stale category tags caused by hash collisions between
+                        // BSP world materials and non-world materials (models, etc.).
+                        if (Stage == 0 && hash != 0) {
+                            tracker.m_hashToMaterials[hash].insert(tracker.m_currentMaterialName);
+
+                            std::string lowerMatName = tracker.m_currentMaterialName;
+                            std::transform(lowerMatName.begin(), lowerMatName.end(),
+                                lowerMatName.begin(), [](unsigned char c){ return std::tolower(c); });
+
+                            using namespace MaterialPipeline::AutoCategorisation::CategoryFlags;
+                            uint32_t existingFlags = 0;
+                            bool hasExisting = tracker.GetHashCategoryFlags(hash, &existingFlags);
+
+                            if (tracker.m_bspWorldMaterials.count(lowerMatName)) {
+                                // BSP world material: remove any stale PARTICLE tag that was
+                                // applied before the BSP scan identified this as world geometry.
+                                if (hasExisting && (existingFlags & PARTICLE)) {
+                                    char hashStr[32];
+                                    sprintf_s(hashStr, "0x%llX", hash);
+                                    g_remix->RemoveTextureHash("rtx.particleTextures", hashStr);
+                                    tracker.SetHashCategoryFlags(hash, existingFlags & ~PARTICLE);
+                                    if (tracker.m_enableDebugOutput) {
+                                        Msg("[D3D9TextureTracker] Removed stale PARTICLE for BSP world material '%s' (hash %s)\n",
+                                            tracker.m_currentMaterialName.c_str(), hashStr);
+                                    }
+                                }
+                            }
+
+                            // Separate from the PARTICLE check: if this material is not in the
+                            // world-texture DECAL_STATIC list (either a non-BSP model texture or a
+                            // BSP brush intentionally excluded, e.g. translucent/nodecal surfaces),
+                            // and the hash already carries DECAL_STATIC from a colliding world brush,
+                            // mark it as permanently contested and remove the tag.  The contested
+                            // state prevents RecheckWorldTextures from silently re-applying it.
+                            if (!tracker.IsWorldTexture(tracker.m_currentMaterialName)) {
+                                if (hasExisting && (existingFlags & DECAL_STATIC)) {
+                                    char hashStr[32];
+                                    sprintf_s(hashStr, "0x%llX", hash);
+                                    tracker.m_contestedDecalHashes.insert(hash);
+                                    g_remix->RemoveTextureHash("rtx.decalTextures", hashStr);
+                                    tracker.SetHashCategoryFlags(hash, existingFlags & ~DECAL_STATIC);
+                                    if (tracker.m_enableDebugOutput) {
+                                        Msg("[D3D9TextureTracker] Hash %s contested: removed DECAL_STATIC for non-decal material '%s'\n",
+                                            hashStr, tracker.m_currentMaterialName.c_str());
+                                    }
+                                }
+                            }
+                        }
+
                         // Notify MaterialPipeline of new material for unified processing
                         // Only for Stage 0 to avoid double-processing
                         // The pipeline handles: ShaderFixes → HashCollisionFixer → AutoCategorisation → ToPBR
@@ -832,7 +885,7 @@ bool D3D9TextureTracker::GetMaterialCategoryFlags(const char* materialName, uint
 }
 
 std::vector<std::pair<std::string, uint64_t>> D3D9TextureTracker::FindTexturesByName(const std::string& searchName) const {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     std::vector<std::pair<std::string, uint64_t>> results;
     
     // Search through all tracked materials
@@ -1011,9 +1064,17 @@ void D3D9TextureTracker::ApplyCategoryToHash(uint64_t hash, uint32_t categoryFla
         }
     }
     if (categoryFlags & DECAL_STATIC) {
-        g_remix->AddTextureHash("rtx.decalTextures", hashStr);
-        if (m_enableDebugOutput) {
-            Msg("[D3D9] Categorized DECAL: '%s' -> %s\n", materialName, hashStr);
+        if (m_contestedDecalHashes.count(hash)) {
+            // Hash is shared with a non-world material; suppress DECAL_STATIC permanently.
+            categoryFlags &= ~DECAL_STATIC;
+            if (m_enableDebugOutput) {
+                Msg("[D3D9] Skipping DECAL_STATIC for contested hash %s ('%s')\n", hashStr, materialName);
+            }
+        } else {
+            g_remix->AddTextureHash("rtx.decalTextures", hashStr);
+            if (m_enableDebugOutput) {
+                Msg("[D3D9] Categorized DECAL: '%s' -> %s\n", materialName, hashStr);
+            }
         }
     }
     if (categoryFlags & ANIMATED_WATER) {
@@ -1165,7 +1226,7 @@ int D3D9TextureTracker::RescanAllMaterials() {
 int D3D9TextureTracker::RecheckWorldTextures() {
     if (!g_remix) return 0;
     
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     
     if (m_worldTextureNames.empty()) {
         Msg("[D3D9TextureTracker] RecheckWorldTextures: World texture list is empty\n");
@@ -1258,7 +1319,7 @@ std::vector<std::tuple<std::string, void*, uint64_t>> D3D9TextureTracker::DumpAl
     
     if (!g_remix) return result;
     
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     
     for (const auto& entry : m_textureCache) {
         const std::string& materialName = entry.first;
@@ -1287,7 +1348,7 @@ void D3D9TextureTracker::SetWorldTextureNames(const std::vector<std::string>& te
     Msg("[D3D9TextureTracker] SetWorldTextureNames: Processing %zu textures...\n", textureNames.size());
     
     try {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         
         m_worldTextureNames.clear();
         
@@ -1330,7 +1391,7 @@ void D3D9TextureTracker::SetWorldTextureNames(const std::vector<std::string>& te
 
 // Clear world texture list
 void D3D9TextureTracker::ClearWorldTextureNames() {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     m_worldTextureNames.clear();
     Msg("[D3D9TextureTracker] Cleared world texture list\n");
     
@@ -1338,30 +1399,145 @@ void D3D9TextureTracker::ClearWorldTextureNames() {
     MaterialPipeline::AutoCategorisation::ClearWorldTextureNames();
 }
 
+// =========================================================================
+// BSP World Material Registry (reverse hash-collision guard)
+// =========================================================================
+
+void D3D9TextureTracker::RegisterBSPWorldMaterial(const std::string& materialName) {
+    if (materialName.empty()) return;
+
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+
+    // Normalize to lowercase
+    std::string lowerName = materialName;
+    std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(),
+        [](unsigned char c){ return std::tolower(c); });
+
+    m_bspWorldMaterials.insert(lowerName);
+
+    if (!g_remix) return;
+
+    using namespace MaterialPipeline::AutoCategorisation::CategoryFlags;
+
+    // Back-fill the reverse map with any variants already in the texture cache.
+    // If any of those hashes were incorrectly claimed as PARTICLE before the BSP
+    // scan ran, remove the stale tag from the Remix API and from our local map.
+    auto cacheIt = m_textureCache.find(materialName);
+    if (cacheIt == m_textureCache.end()) {
+        // Try lowercase variant
+        cacheIt = m_textureCache.find(lowerName);
+    }
+    if (cacheIt != m_textureCache.end()) {
+        for (auto* tex : cacheIt->second) {
+            if (!tex) continue;
+            auto result = g_remix->dxvk_GetTextureHash(tex);
+            if (!result) continue;
+            uint64_t hash = result.value();
+            if (hash == 0) continue;
+
+            m_hashToMaterials[hash].insert(lowerName);
+
+            uint32_t existingFlags = 0;
+            if (GetHashCategoryFlags(hash, &existingFlags) && (existingFlags & PARTICLE)) {
+                char hashStr[32];
+                sprintf_s(hashStr, "0x%llX", hash);
+                g_remix->RemoveTextureHash("rtx.particleTextures", hashStr);
+                SetHashCategoryFlags(hash, existingFlags & ~PARTICLE);
+                if (m_enableDebugOutput) {
+                    Msg("[D3D9TextureTracker] RegisterBSPWorldMaterial: Removed stale PARTICLE for '%s' (hash %s)\n",
+                        materialName.c_str(), hashStr);
+                }
+            }
+        }
+    }
+}
+
+void D3D9TextureTracker::ClearBSPWorldMaterials() {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    m_bspWorldMaterials.clear();
+    m_contestedDecalHashes.clear();
+    if (m_enableDebugOutput) {
+        Msg("[D3D9TextureTracker] Cleared BSP world material registry\n");
+    }
+}
+
+bool D3D9TextureTracker::IsAnyBSPWorldMaterialForHash(uint64_t hash) const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    auto it = m_hashToMaterials.find(hash);
+    if (it == m_hashToMaterials.end()) return false;
+    for (const auto& name : it->second) {
+        if (m_bspWorldMaterials.count(name)) return true;
+    }
+    return false;
+}
+
+bool D3D9TextureTracker::HasNonBSPWorldMaterialForHash(uint64_t hash) const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    auto it = m_hashToMaterials.find(hash);
+    if (it == m_hashToMaterials.end()) return false;
+    for (const auto& name : it->second) {
+        std::string lower = name;
+        std::transform(lower.begin(), lower.end(), lower.begin(),
+            [](unsigned char c){ return std::tolower(c); });
+        if (!m_bspWorldMaterials.count(lower)) return true;
+    }
+    return false;
+}
+
+bool D3D9TextureTracker::HasMaterialNotInWorldListForHash(uint64_t hash) const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    if (m_worldTextureNames.empty()) return false;
+    auto it = m_hashToMaterials.find(hash);
+    if (it == m_hashToMaterials.end()) return false;
+    for (const auto& rawName : it->second) {
+        // Normalize the same way IsWorldTexture does.
+        std::string lower = rawName;
+        std::transform(lower.begin(), lower.end(), lower.begin(),
+            [](unsigned char c){ return std::tolower(c); });
+        if (lower.find("materials/") == 0) lower = lower.substr(10);
+        if (lower.size() > 4 && lower.substr(lower.size() - 4) == ".vmt")
+            lower = lower.substr(0, lower.size() - 4);
+        if (lower.size() > 7 && lower.substr(lower.size() - 7) == "_stage1")
+            lower = lower.substr(0, lower.size() - 7);
+        if (m_worldTextureNames.find(lower) == m_worldTextureNames.end()) return true;
+    }
+    return false;
+}
+
+void D3D9TextureTracker::MarkHashContested(uint64_t hash) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    m_contestedDecalHashes.insert(hash);
+}
+
+bool D3D9TextureTracker::IsHashContested(uint64_t hash) const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    return m_contestedDecalHashes.count(hash) != 0;
+}
+
 // Enable or disable automatic particle categorization
 void D3D9TextureTracker::SetParticleCategorization(bool enabled) {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     m_enableParticleCategorization = enabled;
     Msg("[D3D9TextureTracker] Particle categorization %s\n", enabled ? "enabled" : "disabled");
 }
 
 // Enable or disable automatic decal categorization
 void D3D9TextureTracker::SetDecalCategorization(bool enabled) {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     m_enableDecalCategorization = enabled;
     Msg("[D3D9TextureTracker] Decal categorization %s\n", enabled ? "enabled" : "disabled");
 }
 
 // Enable or disable automatic emissive categorization
 void D3D9TextureTracker::SetEmissiveCategorization(bool enabled) {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     m_enableEmissiveCategorization = enabled;
     Msg("[D3D9TextureTracker] Emissive categorization %s\n", enabled ? "enabled" : "disabled");
 }
 
 // Enable or disable ALL automatic categorization (master switch)
 void D3D9TextureTracker::SetAutoCategorization(bool enabled) {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     m_enableAutoCategorization = enabled;
     
     // If disabling, clear pending queue to prevent delayed categorization
@@ -1379,7 +1555,7 @@ void D3D9TextureTracker::SetAutoCategorization(bool enabled) {
 
 // Enable or disable debug output
 void D3D9TextureTracker::SetDebugOutput(bool enabled) {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     m_enableDebugOutput = enabled;
     Msg("[D3D9TextureTracker] Debug output %s\n", enabled ? "enabled" : "disabled");
 }
@@ -1389,7 +1565,7 @@ bool D3D9TextureTracker::IsWorldTexture(const std::string& materialName) const {
     if (materialName.empty()) return false;
     
     try {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         
         // Return false if world texture list hasn't been set yet
         if (m_worldTextureNames.empty()) return false;

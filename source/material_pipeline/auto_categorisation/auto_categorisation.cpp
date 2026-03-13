@@ -7,6 +7,7 @@
 #ifdef _WIN64
 
 #include "auto_categorisation.h"
+#include "../../d3d9_texture_tracker.h"
 #include <tier0/dbg.h>
 #include <materialsystem/imaterialsystem.h>
 #include <materialsystem/imaterial.h>
@@ -545,11 +546,72 @@ void ApplyToHash(uint64_t hash, uint32_t flags, const std::string& materialName)
     
     std::lock_guard<std::recursive_mutex> lock(s_mutex);
     
-    // Store mapping
-    s_hashToCategoryFlags[hash] = flags;
+    // Retrieve existing flags from both maps for priority decisions.
+    uint32_t existingInternal = 0;
+    auto existingIt = s_hashToCategoryFlags.find(hash);
+    if (existingIt != s_hashToCategoryFlags.end()) {
+        existingInternal = existingIt->second;
+    }
+    
+    // Also check the D3D9 tracker map, which is populated by the Lua BSP scan.
+    uint32_t existingTracker = 0;
+    D3D9TextureTracker::Instance().GetHashCategoryFlags(hash, &existingTracker);
+    
+    uint32_t existingAny = existingInternal | existingTracker;
+    
+    // DECAL_STATIC (world geometry) takes priority over PARTICLE.
+    // Check both the category flag maps and the BSP world material reverse map so
+    // that translucent world brushes (intentionally left uncategorized) are also
+    // protected from hash collisions with particle/sprite effects.
+    if (flags & CategoryFlags::PARTICLE) {
+        bool isWorldGeometry =
+            (existingAny & CategoryFlags::DECAL_STATIC) != 0 ||
+            D3D9TextureTracker::Instance().IsAnyBSPWorldMaterialForHash(hash);
+        if (isWorldGeometry) {
+            flags &= ~CategoryFlags::PARTICLE;
+            if (s_config.debugOutput) {
+                Msg("[AutoCategorisation] Skipping PARTICLE for hash 0x%llX (%s): world geometry\n",
+                    hash, materialName.c_str());
+            }
+            if (flags == 0) return;
+        }
+    }
+
+    // DECAL_STATIC must not be applied when any material sharing this hash is not
+    // in the world-texture decal list.  This covers:
+    //   • non-BSP model textures (HasNonBSPWorldMaterialForHash)
+    //   • BSP brushes excluded from DECAL_STATIC, e.g. translucent/nodecal surfaces
+    //     (HasMaterialNotInWorldListForHash, which checks the world texture list directly)
+    //   • hashes already resolved as contested retroactively (IsHashContested)
+    if (flags & CategoryFlags::DECAL_STATIC) {
+        bool shouldBlock =
+            D3D9TextureTracker::Instance().IsHashContested(hash) ||
+            D3D9TextureTracker::Instance().HasMaterialNotInWorldListForHash(hash);
+        if (shouldBlock) {
+            flags &= ~CategoryFlags::DECAL_STATIC;
+            if (s_config.debugOutput) {
+                Msg("[AutoCategorisation] Skipping DECAL_STATIC for hash 0x%llX (%s): hash shared with non-decal material\n",
+                    hash, materialName.c_str());
+            }
+            if (flags == 0) return;
+        }
+    }
     
     // Convert hash to string format for Remix API
     std::string hashStr = HashToString(hash);
+    
+    // When DECAL_STATIC (world geometry) is being applied, remove any prior
+    // PARTICLE tag that may have been set before the BSP scan completed.
+    if ((flags & CategoryFlags::DECAL_STATIC) && (existingAny & CategoryFlags::PARTICLE)) {
+        s_remix->RemoveTextureHash("rtx.particleTextures", hashStr.c_str());
+        if (s_config.debugOutput) {
+            Msg("[AutoCategorisation] Removing PARTICLE for hash 0x%llX (%s): overridden by world geometry\n",
+                hash, materialName.c_str());
+        }
+    }
+    
+    // Store mapping (merge with existing internal flags, minus any cleared bits)
+    s_hashToCategoryFlags[hash] = (existingInternal & ~CategoryFlags::PARTICLE) | flags;
     
     // Apply to Remix API
     if (flags & CategoryFlags::PARTICLE) {

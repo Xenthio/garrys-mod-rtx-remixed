@@ -105,6 +105,39 @@ public:
     
     // Check if a material is in the world texture list
     bool IsWorldTexture(const std::string& materialName) const;
+
+    // Register a material as BSP world geometry (regardless of category assignment).
+    // Populates m_bspWorldMaterials and back-fills m_hashToMaterials from the texture
+    // cache for any already-rendered variants; retroactively removes any stale PARTICLE
+    // tag if the hash was claimed before the BSP scan ran.
+    void RegisterBSPWorldMaterial(const std::string& materialName);
+
+    // Clear the BSP world material registry (call on map change).
+    void ClearBSPWorldMaterials();
+
+    // Returns true if any material known to share this hash is registered as BSP
+    // world geometry, meaning PARTICLE should not be applied to it.
+    bool IsAnyBSPWorldMaterialForHash(uint64_t hash) const;
+
+    // Returns true if any material known to share this hash is NOT registered as
+    // BSP world geometry, meaning DECAL_STATIC should not be applied to that hash
+    // (it would incorrectly tag non-world materials such as model textures).
+    bool HasNonBSPWorldMaterialForHash(uint64_t hash) const;
+
+    // Returns true if any material known to share this hash is NOT in the world
+    // texture DECAL_STATIC list.  This is the accurate pre-emptive guard: it covers
+    // both non-BSP model textures and BSP brushes intentionally excluded from the
+    // decal list (e.g. translucent or $nodecal surfaces).
+    bool HasMaterialNotInWorldListForHash(uint64_t hash) const;
+
+    // Mark a hash as "contested" for DECAL_STATIC: it is shared between a BSP world
+    // brush and at least one non-world material, so DECAL_STATIC must never be applied.
+    // This state persists for the lifetime of the map (cleared on ClearCache /
+    // ClearBSPWorldMaterials) so that RecheckWorldTextures cannot re-apply the tag.
+    void MarkHashContested(uint64_t hash);
+
+    // Returns true if this hash has been permanently blocked from DECAL_STATIC.
+    bool IsHashContested(uint64_t hash) const;
     
     // Enable/disable automatic particle categorization
     void SetParticleCategorization(bool enabled);
@@ -195,6 +228,19 @@ private:
 
     // Cache: material name -> set of D3D9 textures (materials can have multiple texture variants)
     std::unordered_map<std::string, std::vector<IDirect3DTexture9*>> m_textureCache;
+
+    // Reverse map: texture hash -> set of material names that use it (Stage 0 only).
+    // Populated as new Stage 0 variants are discovered in Hook_SetTexture.
+    std::unordered_map<uint64_t, std::unordered_set<std::string>> m_hashToMaterials;
+
+    // Set of lowercase material names that the Lua BSP scan identified as world brushes,
+    // regardless of whether they were assigned a Remix category.
+    std::unordered_set<std::string> m_bspWorldMaterials;
+
+    // Hashes permanently blocked from DECAL_STATIC because they are shared between
+    // BSP world geometry and at least one non-world material (e.g. a model texture).
+    // Cleared on map change alongside m_bspWorldMaterials.
+    std::unordered_set<uint64_t> m_contestedDecalHashes;
     
     // Hash to category flags mapping
     std::unordered_map<uint64_t, uint32_t> m_hashToCategoryFlags;
@@ -218,7 +264,7 @@ private:
     bool m_bInitialized = false;
     
     // Mutex for thread safety
-    mutable std::mutex m_mutex;
+    mutable std::recursive_mutex m_mutex;
 };
 
 #endif // _WIN64

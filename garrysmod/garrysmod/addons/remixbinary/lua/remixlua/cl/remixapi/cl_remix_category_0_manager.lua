@@ -1408,9 +1408,18 @@ function RemixCategoryManager.SmartMarkWorldTextures()
                 -- BSP world geometry textures (faces from brushes) - mark as DECAL_STATIC
                 -- This is ONLY for actual world brushes, not props
                 elseif isFromBSP and not isFromProp then
+                    -- Always register with the C++ reverse hash map regardless of whether
+                    -- this material receives a Remix category.  This protects translucent
+                    -- world brushes (and any other excluded materials) from hash collisions
+                    -- with particle/sprite effects at runtime without forcing DECAL_STATIC.
+                    if RemixMaterial and RemixMaterial.RegisterBSPWorldMaterial then
+                        RemixMaterial.RegisterBSPWorldMaterial(materialName)
+                    end
+
                     -- Check if material should be excluded (translucent, no_decal, etc.)
                     if RemixCategoryManager.ShouldExcludeFromWorldGeometry(materialName) then
-                        -- Don't categorize - let it render normally (foliage, translucent surfaces, etc.)
+                        -- Leave uncategorized; hash-collision protection is handled by the
+                        -- reverse map registered above.
                         stats.skipped = stats.skipped + 1
                     
                     -- Check for transparent world geometry (glass, fences, etc.)
@@ -2249,6 +2258,12 @@ hook.Add("InitPostEntity", "RemixCategoryManager_InitFlags", function()
     materialHashCache = {}
     pendingCategorizations = {}
     currentMapToken = game.GetMap() or ""
+
+    -- Clear the C++ BSP world material registry so previous-map entries don't
+    -- persist into the new map's BSP scan.
+    if RemixMaterial and RemixMaterial.ClearBSPWorldMaterials then
+        RemixMaterial.ClearBSPWorldMaterials()
+    end
     
     -- Reset guard flag so auto-categorization runs on each new map load
     autoInitRan = false

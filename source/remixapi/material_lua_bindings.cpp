@@ -811,6 +811,20 @@ LUA_FUNCTION(RemixMaterial_SetHashCategory) {
         }
     }
     
+    // DECAL_STATIC (world geometry) takes priority over PARTICLE.
+    // When a hash is assigned to world geometry, remove any prior particle tag so
+    // RTX Remix doesn't see the hash in both rtx.particleTextures and rtx.decalTextures.
+    if (categoryFlags & 0x1000) { // DECAL_STATIC
+        uint32_t existingFlags = 0;
+        if (D3D9TextureTracker::Instance().GetHashCategoryFlags(textureHash, &existingFlags)) {
+            if (existingFlags & 0x400) { // PARTICLE
+                g_remix->RemoveTextureHash("rtx.particleTextures", hashStr);
+                // Merge: carry over all existing flags except PARTICLE, then OR in new flags
+                categoryFlags = (existingFlags & ~0x400u) | categoryFlags;
+            }
+        }
+    }
+    
     // Always store locally so GetHashCategory reflects the intent regardless of
     // whether the Remix API accepted the call this frame.
     D3D9TextureTracker::Instance().SetHashCategoryFlags(textureHash, categoryFlags);
@@ -1040,6 +1054,31 @@ LUA_FUNCTION(RemixMaterial_FindTexturesByName) {
     return 1;
 }
 
+// Lua function: RemixMaterial.RegisterBSPWorldMaterial(materialName)
+// Registers a material as BSP world geometry in the reverse hash-collision guard.
+// Should be called for every BSP world brush material, including translucent ones
+// that receive no Remix category.  When the material's texture hash is later
+// encountered with a PARTICLE tag (hash collision), the tag is suppressed.
+LUA_FUNCTION(RemixMaterial_RegisterBSPWorldMaterial) {
+    if (!LUA->IsType(1, Type::String)) {
+        LUA->ThrowError("RemixMaterial.RegisterBSPWorldMaterial: Expected string material name");
+        return 0;
+    }
+    const char* materialName = LUA->GetString(1);
+    if (materialName && materialName[0] != '\0') {
+        D3D9TextureTracker::Instance().RegisterBSPWorldMaterial(materialName);
+    }
+    return 0;
+}
+
+// Lua function: RemixMaterial.ClearBSPWorldMaterials()
+// Clears the BSP world material registry.  Call on map change before re-running
+// the BSP scan so stale entries from the previous map do not persist.
+LUA_FUNCTION(RemixMaterial_ClearBSPWorldMaterials) {
+    D3D9TextureTracker::Instance().ClearBSPWorldMaterials();
+    return 0;
+}
+
 // Lua function: RemixMaterial.SetWorldTextureList(textureTable)
 // Accepts a Lua table of texture names from BSP parsing
 // These will be automatically marked as DECAL_STATIC (world geometry) when rendered
@@ -1237,6 +1276,12 @@ void MaterialManager::InitializeLuaBindings() {
     m_lua->PushCFunction(RemixMaterial_DumpAllTextureHashes);
     m_lua->SetField(-2, "DumpAllTextureHashes");
     
+    m_lua->PushCFunction(RemixMaterial_RegisterBSPWorldMaterial);
+    m_lua->SetField(-2, "RegisterBSPWorldMaterial");
+
+    m_lua->PushCFunction(RemixMaterial_ClearBSPWorldMaterials);
+    m_lua->SetField(-2, "ClearBSPWorldMaterials");
+
     m_lua->PushCFunction(RemixMaterial_SetWorldTextureList);
     m_lua->SetField(-2, "SetWorldTextureList");
     
