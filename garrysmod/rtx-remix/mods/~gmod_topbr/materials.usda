@@ -1,0 +1,623 @@
+#usda 1.0
+(
+    upAxis = "Z"
+)
+
+over "RootNode"
+{
+    over "Looks"
+    {
+        over "mat_A994D807E140859B"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                float inputs:reflection_roughness_constant = 1
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_F112ECDA59AB324E"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\EF8D0EB8590AFC49_normal.dds@ (
+                    colorSpace = "raw"
+                )
+                asset inputs:reflectionroughness_texture = @./textures\288A26E6AD78297_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_766C17B077150735"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                asset inputs:reflectionroughness_texture = @./textures\148FF5F04F63EADB_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_12C008E51076FAA4"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\1560806ABFDED6BC_normal.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:reflection_roughness_constant = 1
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_6D3B6804247E689B"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\E771B6C1D011E97B_normal.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:reflection_roughness_constant = 1
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_DDDDC9091A32DC84"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                float inputs:reflection_roughness_constant = 0.132149
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_2568CF29EDFDC4FD"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                asset inputs:reflectionroughness_texture = @./textures\9B59021A13AD2E58_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_C968B2EF866E81F9"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\ACAD02CCB1FF736C_normal.dds@ (
+                    colorSpace = "raw"
+                )
+                asset inputs:reflectionroughness_texture = @./textures\A4DE21F98214FA8C_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_C193F50340A16850"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                asset inputs:reflectionroughness_texture = @./textures\998D2016354E086E_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_44D26D4F7FA3A7B0"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\E771B6C1D011E97B_normal.dds@ (
+                    colorSpace = "raw"
+                )
+                asset inputs:reflectionroughness_texture = @./textures\F9B93E80ADDF5BD6_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_C9A30EEA386A19C1"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                asset inputs:reflectionroughness_texture = @./textures\81E722FCB3F0D937_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_3293FA5046A66689"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                asset inputs:reflectionroughness_texture = @./textures\CA738AA6850F8065_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_328CE786B33D5E91"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\CC1F3894C40FBB51_normal.dds@ (
+                    colorSpace = "raw"
+                )
+                asset inputs:reflectionroughness_texture = @./textures\9B156A309345B5CF_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_3D50DE8B3E6E698"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\58DB48C0E586C465_normal.dds@ (
+                    colorSpace = "raw"
+                )
+                asset inputs:reflectionroughness_texture = @./textures\EDC7C7C4C2464CA3_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_EB6766890A976112"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                float inputs:reflection_roughness_constant = 0.5
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_3626492F24B37D8E"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                asset inputs:reflectionroughness_texture = @./textures\D9E083631A76B315_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_EEDB345BA2C47081"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                asset inputs:reflectionroughness_texture = @./textures\EB6B603C314EC2A2_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_33FAB345028AFF4A"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\7FA71CC993C71488_normal.dds@ (
+                    colorSpace = "raw"
+                )
+                asset inputs:reflectionroughness_texture = @./textures\D109D3DDDB16C0B8_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_4E4CB68DC65EA05C"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\79EB6B8064000A59_normal.dds@ (
+                    colorSpace = "raw"
+                )
+                asset inputs:reflectionroughness_texture = @./textures\DCBDF45267F84D27_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_F0D269B7235058A"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\A0B8A36985E1EE84_normal.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:reflection_roughness_constant = 1
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_81D0AF96AF8F0F90"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\AF54B0C1B496832D_normal.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:reflection_roughness_constant = 1
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_666378ED56717C8C"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                asset inputs:reflectionroughness_texture = @./textures\981F6E191BA96745_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_A68AD92419756486"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                asset inputs:reflectionroughness_texture = @./textures\BB2BAC1BA5B4C540_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_AB5076BDE7C74ADC"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\892C3C9DF693094C_normal.dds@ (
+                    colorSpace = "raw"
+                )
+                asset inputs:reflectionroughness_texture = @./textures\5A3921C377574BEC_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_6BA36E53BA649581"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                asset inputs:reflectionroughness_texture = @./textures\DE4C55DA4B7BF456_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_53FACD801D081B1B"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                asset inputs:reflectionroughness_texture = @./textures\38C04482B0028584_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_A4020350DDE52305"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                asset inputs:reflectionroughness_texture = @./textures\F5AA4F8CCEE88273_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_725715E3C13FE177"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                asset inputs:reflectionroughness_texture = @./textures\EAE006B3CC90D986_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_B95B7130E114808D"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\5316C136A489F5F0_normal.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:reflection_roughness_constant = 0.140792
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_4B6B753822C37122"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                asset inputs:reflectionroughness_texture = @./textures\942F64955C58CB22_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_2D9C0BA6A7D78E1D"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                asset inputs:reflectionroughness_texture = @./textures\6355D1DFD169B7E6_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_3D4644512003446E"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                asset inputs:reflectionroughness_texture = @./textures\2AE21291EFD8C5D4_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_74B3DD0DE7F0EBC5"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\A1016D177EDE9F82_normal.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:reflection_roughness_constant = 0.615
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_1199CE4E8CC6A202"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                asset inputs:reflectionroughness_texture = @./textures\35D840DB74E591C1_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_FE62A4B03C7E9B5B"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\9BBCCD84C7D3DC6C_normal.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:reflection_roughness_constant = 1
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_9F73F52BD325715A"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\65BDAE88E204AB98_normal.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:reflection_roughness_constant = 1
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_F2D211DF1B9E8BB0"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\2BAC4A2AE65B9A5D_normal.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:reflection_roughness_constant = 1
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_7109FFAFE5A3D2A"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                asset inputs:reflectionroughness_texture = @./textures\23A246798C0E237E_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_BA87DF962E4A00B5"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\8ECA810D88936663_normal.dds@ (
+                    colorSpace = "raw"
+                )
+                asset inputs:reflectionroughness_texture = @./textures\4394628DE48B4AAD_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_843880B80A8DA0CD"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\304A023B2926ADC5_normal.dds@ (
+                    colorSpace = "raw"
+                )
+                asset inputs:reflectionroughness_texture = @./textures\F9D42AAD4C720883_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_8B4F6112A2413674"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\48EF15C3F3195F56_normal.dds@ (
+                    colorSpace = "raw"
+                )
+                asset inputs:reflectionroughness_texture = @./textures\24DBBC58E3F9E542_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_9116827CC1EA7EA"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                asset inputs:reflectionroughness_texture = @./textures\59FBA1618AA7174D_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_CBA1221CB0CAA133"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                asset inputs:reflectionroughness_texture = @./textures\7CBC9299EF396CCC_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_23698377CA6C3D74"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                asset inputs:reflectionroughness_texture = @./textures\41602B8A46A4CA02_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_587DE6A72B5FF099"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                asset inputs:reflectionroughness_texture = @./textures\B351513B603C41B6_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_541263A7D9484254"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\EA6D6293F14FDA22_normal.dds@ (
+                    colorSpace = "raw"
+                )
+                asset inputs:reflectionroughness_texture = @./textures\6F4A2B57D8A0D21E_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+    }
+}
