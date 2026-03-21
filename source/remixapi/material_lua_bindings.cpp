@@ -8,6 +8,7 @@
 #include <d3d9.h>
 #include <Windows.h>
 #include "../d3d9_texture_tracker.h"
+#include "../globalconvars.h"
 
 using namespace GarrysMod::Lua;
 
@@ -424,7 +425,8 @@ LUA_FUNCTION(RemixMaterial_TrackMaterial) {
     
     const char* materialName = LUA->GetString(1);
     
-    Msg("[RemixMaterial] TrackMaterial: Attempting to track '%s'\n", materialName);
+    if (GlobalConvars::r_remix_material_debug && GlobalConvars::r_remix_material_debug->GetBool())
+        Msg("[RemixMaterial] TrackMaterial: Attempting to track '%s'\n", materialName);
     
     // Try to find and "touch" the material to trigger loading
     if (materials) {
@@ -466,7 +468,8 @@ LUA_FUNCTION(RemixMaterial_TrackMaterial) {
                 if (pTex) {
                     // Force download to GPU
                     pTex->Download();
-                    Msg("[RemixMaterial] TrackMaterial: Triggered texture download for '%s'\n", pTex->GetName());
+                    if (GlobalConvars::r_remix_material_debug && GlobalConvars::r_remix_material_debug->GetBool())
+                        Msg("[RemixMaterial] TrackMaterial: Triggered texture download for '%s'\n", pTex->GetName());
                 } else {
                     Warning("[RemixMaterial] TrackMaterial: Texture is null for '%s'\n", materialName);
                 }

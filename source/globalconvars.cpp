@@ -55,6 +55,7 @@ static ConVar* CreateOrFindConVar(const char* name, const char* defaultVal, cons
 }
 
 ConVar* GlobalConvars::r_eyes_hwskin;
+ConVar* GlobalConvars::r_remix_material_debug;
 void GlobalConvars::InitialiseConVars() {
 	m_pLuaConVars = loader_lua_shared.GetInterface<GarrysMod::Lua::ILuaConVars>(GMOD_LUACONVARS_INTERFACE);
 	if (!m_pLuaConVars) {
@@ -80,5 +81,7 @@ void GlobalConvars::InitialiseConVars() {
 	if (!r_eyes_hwskin) { r_eyes_hwskin = cvar->FindVar("r_eyes_hwskin"); }
 	if (!r_eyes_hwskin) { Error("[RTX Fixes 2] Failed to create r_eyes_hwskin convar\n"); }
 	else { Msg("[RTX Fixes 2] r_eyes_hwskin convar created\n"); }
+
+	r_remix_material_debug = CreateOrFindConVar("r_remix_material_debug", "0", "Enable verbose logging for RemixMaterial Lua bindings (TrackMaterial, FindMaterialByHash, etc.)");
 
 }
