@@ -22,6 +22,7 @@ hook.Add( "PopulateToolMenu", "RTXOptionsClient_BaseOptions", function()
 
         panel:CheckBox( "Hardware Skinning", "r_forcehwskin" )
         panel:ControlHelp( "Enables hardware skinning, allows for dynamic mesh replacements for Remix to work." )
+        panel:ControlHelp( "Highly experimental, may cause issues with some models or not work at all." )
 
         panel:CheckBox( "Fix Skybox Leaking", "rtx_sbr_enable" )
         panel:ControlHelp( "Hides geometry behind the skybox to prevent it from leaking through, doesn't allow light_enviornment entities to pass through though." )
@@ -35,10 +36,56 @@ hook.Add( "PopulateToolMenu", "RTXOptionsClient_BaseOptions", function()
         else
         end
 
-        panel:Help("Map Fixes")
-        panel:ControlHelp("Fixes broken geometry rendering for the current map, can lower FPS.")
-        panel:Button("Enable Map Fixes", "rtx_mf_enable_current_map")
-        panel:Button("Disable Map Fixes", "rtx_mf_disable_current_map")
+        local mapFixCategory = vgui.Create("DCollapsibleCategory", panel)
+        mapFixCategory:SetLabel("Map Fixes")
+        mapFixCategory:SetExpanded(true)
+        mapFixCategory:Dock(TOP)
+        mapFixCategory:DockMargin(0, 8, 0, 0)
+
+        local mapFixList = vgui.Create("DPanelList", mapFixCategory)
+        mapFixList:SetAutoSize(true)
+        mapFixList:SetSpacing(4)
+        mapFixList:DockPadding(8, 4, 8, 4)
+        mapFixCategory:SetContents(mapFixList)
+
+        local mapFixHelp1 = vgui.Create("DLabel")
+        mapFixHelp1:SetText("Fixes broken geometry rendering for the current map, can lower FPS.")
+        mapFixHelp1:SetWrap(true)
+        mapFixHelp1:SetAutoStretchVertical(true)
+        mapFixHelp1:SetTextColor(Color(0, 0, 0))
+        mapFixList:AddItem(mapFixHelp1)
+
+        local mapFixHelp2 = vgui.Create("DLabel")
+        mapFixHelp2:SetText("This is only used for engine rendered world geometry.")
+        mapFixHelp2:SetWrap(true)
+        mapFixHelp2:SetAutoStretchVertical(true)
+        mapFixHelp2:SetTextColor(Color(0, 0, 0))
+        mapFixList:AddItem(mapFixHelp2)
+
+        local enableBtn = vgui.Create("DButton")
+        enableBtn:SetText("Enable Map Fixes")
+        enableBtn.DoClick = function() RunConsoleCommand("rtx_mf_enable_current_map") end
+        mapFixList:AddItem(enableBtn)
+
+        local disableBtn = vgui.Create("DButton")
+        disableBtn:SetText("Disable Map Fixes")
+        disableBtn.DoClick = function() RunConsoleCommand("rtx_mf_disable_current_map") end
+        mapFixList:AddItem(disableBtn)
+
+        local cv_custom_base = GetConVar("rtx_custom_render")
+        local colorEnabled = Color(0, 0, 0)
+        local colorDisabled = Color(140, 140, 140)
+        mapFixCategory.Think = function(self)
+            local perfMode = cv_custom_base and cv_custom_base:GetBool() or false
+            self:SetAlpha(perfMode and 128 or 255)
+            local col = perfMode and colorDisabled or colorEnabled
+            mapFixHelp1:SetTextColor(col)
+            mapFixHelp2:SetTextColor(col)
+            enableBtn:SetEnabled(not perfMode)
+            disableBtn:SetEnabled(not perfMode)
+        end
+
+        panel:AddItem(mapFixCategory)
     end )
 end )
 
