@@ -1433,12 +1433,19 @@ void HardwareSkinningHooks::Shutdown() {
             Msg("[Hardware Skinning] Restored original bone index declaration type\n");
         }
 
-        // Disable all hooks
-        m_StudioCreateSingleMesh_hook.Disable();
-        m_StudioDrawGroupHWSkin_hook.Disable();
-        m_StudioRenderFinal_hook.Disable();
+        // Destroy all hooks (not just Disable). Destroy() calls MH_RemoveHook +
+        // MH_Uninitialize, which fully purges them from MinHook's list so that
+        // the next Initialize() can call Create() cleanly whether or not the
+        // DLL was actually reloaded by Windows between map changes.
+        // NOTE: Setup_Hook uses the file-scope globals created by Define_method_Hook
+        // (R_StudioXxx_hook), NOT the m_StudioXxx_hook class members. Calling
+        // Disable/Destroy on the class members is a no-op since they are never
+        // enabled; we must use the correct globals here.
+        R_StudioCreateSingleMesh_hook.Destroy();
+        R_StudioDrawGroupHWSkin_hook.Destroy();
+        R_StudioRenderFinal_hook.Destroy();
         if (R_StudioDrawEyeball_Original) {
-            R_StudioDrawEyeball_hook.Disable();
+            R_StudioDrawEyeball_hook.Destroy();
         }
 
         // Reset global state
