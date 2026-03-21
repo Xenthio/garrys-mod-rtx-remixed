@@ -168,18 +168,11 @@ function PhysgunColorSync.ApplyColor()
     local colorString = table.concat(colorEntries, ";")
     local intensityString = table.concat(intensityEntries, ",")
     
-    -- Debug: print exactly what we're sending
-    print("[PhysgunColorSync] Sending to Remix:")
-    print("  rtx.legacyEmissiveColorsString = " .. colorString)
-    print("  rtx.legacyEmissiveIntensitiesString = " .. intensityString)
-    
     -- Apply to Remix
     local success1 = RemixConfig.SetConfigVariable("rtx.legacyEmissiveColorsString", colorString)
     local success2 = RemixConfig.SetConfigVariable("rtx.legacyEmissiveIntensitiesString", intensityString)
     
     if success1 and success2 then
-        print(string.format("[PhysgunColorSync] Applied color (%.2f, %.2f, %.2f) intensity %.1f to %d materials", 
-            normR, normG, normB, intensity, #colorEntries))
     else
         print(string.format("[PhysgunColorSync] FAILED: colors=%s, intensities=%s", tostring(success1), tostring(success2)))
     end

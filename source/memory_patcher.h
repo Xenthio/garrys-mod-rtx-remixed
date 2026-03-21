@@ -65,6 +65,11 @@ public:
     // Clean up
     void Shutdown();
 
+    // Verbose logging toggle. Off by default; callers opt in (e.g. when
+    // r_hwskin_debug is set) to avoid spam on hot-path Enable/Disable calls.
+    void SetVerbose(bool verbose) { m_verbose = verbose; }
+    bool IsVerbose() const { return m_verbose; }
+
 private:
     MemoryPatcher() = default;
     ~MemoryPatcher();
@@ -78,6 +83,8 @@ private:
 
     // Mutex for thread safety
     std::mutex m_mutex;
+
+    bool m_verbose = false;
 };
 
 // Convenience functions for global access

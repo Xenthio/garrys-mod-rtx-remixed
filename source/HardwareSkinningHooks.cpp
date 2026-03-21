@@ -699,7 +699,7 @@ Define_method_Hook(int, R_StudioDrawEyeball, void*,
     bool shouldForce = forceEyeHW && forcehwskin && g_bInRenderFinal;
 
     if (eyeCallCount <= 10 || (eyeCallCount % 2000) == 0) {
-        HWSKIN_DBG_ALWAYS("[HWSkin] R_StudioDrawEyeball #%d: lighting=%d (%s), pMaterial=%p, lod=%d, forceHW=%d\n",
+        HWSKIN_DBG("[HWSkin] R_StudioDrawEyeball #%d: lighting=%d (%s), pMaterial=%p, lod=%d, forceHW=%d\n",
             eyeCallCount, lighting,
             (lighting == 0 ? "HARDWARE" : (lighting == 1 ? "SOFTWARE" : "MOUTH")),
             pMaterial, lod, shouldForce);
@@ -732,10 +732,10 @@ Define_method_Hook(int, R_StudioDrawEyeball, void*,
     RTX_SetEyeTexGenState(0);
 
     if (eyeCallCount <= 10 || (eyeCallCount % 2000) == 0) {
-        HWSKIN_DBG_ALWAYS("[HWSkin] R_StudioDrawEyeball #%d: returned %d triangles (lighting: %d->%d)\n",
+        HWSKIN_DBG("[HWSkin] R_StudioDrawEyeball #%d: returned %d triangles (lighting: %d->%d)\n",
             eyeCallCount, result, lighting, actualLighting);
         if (result == 0) {
-            HWSKIN_DBG_ALWAYS("[HWSkin]   -> 0 triangles! Likely causes: bEyes=false, GetFatVertexData=NULL, or mesh has no groups\n");
+            HWSKIN_DBG("[HWSkin]   -> 0 triangles! Likely causes: bEyes=false, GetFatVertexData=NULL, or mesh has no groups\n");
         }
     }
 
@@ -751,9 +751,11 @@ Define_method_Hook(int, R_StudioDrawEyeball, void*,
 // models, so only their vertex declarations get UBYTE4. All other models
 // keep D3DCOLOR and render normally through Source Engine shaders.
 static void EnableUBYTE4Patch() {
+    g_MemoryPatcher.SetVerbose(GlobalConvars::r_hwskin_debug && GlobalConvars::r_hwskin_debug->GetBool());
     g_MemoryPatcher.EnablePatch("HWSkin_BlendIndices_UBYTE4");
 }
 static void DisableUBYTE4Patch() {
+    g_MemoryPatcher.SetVerbose(GlobalConvars::r_hwskin_debug && GlobalConvars::r_hwskin_debug->GetBool());
     g_MemoryPatcher.DisablePatch("HWSkin_BlendIndices_UBYTE4");
 }
 

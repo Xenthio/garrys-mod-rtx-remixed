@@ -348,22 +348,17 @@ bool MemoryPatcher::EnablePatch(const std::string& patchName) {
             }
         }
 
-        // Log success
-        std::stringstream ss;
-        ss << "Enabled patch '" << patchName << "' at 0x" << std::hex << patchInfoCopy.address
-            << ": changed ";
-
-        for (auto b : patchInfoCopy.originalBytes) {
-            ss << std::setw(2) << std::setfill('0') << std::hex << (int)b << " ";
+        if (m_verbose) {
+            std::stringstream ss;
+            ss << "Enabled patch '" << patchName << "' at 0x" << std::hex << patchInfoCopy.address
+                << ": changed ";
+            for (auto b : patchInfoCopy.originalBytes)
+                ss << std::setw(2) << std::setfill('0') << std::hex << (int)b << " ";
+            ss << "to ";
+            for (auto b : patchInfoCopy.patchedBytes)
+                ss << std::setw(2) << std::setfill('0') << std::hex << (int)b << " ";
+            Msg("[MemoryPatcher] %s\n", ss.str().c_str());
         }
-
-        ss << "to ";
-
-        for (auto b : patchInfoCopy.patchedBytes) {
-            ss << std::setw(2) << std::setfill('0') << std::hex << (int)b << " ";
-        }
-
-        Msg("[MemoryPatcher] %s\n", ss.str().c_str());
 
         return true;
     }
@@ -433,7 +428,8 @@ bool MemoryPatcher::DisablePatch(const std::string& patchName) {
             }
         }
 
-        Msg("[MemoryPatcher] Disabled patch '%s'\n", patchName.c_str());
+        if (m_verbose)
+            Msg("[MemoryPatcher] Disabled patch '%s'\n", patchName.c_str());
 
         return true;
     }
