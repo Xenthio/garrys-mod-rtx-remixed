@@ -3,41 +3,29 @@
 <img src="https://github.com/user-attachments/assets/fad469d4-b7b2-428c-a093-5b497f02d820" alt="drawing" width="500"/>
 
 ## Features
-- Material fixes
-    - Fixes some broken UI/game materials and removes detail textures
-    - Change all water textures to a single one to simplify replacements in Remix
-    - **Runtime ToPBR Conversion**: Automatically converts Source Engine materials to PBR at runtime:
-        - Reads VTF texture files directly from Source Engine filesystem
-        - Writes PBR textures (normal, roughness, metallic) to `rtx-remix/mods/~gmod_topbr/textures/`
-        - Generates roughness textures from `$envmapmask` or `$phongexponent`
-        - Estimates metallic from `$phongboost` values
-        - Auto-processes materials on map load
-- Model fixes
-    - Hardware skinning
-    - Fixes some props having unstable hashes in RTX Remix so they can be replaced in the Remix Toolkit
-    - Allows most HL2 RTX mesh replacements to load correctly
+- ToPBR: Automatically converts Source Engine materials to PBR at runtime **(WIP)**
+    - Reads VTF texture files directly from Source Engine filesystem
+    - Writes PBR textures (normal, roughness, metallic) to `rtx-remix/mods/~gmod_topbr/textures/`
+    - Generates roughness textures from `$envmapmask` or `$phongexponent`
+    - Estimates metallic from `$phongboost` values
+    - Auto-processes materials on map load
+- Hardware Skinning **(WIP)**
 - Remix API Support (x64 only)
     - Lights
     - Lua bindings for addon creation
-    - Map-specific Remix settings
       
-
 ## Installation
 - Switch to the `x86-64` branch of Garry's Mod on Steam (x32 works but not recommended)
 - Ensure you've ran the vanilla game at least once, especially if you switched branches.
 - Download [RTXLauncher](https://github.com/Xenthio/RTXLauncher/releases/latest).
 - **Windows**
-   - Put `RTXLauncher.Avalonia.Windows.exe` in an empty folder, run it as an <ins>**Administrator**</ins>
-   - Do not place in the same place as your vanilla game
-   - Do not place it in a OneDrive synced folder (Documents, Desktop, etc), the game will not work correctly if you do so
+   - Run the launcher
 - **Linux**
    - Ensure Steam Play is forced for Garry's Mod with either Proton Experimental or another recent Proton build.
    - Run [GModPatchTool](https://github.com/solsticegamestudios/GModPatchTool)
-   - Put `RTXLauncher.Avalonia.Linux` in an empty folder, run it via the terminal or double click it (make sure it's marked as executable `chmod +x ./RTXLauncher.Avalonia.Linux`)
+   - Make sure it's marked as executable `chmod +x ./RTXLauncher.Avalonia.Linux`, and run it.
 
-- Select the Fixes package type:
-  - `garrys-mod-rtx-remixed` (this repo, normal version)
-  - [`garrys-mod-rtx-remixed-perf`](https://github.com/sambow23/garrys-mod-rtx-remixed-perf) (performance focused version)
+- Select the Release Channel (Stable or Nightly)
 - Select `Start Quick Install` on the main screen and follow the prompts when asked.
 - Once it's finished, press `Launch Game` at the bottom of the launcher.
 
