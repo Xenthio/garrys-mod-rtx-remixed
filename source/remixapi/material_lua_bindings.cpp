@@ -1389,4 +1389,14 @@ void MaterialManager::InitializeLuaBindings() {
 
 } // namespace RemixAPI
 
+// C++ callable (not a Lua binding): remove a single hash from the Lua force-albedo
+// set without going through Lua.  Called by AutoCategorisation::UnapplyFromRemix
+// when a material's hash is corrected and stale state must be cleaned up.
+// Defined outside namespace RemixAPI so the global-scope declaration in the header matches.
+void RemoveLuaForceAlbedoHashCpp(uint64_t hash) {
+    if (RemixAPI::s_luaForceAlbedoHashes.erase(hash)) {
+        RemixAPI::UpdateLuaForceAlbedoConfig();
+    }
+}
+
 #endif // _WIN64

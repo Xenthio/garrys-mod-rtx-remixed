@@ -144,6 +144,15 @@ uint32_t DetectCategory(const std::string& materialName, IMaterial* material);
 // @param materialName - For logging
 void ApplyToHash(uint64_t hash, uint32_t flags, const std::string& materialName);
 
+// Remove all Remix API registrations for a hash.
+// Calls RemoveTextureHash for every category bit stored under this hash,
+// erases the hash from s_hashToCategoryFlags and s_forceAlbedoHashes, and
+// removes the matching s_luaForceAlbedoHashes entry via RemoveLuaForceAlbedoHashCpp.
+// Use this when a material's hash changes so stale Remix-side state is cleaned up.
+// @param hash        - The old/wrong hash to remove
+// @param materialName - Clears the per-material flag cache as well
+void UnapplyFromRemix(uint64_t hash, const std::string& materialName);
+
 // =========================================================================
 // World Textures (BSP-based)
 // =========================================================================

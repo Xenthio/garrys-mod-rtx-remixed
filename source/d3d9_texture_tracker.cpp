@@ -385,6 +385,10 @@ void D3D9TextureTracker::ClearCache() {
         }
     }
     m_pendingBSPHashes.clear();
+
+    // Pending hash-resolution entries share their AddRef with m_textureCache
+    // (already released above), so we just clear the list without extra Release.
+    m_pendingHashResolution.clear();
     
     Msg("[D3D9TextureTracker] Cache cleared\n");
 }
@@ -643,17 +647,36 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                         // Notify MaterialPipeline of new material for unified processing
                         // Only for Stage 0 to avoid double-processing
                         // The pipeline handles: ShaderFixes → HashCollisionFixer → AutoCategorisation → ToPBR
-                        // NOTE: We notify even if hash is 0 - the pipeline will handle retry
                         if (Stage == 0) {
-                            MaterialPipeline::Pipeline::OnNewMaterialDetected(
-                                tracker.m_currentMaterialName, hash, p2DTexture);
-                            
-                            // For materials that were already categorized, apply stored flags
-                            // to this new variant immediately (or queue for pending if hash==0).
-                            // This handles animated textures where new frames appear over time.
-                            if (textures.size() > 1) {
-                                MaterialPipeline::AutoCategorisation::ApplyKnownCategoryToTexture(
-                                    tracker.m_currentMaterialName, p2DTexture);
+                            if (hash != 0) {
+                                // Hash is ready — notify the pipeline immediately.
+                                MaterialPipeline::Pipeline::OnNewMaterialDetected(
+                                    tracker.m_currentMaterialName, hash, p2DTexture);
+
+                                // For animated textures: apply any already-detected category flags
+                                // to new variants as they appear (no need for re-detection).
+                                if (textures.size() > 1) {
+                                    MaterialPipeline::AutoCategorisation::ApplyKnownCategoryToTexture(
+                                        tracker.m_currentMaterialName, p2DTexture);
+                                }
+                            } else {
+                                // Remix hasn't processed this texture yet — defer pipeline
+                                // notification until RetryPendingHashResolution resolves
+                                // a valid non-zero hash.  The pointer is kept alive by
+                                // m_textureCache; no extra AddRef is needed here.
+                                tracker.m_pendingHashResolution.push_back(
+                                    {p2DTexture, tracker.m_currentMaterialName});
+
+                                // For animated textures: if this material was already
+                                // categorized via a prior frame, fast-apply the stored
+                                // flags to this variant through the pending-category
+                                // queue so it resolves independently of the pipeline.
+                                // This mirrors what the hash!=0 path does synchronously
+                                // via ApplyKnownCategoryToTexture when textures.size()>1.
+                                if (textures.size() > 1) {
+                                    MaterialPipeline::AutoCategorisation::ApplyKnownCategoryToTexture(
+                                        tracker.m_currentMaterialName, p2DTexture);
+                                }
                             }
                         }
 
@@ -826,6 +849,12 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
     // NOTE: Reduced from 500 to 100 calls for more aggressive retry, especially
     // for particle effects that may have many texture variants with delayed hashing
     if (setTextureCallCount % 100 == 0) {
+        // Resolve textures whose hash was 0 at first discovery — must run before
+        // the pipeline retry so that the correct hash reaches DetectAndApply.
+        if (!tracker.m_pendingHashResolution.empty()) {
+            tracker.RetryPendingHashResolution();
+        }
+
         // Retry AutoCategorisation pending queue (from pipeline processing)
         MaterialPipeline::AutoCategorisation::RetryPendingCategories();
         
@@ -1147,6 +1176,97 @@ void D3D9TextureTracker::ApplyCategoryToHash(uint64_t hash, uint32_t categoryFla
         newFlags &= ~(DECAL_STATIC | DECAL_DYNAMIC);
     }
     SetHashCategoryFlags(hash, newFlags);
+}
+
+int D3D9TextureTracker::RetryPendingHashResolution() {
+    if (!g_remix || m_pendingHashResolution.empty()) return 0;
+
+    using namespace MaterialPipeline::AutoCategorisation::CategoryFlags;
+
+    std::vector<PendingHashResolution> stillPending;
+    int resolvedCount = 0;
+
+    for (auto& pending : m_pendingHashResolution) {
+        auto result = g_remix->dxvk_GetTextureHash(pending.texture);
+        if (!result || result.value() == 0) {
+            stillPending.push_back(pending);
+            continue;
+        }
+
+        uint64_t hash = result.value();
+
+        // Insert into the hash→materials reverse map.
+        m_hashToMaterials[hash].insert(pending.materialName);
+
+        // Run the same collision-detection logic that the !found path applies
+        // for immediately-available hashes.
+        std::string lowerMatName = pending.materialName;
+        std::transform(lowerMatName.begin(), lowerMatName.end(),
+            lowerMatName.begin(), [](unsigned char c){ return std::tolower(c); });
+
+        uint32_t existingFlags = 0;
+        GetHashCategoryFlags(hash, &existingFlags);
+        uint32_t acFlags = 0;
+        MaterialPipeline::AutoCategorisation::GetHashCategoryFlags(hash, &acFlags);
+        uint32_t allExistingFlags = existingFlags | acFlags;
+
+        if (m_bspWorldMaterials.count(lowerMatName)) {
+            if (allExistingFlags & PARTICLE) {
+                char hashStr[32];
+                sprintf_s(hashStr, "0x%llX", hash);
+                g_remix->RemoveTextureHash("rtx.particleTextures", hashStr);
+                SetHashCategoryFlags(hash, existingFlags & ~PARTICLE);
+                MaterialPipeline::AutoCategorisation::SetHashCategoryFlags(
+                    hash, acFlags & ~PARTICLE);
+                if (m_enableDebugOutput) {
+                    Msg("[D3D9TextureTracker] RetryHashResolution: Removed stale PARTICLE for BSP material '%s' (hash %s)\n",
+                        pending.materialName.c_str(), hashStr);
+                }
+            }
+        }
+
+        if (!IsWorldTexture(pending.materialName)) {
+            if (allExistingFlags & DECAL_STATIC) {
+                char hashStr[32];
+                sprintf_s(hashStr, "0x%llX", hash);
+                m_contestedDecalHashes.insert(hash);
+                g_remix->RemoveTextureHash("rtx.decalTextures", hashStr);
+                SetHashCategoryFlags(hash, existingFlags & ~DECAL_STATIC);
+                MaterialPipeline::AutoCategorisation::SetHashCategoryFlags(
+                    hash, acFlags & ~DECAL_STATIC);
+                if (m_enableDebugOutput) {
+                    Msg("[D3D9TextureTracker] RetryHashResolution: Hash %s contested, removed DECAL_STATIC for '%s'\n",
+                        hashStr, pending.materialName.c_str());
+                }
+            }
+        }
+
+        // If this material was already categorized via another variant (e.g. an
+        // animated frame that had a non-zero hash earlier), apply the stored flags
+        // to this frame's hash immediately so we don't have to wait for the async
+        // pipeline.  This mirrors the ApplyKnownCategoryToTexture call that the
+        // normal hash!=0 path makes when textures.size()>1.
+        MaterialPipeline::AutoCategorisation::ApplyKnownCategoryToTexture(
+            pending.materialName, pending.texture);
+
+        // Notify the pipeline for full detection / any categories not yet stored.
+        MaterialPipeline::Pipeline::OnNewMaterialDetected(pending.materialName, hash, pending.texture);
+
+        if (m_enableDebugOutput) {
+            Msg("[D3D9TextureTracker] RetryHashResolution: Resolved hash 0x%llX for '%s'\n",
+                hash, pending.materialName.c_str());
+        }
+        resolvedCount++;
+    }
+
+    m_pendingHashResolution = std::move(stillPending);
+
+    if (resolvedCount > 0 && m_enableDebugOutput) {
+        Msg("[D3D9TextureTracker] RetryPendingHashResolution: %d resolved, %zu still pending\n",
+            resolvedCount, m_pendingHashResolution.size());
+    }
+
+    return resolvedCount;
 }
 
 int D3D9TextureTracker::RetryPendingCategories() {

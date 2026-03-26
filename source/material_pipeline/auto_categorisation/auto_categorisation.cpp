@@ -8,6 +8,7 @@
 
 #include "auto_categorisation.h"
 #include "../../d3d9_texture_tracker.h"
+#include "../../remixapi/material_lua_bindings.h"
 #include <tier0/dbg.h>
 #include <materialsystem/imaterialsystem.h>
 #include <materialsystem/imaterial.h>
@@ -813,6 +814,47 @@ bool GetHashCategoryFlags(uint64_t hash, uint32_t* outFlags) {
         return true;
     }
     return false;
+}
+
+void UnapplyFromRemix(uint64_t hash, const std::string& materialName) {
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
+    if (!s_remix || hash == 0) return;
+
+    auto it = s_hashToCategoryFlags.find(hash);
+    if (it == s_hashToCategoryFlags.end()) return;
+
+    uint32_t flags = it->second;
+    std::string hashStr = HashToString(hash);
+
+    if (flags & CategoryFlags::PARTICLE) {
+        s_remix->RemoveTextureHash("rtx.particleTextures", hashStr.c_str());
+    }
+    if (flags & CategoryFlags::DECAL_STATIC) {
+        s_remix->RemoveTextureHash("rtx.decalTextures", hashStr.c_str());
+    }
+    if (flags & CategoryFlags::EMISSIVE) {
+        s_remix->RemoveTextureHash("rtx.legacyEmissiveTextures", hashStr.c_str());
+    }
+
+    s_hashToCategoryFlags.erase(it);
+    s_materialToCategoryFlags.erase(materialName);
+
+    if (s_forceAlbedoHashes.erase(hash)) {
+        if (s_forceAlbedoHashes.empty()) {
+            if (s_remix) {
+                s_remix->SetConfigVariable("rtx.legacyEmissiveForceAlbedoString", "");
+            }
+        } else {
+            UpdateForceAlbedoConfig();
+        }
+    }
+
+    RemoveLuaForceAlbedoHashCpp(hash);
+
+    if (s_config.debugOutput) {
+        Msg("[AutoCategorisation] UnapplyFromRemix: removed hash %s (flags 0x%X) for material '%s'\n",
+            hashStr.c_str(), flags, materialName.c_str());
+    }
 }
 
 // =========================================================================

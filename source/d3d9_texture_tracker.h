@@ -88,9 +88,18 @@ public:
     // Retry categorization for pending textures (those that returned hash=0)
     // Returns number of textures successfully categorized
     int RetryPendingCategories();
+
+    // Retry pipeline notification for textures whose hash was 0 at discovery time.
+    // When Remix eventually returns a non-zero hash, we fire OnNewMaterialDetected
+    // and update m_hashToMaterials / perform collision detection.
+    // Returns the number of entries resolved this call.
+    int RetryPendingHashResolution();
     
     // Get count of pending textures
     size_t GetPendingCount() const { return m_pendingCategories.size(); }
+
+    // Get count of textures waiting for their initial hash
+    size_t GetPendingHashResolutionCount() const { return m_pendingHashResolution.size(); }
     
     // Dump all tracked textures with their hashes (for debugging)
     // Returns vector of (materialName, texturePtr, hash) tuples
@@ -167,6 +176,17 @@ private:
     // assigned it yet), we queue it here so RetryPendingCategories can resolve the
     // hash later and retroactively remove any stale PARTICLE tag.
     struct PendingBSPHash {
+        IDirect3DTexture9* texture;
+        std::string materialName;
+    };
+
+    // Deferred pipeline-notification entry.
+    // When a new Stage 0 texture variant is discovered but dxvk_GetTextureHash
+    // returns 0 (Remix hasn't processed the texture yet), we queue the pointer here
+    // instead of calling OnNewMaterialDetected immediately.  RetryPendingHashResolution
+    // polls until a non-zero hash is available, then fires the notification.
+    // The texture pointer is already AddRef'd by m_textureCache; no extra AddRef needed.
+    struct PendingHashResolution {
         IDirect3DTexture9* texture;
         std::string materialName;
     };
@@ -261,6 +281,11 @@ private:
     // Resolved by RetryPendingCategories; on success, updates m_hashToMaterials
     // and removes any stale PARTICLE tag from the resolved hash.
     std::vector<PendingBSPHash> m_pendingBSPHashes;
+
+    // Materials whose Stage 0 texture had hash=0 at first discovery.
+    // OnNewMaterialDetected is deferred until Remix provides a valid hash.
+    // No extra AddRef: the pointer is already kept alive by m_textureCache.
+    std::vector<PendingHashResolution> m_pendingHashResolution;
     
     // World texture names from BSP (for DECAL_STATIC marking)
     std::unordered_set<std::string> m_worldTextureNames;
