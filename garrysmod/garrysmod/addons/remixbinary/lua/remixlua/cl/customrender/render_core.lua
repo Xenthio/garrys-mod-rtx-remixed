@@ -600,6 +600,14 @@ do
             return nil
         end
         
+        -- During offscreen RT passes (func_monitor etc.) EyePos() is the RT camera's
+        -- position, not the player's. If we cached that PVS under the current frame number
+        -- the main scene pass (same frame) would reuse it and cull nearly everything.
+        -- Return nil so callers fall back to no culling for the offscreen pass instead.
+        if render.GetRenderTarget() ~= nil then
+            return nil
+        end
+        
         local frame = FrameNumber()
         if _pvsFrame == frame and RemixRenderCore.IsPVSValid(_pvsCache) then
             return _pvsCache
