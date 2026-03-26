@@ -1208,6 +1208,72 @@ LUA_FUNCTION(RemixMaterial_SetDebugOutput) {
     return 1;
 }
 
+// =========================================================================
+// Force-Albedo Emission Helpers
+// =========================================================================
+// Hashes registered for rtx.legacyEmissiveForceAlbedoString by Lua code.
+// Kept as a set so re-serialisation on each new addition is duplicate-free.
+static std::unordered_set<uint64_t> s_luaForceAlbedoHashes;
+
+static void UpdateLuaForceAlbedoConfig() {
+    if (!g_remix) return;
+    
+    std::string value;
+    for (uint64_t hash : s_luaForceAlbedoHashes) {
+        if (!value.empty()) value += ',';
+        char buf[32];
+        snprintf(buf, sizeof(buf), "0x%llX", (unsigned long long)hash);
+        value += buf;
+    }
+    g_remix->SetConfigVariable("rtx.legacyEmissiveForceAlbedoString", value.c_str());
+}
+
+// Lua function: RemixMaterial.AddForceAlbedoHash(hashStr)
+// Registers a texture hash for force-albedo emission mode so that Remix emits
+// full albedo colour even when the texture has no alpha mask channel.
+// Call this for every hash belonging to an UnlitTwoTexture+scanline material.
+LUA_FUNCTION(RemixMaterial_AddForceAlbedoHash) {
+    if (!g_remix) {
+        LUA->ThrowError("RemixMaterial.AddForceAlbedoHash: Remix API not initialized");
+        return 0;
+    }
+    
+    if (!LUA->IsType(1, Type::String) && !LUA->IsType(1, Type::Number)) {
+        LUA->ThrowError("RemixMaterial.AddForceAlbedoHash: Expected string or number for hash");
+        return 0;
+    }
+    
+    uint64_t hash = 0;
+    if (LUA->IsType(1, Type::String)) {
+        hash = std::strtoull(LUA->GetString(1), nullptr, 0); // handles 0x prefix
+    } else {
+        hash = static_cast<uint64_t>(LUA->GetNumber(1));
+    }
+    
+    if (hash == 0) {
+        LUA->PushBool(false);
+        return 1;
+    }
+    
+    if (s_luaForceAlbedoHashes.insert(hash).second) {
+        UpdateLuaForceAlbedoConfig();
+    }
+    
+    LUA->PushBool(true);
+    return 1;
+}
+
+// Lua function: RemixMaterial.ClearForceAlbedoHashes()
+// Resets the force-albedo list. Call on map change before re-scanning.
+LUA_FUNCTION(RemixMaterial_ClearForceAlbedoHashes) {
+    s_luaForceAlbedoHashes.clear();
+    if (g_remix) {
+        g_remix->SetConfigVariable("rtx.legacyEmissiveForceAlbedoString", "");
+    }
+    LUA->PushBool(true);
+    return 1;
+}
+
 // Initialize Material Manager Lua bindings
 void MaterialManager::InitializeLuaBindings() {
     if (!m_lua) return;
@@ -1305,6 +1371,12 @@ void MaterialManager::InitializeLuaBindings() {
     
     m_lua->PushCFunction(RemixMaterial_SetDebugOutput);
     m_lua->SetField(-2, "SetDebugOutput");
+    
+    m_lua->PushCFunction(RemixMaterial_AddForceAlbedoHash);
+    m_lua->SetField(-2, "AddForceAlbedoHash");
+    
+    m_lua->PushCFunction(RemixMaterial_ClearForceAlbedoHashes);
+    m_lua->SetField(-2, "ClearForceAlbedoHashes");
     
     // Set the table as the global "RemixMaterial"
     m_lua->SetField(-2, "RemixMaterial");

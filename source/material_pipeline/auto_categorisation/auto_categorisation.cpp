@@ -44,6 +44,12 @@ static std::unordered_set<std::string> s_worldTextureNames;
 static Stats s_stats;
 static bool s_initialized = false;
 
+// Materials that were detected as UnlitTwoTexture+scanline emissives. These have no alpha
+// mask so Remix would otherwise suppress their emission; they need force-albedo mode.
+static std::unordered_set<std::string> s_scanlineEmissiveMaterials;
+// Hashes already registered for force-albedo (kept so we can re-serialize without duplicates).
+static std::unordered_set<uint64_t> s_forceAlbedoHashes;
+
 // Filesystem access
 static IFileSystem* s_pFileSystem = nullptr;
 
@@ -52,6 +58,19 @@ static std::string HashToString(uint64_t hash) {
     char buffer[32];
     snprintf(buffer, sizeof(buffer), "0x%llX", (unsigned long long)hash);
     return std::string(buffer);
+}
+
+// Serialize s_forceAlbedoHashes into rtx.legacyEmissiveForceAlbedoString.
+// Must be called under s_mutex.
+static void UpdateForceAlbedoConfig() {
+    if (!s_remix || s_forceAlbedoHashes.empty()) return;
+    
+    std::string value;
+    for (uint64_t hash : s_forceAlbedoHashes) {
+        if (!value.empty()) value += ',';
+        value += HashToString(hash);
+    }
+    s_remix->SetConfigVariable("rtx.legacyEmissiveForceAlbedoString", value.c_str());
 }
 
 static IFileSystem* GetFileSystem() {
@@ -214,6 +233,8 @@ void Shutdown() {
     s_hashToCategoryFlags.clear();
     s_materialToCategoryFlags.clear();
     s_worldTextureNames.clear();
+    s_scanlineEmissiveMaterials.clear();
+    s_forceAlbedoHashes.clear();
     s_remix = nullptr;
     s_initialized = false;
     
@@ -407,16 +428,43 @@ uint32_t DetectCategory(const std::string& materialName, IMaterial* material) {
                     }
                 }
             }
+            
+            // Method 3: Shader-based — UnlitTwoTexture with a scanline overlay is emissive.
+            // Only flag it when $texture2 or %tooltexture references a scanline texture,
+            // so generic UnlitTwoTexture blends aren't incorrectly lit.
+            if (!isEmissive) {
+                std::string shaderName = GetShaderName(material);
+                std::transform(shaderName.begin(), shaderName.end(), shaderName.begin(), SafeToLower);
+                if (shaderName.find("unlittwotexture") == 0) {
+                    auto HasScanlineVar = [&](const char* varName) -> bool {
+                        bool found = false;
+                        IMaterialVar* pVar = material->FindVar(varName, &found, false);
+                        if (!found || !pVar) return false;
+                        const char* val = pVar->GetStringValue();
+                        if (!val) return false;
+                        std::string lower = val;
+                        std::transform(lower.begin(), lower.end(), lower.begin(), SafeToLower);
+                        return lower.find("scanline") != std::string::npos;
+                    };
+                    if (HasScanlineVar("$texture2") || HasScanlineVar("%tooltexture")) {
+                        isEmissive = true;
+                        // Mark this material so ApplyToHash can register force-albedo emission.
+                        // UnlitTwoTexture+scanline panels have no alpha mask, so without this
+                        // Remix would silently suppress their emission.
+                        s_scanlineEmissiveMaterials.insert(materialName);
+                    }
+                }
+            }
         }
         
-        // Method 3: Read VMT file directly
+        // Method 4: Read VMT file directly
         if (!isDecal && !isEmissive) {
             if (CheckVMTForSelfillum(materialName, s_config.debugOutput)) {
                 isEmissive = true;
             }
         }
         
-        // Method 4: Keyword-based detection
+        // Method 5: Keyword-based detection
         if (!isDecal && !isEmissive) {
             bool hasOnSuffix = (lowerName.find("_on") != std::string::npos);
             bool isKnownEmissivePack = (lowerName.find("pkvoidplaces") != std::string::npos ||
@@ -622,6 +670,17 @@ void ApplyToHash(uint64_t hash, uint32_t flags, const std::string& materialName)
     }
     if (flags & CategoryFlags::EMISSIVE) {
         s_remix->AddTextureHash("rtx.legacyEmissiveTextures", hashStr.c_str());
+        // UnlitTwoTexture+scanline panels have no alpha mask. Without force-albedo mode
+        // Remix suppresses emission for maskless textures, so register the hash here.
+        if (s_scanlineEmissiveMaterials.count(materialName)) {
+            if (s_forceAlbedoHashes.insert(hash).second) {
+                UpdateForceAlbedoConfig();
+                if (s_config.debugOutput) {
+                    Msg("[AutoCategorisation] Registered force-albedo for scanline emissive hash 0x%llX (%s)\n",
+                        hash, materialName.c_str());
+                }
+            }
+        }
     }
     
     if (s_config.debugOutput) {

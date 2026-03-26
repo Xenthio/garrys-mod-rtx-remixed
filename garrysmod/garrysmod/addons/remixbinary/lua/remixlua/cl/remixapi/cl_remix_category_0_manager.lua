@@ -224,6 +224,32 @@ function RemixCategoryManager.IsMaterialEmissive(materialName)
         return true
     end
     
+    -- Method 7: UnlitTwoTexture with a scanline overlay ($texture2 or %tooltexture) is emissive.
+    -- Generic UnlitTwoTexture blends are not flagged — only scanline-driven display panels are.
+    local shader = mat:GetShader()
+    if shader and shader:lower():find("^unlittwotexture") then
+        local hasScanline = false
+        
+        -- Primary: check via material API ($texture2)
+        local tex2 = mat:GetTexture("$texture2")
+        if tex2 and not tex2:IsError() and tex2:GetName():lower():find("scanline") then
+            hasScanline = true
+        end
+        
+        -- Fallback: scan raw VMT text for $texture2 or %tooltexture pointing at a scanline texture
+        if not hasScanline and content then
+            local lc = content:lower()
+            if lc:find('"?%$texture2"?%s+"[^"]*scanline') or
+               lc:find('"?%%tooltexture"?%s+"[^"]*scanline') then
+                hasScanline = true
+            end
+        end
+        
+        if hasScanline then
+            return true
+        end
+    end
+    
     -- If $selfillum is found, check if mask is required
     if hasSelfillum then
         if requireMask then
@@ -466,6 +492,42 @@ function RemixCategoryManager.IsMaterialParticle(materialName)
 end
 
 --[[
+    Check if a material is an UnlitTwoTexture panel that drives its overlay via a
+    scanline texture ($texture2 or %tooltexture referencing "scanline").
+    These materials are inherently fullbright but have no alpha mask, so Remix would
+    suppress their emission unless force-albedo mode is enabled for their hash.
+    @param materialName string
+    @return boolean
+]]--
+function RemixCategoryManager.IsUnlitScanlineEmissive(materialName)
+    local mat = Material(materialName)
+    if not mat or mat:IsError() then return false end
+    
+    local shader = mat:GetShader()
+    if not shader or not shader:lower():find("^unlittwotexture") then return false end
+    
+    -- Primary: check $texture2 via material API
+    local tex2 = mat:GetTexture("$texture2")
+    if tex2 and not tex2:IsError() and tex2:GetName():lower():find("scanline") then
+        return true
+    end
+    
+    -- Fallback: scan raw VMT for $texture2 or %tooltexture pointing at a scanline texture
+    local vmtPath = "materials/" .. materialName
+    if not string.EndsWith(vmtPath, ".vmt") then vmtPath = vmtPath .. ".vmt" end
+    local content = file.Read(vmtPath, "GAME")
+    if content then
+        local lc = content:lower()
+        if lc:find('"?%$texture2"?%s+"[^"]*scanline') or
+           lc:find('"?%%tooltexture"?%s+"[^"]*scanline') then
+            return true
+        end
+    end
+    
+    return false
+end
+
+--[[
     Categorize all currently tracked materials
     This catches dynamic materials (weapons, effects) that aren't in the BSP
     @return table - Statistics
@@ -643,9 +705,22 @@ function RemixCategoryManager.AutoCategorizeMaterial(materialName)
             end
         end
         
+        -- For UnlitTwoTexture+scanline emissives, Remix suppresses emission because there is
+        -- no alpha mask.  Pass a callback so every resolved hash also gets registered for
+        -- force-albedo mode via rtx.legacyEmissiveForceAlbedoString.
+        local forceAlbedoCallback = nil
+        if category == RemixCategoryManager.PRESET.EMISSIVE and RemixMaterial.AddForceAlbedoHash then
+            local ok, isScanline = pcall(RemixCategoryManager.IsUnlitScanlineEmissive, materialName)
+            if ok and isScanline then
+                forceAlbedoCallback = function(success, hashStr)
+                    if success then RemixMaterial.AddForceAlbedoHash(hashStr) end
+                end
+            end
+        end
+        
         -- Apply category (with pcall protection)
         local setSuccess, setResult = pcall(function()
-            return RemixCategoryManager.SetMaterialCategory(materialName, category)
+            return RemixCategoryManager.SetMaterialCategory(materialName, category, forceAlbedoCallback)
         end)
         
         if setSuccess and setResult then
@@ -1453,10 +1528,22 @@ function RemixCategoryManager.SmartMarkWorldTextures()
                 end
                 
                 if category then
+                    -- For UnlitTwoTexture+scanline emissives, also register each resolved hash
+                    -- for force-albedo so Remix doesn't suppress emission due to missing mask.
+                    local forceAlbedoCallback = nil
+                    if category == RemixCategoryManager.PRESET.EMISSIVE and RemixMaterial.AddForceAlbedoHash then
+                        local ok, isScanline = pcall(RemixCategoryManager.IsUnlitScanlineEmissive, materialName)
+                        if ok and isScanline then
+                            forceAlbedoCallback = function(success, hashStr)
+                                if success then RemixMaterial.AddForceAlbedoHash(hashStr) end
+                            end
+                        end
+                    end
+                    
                     -- If SetMaterialCategory succeeds immediately (hash available), mark as
                     -- processed now. If it returns false the entry is in pendingCategorizations
                     -- and the Think hook will mark processedTextures on success.
-                    if RemixCategoryManager.SetMaterialCategory(materialName, category) then
+                    if RemixCategoryManager.SetMaterialCategory(materialName, category, forceAlbedoCallback) then
                         processedTextures[lowerName] = true
                     end
                 else
@@ -2263,6 +2350,12 @@ hook.Add("InitPostEntity", "RemixCategoryManager_InitFlags", function()
     -- persist into the new map's BSP scan.
     if RemixMaterial and RemixMaterial.ClearBSPWorldMaterials then
         RemixMaterial.ClearBSPWorldMaterials()
+    end
+
+    -- Clear force-albedo hashes from the previous map so stale hashes don't
+    -- bleed into the new map's rtx.legacyEmissiveForceAlbedoString.
+    if RemixMaterial and RemixMaterial.ClearForceAlbedoHashes then
+        RemixMaterial.ClearForceAlbedoHashes()
     end
     
     -- Reset guard flag so auto-categorization runs on each new map load
