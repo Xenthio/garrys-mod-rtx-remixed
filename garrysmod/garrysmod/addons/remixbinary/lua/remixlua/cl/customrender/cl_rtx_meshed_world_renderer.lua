@@ -10,8 +10,11 @@ local CONVARS = {
     DEBUG = CreateClientConVar("rtx_mwr_debug", "0", true, false, "Shows debug info for mesh rendering"),
     CAPTURE_MODE = CreateClientConVar("rtx_mwr_capture_mode", "0", true, false, "Toggles r_drawworld for capture mode"),
     MAT_WHITELIST = CreateClientConVar("rtx_mwr_mat_whitelist", "", true, false, "Comma-separated material name substrings to include"),
-    MAT_BLACKLIST = CreateClientConVar("rtx_mwr_mat_blacklist", "toolsskybox,skybox/", true, false, "Comma-separated material name substrings to exclude")
+    MAT_BLACKLIST = CreateClientConVar("rtx_mwr_mat_blacklist", "toolsskybox,skybox/", true, false, "Comma-separated material name substrings to exclude"),
+    REFLECTIVE_GLASS = CreateClientConVar("rtx_mwr_reflective_glass", "1", true, false, "Render func_reflective_glass entities as rtx/mirror geometry"),
 }
+
+local MIRROR_MATERIAL_NAME = "rtx/mirror"
 
 -- Local Variables and Caches
 local mapMeshes = {
@@ -73,6 +76,11 @@ local function IsBrushEntity(face)
     end
     
     return false
+end
+
+local function IsReflectiveGlassMaterial(matName)
+    if not matName then return false end
+    return matName:lower():find("glass/reflectiveglass", 1, true) ~= nil
 end
 
 local function IsSkyboxFace(face)
@@ -394,7 +402,22 @@ local function BuildMapMeshes(cancelToken)
                             if cancelToken and cancelToken.cancelled then return end
                         end
                         local process = true
-                        if not face or face:IsDisplacement() or IsBrushEntity(face) or not face:ShouldRender() or IsSkyboxFace(face) then
+                        local mirrorOverride = false
+                        if not face or face:IsDisplacement() or IsSkyboxFace(face) then
+                            process = false
+                        elseif IsBrushEntity(face) then
+                            -- Allow brush entities whose face material is reflective glass
+                            if CONVARS.REFLECTIVE_GLASS:GetBool() then
+                                local bmat = face:GetMaterial()
+                                if bmat and IsReflectiveGlassMaterial(bmat:GetName()) then
+                                    mirrorOverride = true
+                                else
+                                    process = false
+                                end
+                            else
+                                process = false
+                            end
+                        elseif not face:ShouldRender() then
                             process = false
                         end
                         if process then
@@ -410,8 +433,8 @@ local function BuildMapMeshes(cancelToken)
                                     if vert then _tempCenter:Add(vert) end
                                 end
                                 _tempCenter:Div(vertCount)
-                                -- Check if this face is inside the 3D skybox area
-                                local isInSkybox = hasSkyAABB and _tempCenter.WithinAABox and _tempCenter:WithinAABox(skyMins, skyMaxs)
+                                -- Mirror glass is always world-space; never treat as skybox geometry
+                                local isInSkybox = not mirrorOverride and hasSkyAABB and _tempCenter.WithinAABox and _tempCenter:WithinAABox(skyMins, skyMaxs)
 
                                 -- Expand world AABB from non-skybox face vertices
                                 if not isInSkybox then
@@ -425,31 +448,41 @@ local function BuildMapMeshes(cancelToken)
                                     end
                                 end
 
-                                local material = face:GetMaterial()
-                                if material then
-                                    local matName = material:GetName()
-                                    if matName and IsMaterialAllowed(matName) then
-                                        if RenderCore and RenderCore.GetMaterial then
-                                            material = RenderCore.GetMaterial(matName)
-                                        end
-                                        local chunkGroup = face:IsTranslucent() and chunks.translucent or chunks.opaque
-                                        -- Include skybox flag in key so world and skybox faces with
-                                        -- the same material never get merged into one group (wrong matrix)
-                                        local groupKey = isInSkybox and (matName .. "\0sky") or matName
-                                        chunkGroup[groupKey] = chunkGroup[groupKey] or {
-                                            material = material,
-                                            faces    = {},
-                                            isSkybox = isInSkybox
-                                        }
-                                        -- Store face + centroid so Morton sort can run after the scan
-                                        local rec = chunkGroup[groupKey].faces
-                                        rec[#rec + 1] = {
-                                            face = face,
-                                            cx   = _tempCenter.x,
-                                            cy   = _tempCenter.y,
-                                            cz   = _tempCenter.z,
-                                        }
+                                local material, matName
+                                local faceMat = not mirrorOverride and face:GetMaterial()
+                                if faceMat then
+                                    matName = faceMat:GetName()
+                                    -- World faces using the reflective glass material also get the mirror override
+                                    if CONVARS.REFLECTIVE_GLASS:GetBool() and IsReflectiveGlassMaterial(matName) then
+                                        mirrorOverride = true
                                     end
+                                end
+                                if mirrorOverride then
+                                    matName = MIRROR_MATERIAL_NAME
+                                    material = RenderCore and RenderCore.GetMaterial and RenderCore.GetMaterial(matName) or Material(matName)
+                                elseif matName and IsMaterialAllowed(matName) then
+                                    material = RenderCore and RenderCore.GetMaterial and RenderCore.GetMaterial(matName) or faceMat
+                                end
+
+                                if material then
+                                    -- Mirror glass is always opaque; other faces respect translucency
+                                    local chunkGroup = (mirrorOverride or not face:IsTranslucent()) and chunks.opaque or chunks.translucent
+                                    -- Include skybox flag in key so world and skybox faces with
+                                    -- the same material never get merged into one group (wrong matrix)
+                                    local groupKey = isInSkybox and (matName .. "\0sky") or matName
+                                    chunkGroup[groupKey] = chunkGroup[groupKey] or {
+                                        material = material,
+                                        faces    = {},
+                                        isSkybox = isInSkybox
+                                    }
+                                    -- Store face + centroid so Morton sort can run after the scan
+                                    local rec = chunkGroup[groupKey].faces
+                                    rec[#rec + 1] = {
+                                        face = face,
+                                        cx   = _tempCenter.x,
+                                        cy   = _tempCenter.y,
+                                        cz   = _tempCenter.z,
+                                    }
                                 end
                             end
                         end
@@ -941,6 +974,7 @@ end
 
  DebounceRebuildOnCvar("rtx_mwr_mat_whitelist")
  DebounceRebuildOnCvar("rtx_mwr_mat_blacklist")
+ DebounceRebuildOnCvar("rtx_mwr_reflective_glass")
 
 -- Console Commands
 concommand.Add("rtx_rebuild_meshes", BuildMapMeshes)
