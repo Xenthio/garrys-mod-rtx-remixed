@@ -157,4 +157,45 @@ if SERVER then
         v = clampf(t.rtx_light_color_b, 0, 255);       if v then ent:SetNWFloat("rtx_light_color_b", v) end
         v = clampf(t.rtx_light_brightness, 0, 10000);  if v then ent:SetNWFloat("rtx_light_brightness", v) end
     end)
+
+    -- Sky Editor entity net receiver
+    util.AddNetworkString("remix_sky_editor_apply")
+    net.Receive("remix_sky_editor_apply", function(len, ply)
+        if not IsValid(ply) or not ply:IsAdmin() then return end
+        local ent = net.ReadEntity()
+        if not IsValid(ent) or ent:GetClass() ~= "remix_sky_editor" then return end
+        local t = net.ReadTable()
+        if not istable(t) then return end
+
+        local function cf(v, lo, hi)
+            if type(v) ~= "number" then return nil end
+            return math.Clamp(v, lo, hi)
+        end
+
+        local v
+        v = cf(t.sky_sun_intensity, 0, 100);     if v then ent:SetNWFloat("sky_sun_intensity", v) end
+        v = cf(t.sky_sun_size, 0, 10);           if v then ent:SetNWFloat("sky_sun_size", v) end
+        if t.sky_sun_disc ~= nil then ent:SetNWBool("sky_sun_disc", t.sky_sun_disc and true or false) end
+        v = cf(t.sky_illum_r, 0, 100);           if v then ent:SetNWFloat("sky_illum_r", v) end
+        v = cf(t.sky_illum_g, 0, 100);           if v then ent:SetNWFloat("sky_illum_g", v) end
+        v = cf(t.sky_illum_b, 0, 100);           if v then ent:SetNWFloat("sky_illum_b", v) end
+        v = cf(t.sky_air_density, 0, 100);       if v then ent:SetNWFloat("sky_air_density", v) end
+        v = cf(t.sky_dust_density, 0, 100);      if v then ent:SetNWFloat("sky_dust_density", v) end
+        v = cf(t.sky_ozone_density, 0, 100);     if v then ent:SetNWFloat("sky_ozone_density", v) end
+        v = cf(t.sky_altitude, 0, 100000);       if v then ent:SetNWFloat("sky_altitude", v) end
+        v = cf(t.sky_planet_radius, 1000, 10000); if v then ent:SetNWFloat("sky_planet_radius", v) end
+        v = cf(t.sky_atmo_thickness, 10, 500);   if v then ent:SetNWFloat("sky_atmo_thickness", v) end
+        v = cf(t.sky_mie_anisotropy, -1, 1);     if v then ent:SetNWFloat("sky_mie_anisotropy", v) end
+        v = cf(t.sky_rayleigh_r, 0, 0.1);        if v then ent:SetNWFloat("sky_rayleigh_r", v) end
+        v = cf(t.sky_rayleigh_g, 0, 0.1);        if v then ent:SetNWFloat("sky_rayleigh_g", v) end
+        v = cf(t.sky_rayleigh_b, 0, 0.1);        if v then ent:SetNWFloat("sky_rayleigh_b", v) end
+        v = cf(t.sky_mie_r, 0, 0.1);             if v then ent:SetNWFloat("sky_mie_r", v) end
+        v = cf(t.sky_mie_g, 0, 0.1);             if v then ent:SetNWFloat("sky_mie_g", v) end
+        v = cf(t.sky_mie_b, 0, 0.1);             if v then ent:SetNWFloat("sky_mie_b", v) end
+        v = cf(t.sky_ozone_r, 0, 0.01);          if v then ent:SetNWFloat("sky_ozone_r", v) end
+        v = cf(t.sky_ozone_g, 0, 0.01);          if v then ent:SetNWFloat("sky_ozone_g", v) end
+        v = cf(t.sky_ozone_b, 0, 0.01);          if v then ent:SetNWFloat("sky_ozone_b", v) end
+        v = cf(t.sky_ozone_alt, 0, 50);          if v then ent:SetNWFloat("sky_ozone_alt", v) end
+        v = cf(t.sky_ozone_width, 1, 30);        if v then ent:SetNWFloat("sky_ozone_width", v) end
+    end)
 end

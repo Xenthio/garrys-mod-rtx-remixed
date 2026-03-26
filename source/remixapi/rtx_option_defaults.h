@@ -455,7 +455,27 @@ inline const std::unordered_map<std::string, std::string> RTX_OPTION_DEFAULTS = 
     {"rtx.bloom.enable", "True"},
     {"rtx.bloom.burnIntensity", "1.0"},
     {"rtx.postfx.enable", "True"},
-    {"rtx.enableFog", "False"}
+    {"rtx.enableFog", "False"},
+
+    {"rtx.skyMode", "0"},
+    {"rtx.atmosphere.sunDisc", "True"},
+    {"rtx.atmosphere.sunSize", "0.545"},
+    {"rtx.atmosphere.sunIntensity", "1.0"},
+    {"rtx.atmosphere.sunElevation", "15.0"},
+    {"rtx.atmosphere.sunRotation", "0.0"},
+    {"rtx.atmosphere.altitude", "100.0"},
+    {"rtx.atmosphere.airDensity", "1.0"},
+    {"rtx.atmosphere.aerosolDensity", "1.0"},
+    {"rtx.atmosphere.ozoneDensity", "1.0"},
+    {"rtx.atmosphere.planetRadius", "6371.0"},
+    {"rtx.atmosphere.atmosphereThickness", "100.0"},
+    {"rtx.atmosphere.mieAnisotropy", "0.97"},
+    {"rtx.atmosphere.rayleighScattering", "0.0058, 0.0135, 0.0331"},
+    {"rtx.atmosphere.mieScattering", "0.003996, 0.003996, 0.003996"},
+    {"rtx.atmosphere.ozoneAbsorption", "0.00204, 0.00497, 0.000214"},
+    {"rtx.atmosphere.ozoneLayerAltitude", "25.0"},
+    {"rtx.atmosphere.ozoneLayerWidth", "15.0"},
+    {"rtx.atmosphere.sunIlluminance", "20.0, 20.0, 20.0"}
 };
 
 } // namespace RemixAPI 

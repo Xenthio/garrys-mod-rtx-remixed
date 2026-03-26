@@ -26,6 +26,7 @@ namespace RemixAPI {
     class ResourceManager;
     class LightManager;
     class BSPGeometryManager;
+    class AtmosphereManager;
 
     // Main RemixAPI class
     class RemixAPI {
@@ -45,6 +46,7 @@ namespace RemixAPI {
         ResourceManager& GetResourceManager() { return *m_resourceManager; }
         LightManager& GetLightManager() { return *m_lightManager; }
         BSPGeometryManager& GetBSPGeometryManager() { return *m_bspGeometryManager; }
+        AtmosphereManager& GetAtmosphereManager() { return *m_atmosphereManager; }
         
         // Direct interface access
         remix::Interface* GetRemixInterface() { return m_remixInterface; }
@@ -69,6 +71,7 @@ namespace RemixAPI {
         std::unique_ptr<ResourceManager> m_resourceManager;
         std::unique_ptr<LightManager> m_lightManager;
         std::unique_ptr<BSPGeometryManager> m_bspGeometryManager;
+        std::unique_ptr<AtmosphereManager> m_atmosphereManager;
         
         bool m_initialized;
     };
@@ -284,6 +287,19 @@ namespace RemixAPI {
         // Lua bindings
         void InitializeLuaBindings();
         
+    private:
+        remix::Interface* m_remixInterface;
+        GarrysMod::Lua::ILuaBase* m_lua;
+    };
+
+    // Atmosphere Management (Hillaire physical atmosphere)
+    class AtmosphereManager {
+    public:
+        AtmosphereManager(remix::Interface* remixInterface, GarrysMod::Lua::ILuaBase* LUA);
+        ~AtmosphereManager();
+
+        void InitializeLuaBindings();
+
     private:
         remix::Interface* m_remixInterface;
         GarrysMod::Lua::ILuaBase* m_lua;

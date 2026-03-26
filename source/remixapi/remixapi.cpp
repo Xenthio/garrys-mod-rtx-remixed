@@ -80,6 +80,7 @@ bool RemixAPI::Initialize(remix::Interface* remixInterface, GarrysMod::Lua::ILua
         m_resourceManager = std::make_unique<ResourceManager>(remixInterface, LUA);
         m_lightManager = std::make_unique<LightManager>(remixInterface, LUA);
         m_bspGeometryManager = std::make_unique<BSPGeometryManager>(remixInterface, LUA, m_materialManager.get());
+        m_atmosphereManager = std::make_unique<AtmosphereManager>(remixInterface, LUA);
 
             // Initialize Lua bindings for all managers
         m_materialManager->InitializeLuaBindings();
@@ -90,6 +91,7 @@ bool RemixAPI::Initialize(remix::Interface* remixInterface, GarrysMod::Lua::ILua
         m_resourceManager->InitializeLuaBindings();
         m_lightManager->InitializeLuaBindings();
         m_bspGeometryManager->InitializeLuaBindings();
+        m_atmosphereManager->InitializeLuaBindings();
         
         // Initialize the unified material pipeline and its Lua bindings
         MaterialPipeline::Pipeline::Initialize(remixInterface, LUA);
@@ -107,6 +109,7 @@ void RemixAPI::Shutdown() {
     // Shutdown unified material pipeline first
     MaterialPipeline::Pipeline::Shutdown();
     
+    m_atmosphereManager.reset();
     m_bspGeometryManager.reset();
     m_resourceManager.reset();
     m_lightManager.reset();
@@ -1213,6 +1216,7 @@ void ResourceManager::SetMemoryLimits(size_t maxCacheSize, size_t maxVRAM) {
 // - mesh_lua_bindings.cpp
 // - instance_lua_bindings.cpp
 // - bsp_geometry_lua_bindings.cpp
+// - atmosphere_lua_bindings.cpp
 
 //=============================================================================
 // Legacy Functions for Backwards Compatibility
