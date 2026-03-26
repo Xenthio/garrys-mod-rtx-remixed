@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <sstream>
 
 // External globals
 extern IMaterialSystem* materials;
@@ -44,9 +45,10 @@ static std::unordered_set<std::string> s_worldTextureNames;
 static Stats s_stats;
 static bool s_initialized = false;
 
-// Materials that were detected as UnlitTwoTexture+scanline emissives. These have no alpha
-// mask so Remix would otherwise suppress their emission; they need force-albedo mode.
-static std::unordered_set<std::string> s_scanlineEmissiveMaterials;
+// Materials whose emissive detection path has no alpha mask for Remix to weight against,
+// so they require force-albedo mode (rtx.legacyEmissiveForceAlbedoString).
+// Covers: UnlitTwoTexture+scanline panels, UnlitGeneric+$selfillum.
+static std::unordered_set<std::string> s_forceAlbedoEmissiveMaterials;
 // Hashes already registered for force-albedo (kept so we can re-serialize without duplicates).
 static std::unordered_set<uint64_t> s_forceAlbedoHashes;
 
@@ -200,6 +202,56 @@ std::string GetShaderName(IMaterial* material) {
     return std::string(shaderName);
 }
 
+// Read the shader name from the first non-empty, non-comment line of a VMT.
+// Used as a fallback when no IMaterial pointer is available.
+std::string ReadVMTShaderName(const std::string& materialName) {
+    IFileSystem* fs = GetFileSystem();
+    if (!fs) return "";
+
+    std::string vmtPath = "materials/" + materialName + ".vmt";
+    FileHandle_t file = fs->Open(vmtPath.c_str(), "rb", "GAME");
+    if (!file) {
+        vmtPath = "materials/" + materialName;
+        file = fs->Open(vmtPath.c_str(), "rb", "GAME");
+        if (!file) return "";
+    }
+
+    int fileSize = fs->Size(file);
+    if (fileSize <= 0 || fileSize > 65536) { fs->Close(file); return ""; }
+
+    std::string content;
+    content.resize(fileSize);
+    int bytesRead = fs->Read(&content[0], fileSize, file);
+    fs->Close(file);
+    if (bytesRead <= 0) return "";
+
+    // The shader name is the first non-empty, non-comment token (before the opening brace)
+    std::istringstream ss(content);
+    std::string line;
+    while (std::getline(ss, line)) {
+        // Trim leading whitespace
+        size_t start = line.find_first_not_of(" \t\r\n");
+        if (start == std::string::npos) continue;
+        line = line.substr(start);
+        if (line.substr(0, 2) == "//") continue;
+        // Strip surrounding quotes
+        if (!line.empty() && line.front() == '"') {
+            size_t end = line.find('"', 1);
+            if (end != std::string::npos) {
+                std::string name = line.substr(1, end - 1);
+                std::transform(name.begin(), name.end(), name.begin(), SafeToLower);
+                return name;
+            }
+        }
+        // Unquoted shader name — take up to first whitespace or brace
+        size_t end = line.find_first_of(" \t\r\n{");
+        std::string name = (end == std::string::npos) ? line : line.substr(0, end);
+        std::transform(name.begin(), name.end(), name.begin(), SafeToLower);
+        return name;
+    }
+    return "";
+}
+
 // =========================================================================
 // Main Interface Implementation
 // =========================================================================
@@ -233,7 +285,7 @@ void Shutdown() {
     s_hashToCategoryFlags.clear();
     s_materialToCategoryFlags.clear();
     s_worldTextureNames.clear();
-    s_scanlineEmissiveMaterials.clear();
+    s_forceAlbedoEmissiveMaterials.clear();
     s_forceAlbedoHashes.clear();
     s_remix = nullptr;
     s_initialized = false;
@@ -415,6 +467,8 @@ uint32_t DetectCategory(const std::string& materialName, IMaterial* material) {
             IMaterialVar* pVar = material->FindVar("$selfillum", &found, false);
             if (found && pVar && pVar->GetIntValue() == 1) {
                 isEmissive = true;
+                // Note: UnlitGeneric $selfillum textures typically carry the emissive mask in
+                // their alpha channel, so Remix can handle weighting without force-albedo mode.
             }
             
             // Method 2: Check $emissive var (vector)
@@ -451,16 +505,18 @@ uint32_t DetectCategory(const std::string& materialName, IMaterial* material) {
                         // Mark this material so ApplyToHash can register force-albedo emission.
                         // UnlitTwoTexture+scanline panels have no alpha mask, so without this
                         // Remix would silently suppress their emission.
-                        s_scanlineEmissiveMaterials.insert(materialName);
+                        s_forceAlbedoEmissiveMaterials.insert(materialName);
                     }
                 }
             }
         }
         
-        // Method 4: Read VMT file directly
+        // Method 4: Read VMT file directly (fallback when material pointer is unavailable)
         if (!isDecal && !isEmissive) {
             if (CheckVMTForSelfillum(materialName, s_config.debugOutput)) {
                 isEmissive = true;
+                // UnlitGeneric $selfillum textures carry their own alpha-channel emissive mask;
+                // no force-albedo insertion needed here.
             }
         }
         
@@ -672,11 +728,11 @@ void ApplyToHash(uint64_t hash, uint32_t flags, const std::string& materialName)
         s_remix->AddTextureHash("rtx.legacyEmissiveTextures", hashStr.c_str());
         // UnlitTwoTexture+scanline panels have no alpha mask. Without force-albedo mode
         // Remix suppresses emission for maskless textures, so register the hash here.
-        if (s_scanlineEmissiveMaterials.count(materialName)) {
+        if (s_forceAlbedoEmissiveMaterials.count(materialName)) {
             if (s_forceAlbedoHashes.insert(hash).second) {
                 UpdateForceAlbedoConfig();
                 if (s_config.debugOutput) {
-                    Msg("[AutoCategorisation] Registered force-albedo for scanline emissive hash 0x%llX (%s)\n",
+                    Msg("[AutoCategorisation] Registered force-albedo for maskless emissive hash 0x%llX (%s)\n",
                         hash, materialName.c_str());
                 }
             }

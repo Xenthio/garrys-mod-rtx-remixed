@@ -250,7 +250,15 @@ function RemixCategoryManager.IsMaterialEmissive(materialName)
         end
     end
     
-    -- If $selfillum is found, check if mask is required
+    -- Method 8: UnlitGeneric + $selfillum
+    if hasSelfillum then
+        local shader = mat:GetShader()
+        if shader and shader:lower():find("^unlitgeneric") then
+            return true
+        end
+    end
+    
+    -- If $selfillum is found on any other shader, check if mask is required
     if hasSelfillum then
         if requireMask then
             -- Strict mode: require $selfillummask or alpha rendering mode
@@ -528,6 +536,50 @@ function RemixCategoryManager.IsUnlitScanlineEmissive(materialName)
 end
 
 --[[
+    Check if a material is an UnlitGeneric that has $selfillum enabled.
+    @param materialName string
+    @return boolean
+]]--
+function RemixCategoryManager.IsUnlitSelfillumEmissive(materialName)
+    local mat = Material(materialName)
+    if not mat or mat:IsError() then return false end
+    
+    local shader = mat:GetShader()
+    if not shader or not shader:lower():find("^unlitgeneric") then return false end
+    
+    -- Check via material API first (fastest)
+    local selfillum = mat:GetInt("$selfillum")
+    if selfillum and selfillum == 1 then return true end
+    
+    -- Fallback: raw VMT parse
+    local vmtPath = "materials/" .. materialName
+    if not string.EndsWith(vmtPath, ".vmt") then vmtPath = vmtPath .. ".vmt" end
+    local content = file.Read(vmtPath, "GAME")
+    if content then
+        local lc = content:lower()
+        if lc:find('["\']?%$selfillum["\']?%s+["\']?1["\']?') then
+            return true
+        end
+    end
+    
+    return false
+end
+
+--[[
+    Returns true when an emissive material needs force-albedo mode because Remix
+    would otherwise suppress emission on a texture without an alpha mask channel.
+    Currently covers:
+      • UnlitTwoTexture panels with a scanline $texture2 / %tooltexture
+    Note: UnlitGeneric $selfillum is intentionally excluded — those textures typically
+    carry their emissive mask in the alpha channel, so Remix can weight emission normally.
+    @param materialName string
+    @return boolean
+]]--
+function RemixCategoryManager.NeedsForceAlbedoEmission(materialName)
+    return RemixCategoryManager.IsUnlitScanlineEmissive(materialName)
+end
+
+--[[
     Categorize all currently tracked materials
     This catches dynamic materials (weapons, effects) that aren't in the BSP
     @return table - Statistics
@@ -705,13 +757,13 @@ function RemixCategoryManager.AutoCategorizeMaterial(materialName)
             end
         end
         
-        -- For UnlitTwoTexture+scanline emissives, Remix suppresses emission because there is
-        -- no alpha mask.  Pass a callback so every resolved hash also gets registered for
-        -- force-albedo mode via rtx.legacyEmissiveForceAlbedoString.
+        -- Some emissive shaders have no alpha mask, so Remix would suppress emission.
+        -- Pass a callback so every resolved hash also gets registered for force-albedo
+        -- mode via rtx.legacyEmissiveForceAlbedoString.
         local forceAlbedoCallback = nil
         if category == RemixCategoryManager.PRESET.EMISSIVE and RemixMaterial.AddForceAlbedoHash then
-            local ok, isScanline = pcall(RemixCategoryManager.IsUnlitScanlineEmissive, materialName)
-            if ok and isScanline then
+            local ok, needsForce = pcall(RemixCategoryManager.NeedsForceAlbedoEmission, materialName)
+            if ok and needsForce then
                 forceAlbedoCallback = function(success, hashStr)
                     if success then RemixMaterial.AddForceAlbedoHash(hashStr) end
                 end
@@ -863,24 +915,23 @@ function RemixCategoryManager.SetMaterialCategory(materialName, categoryFlags, c
         
         if allHashes and #allHashes > 0 then
             for _, hashStr in ipairs(allHashes) do
-                -- Skip if we've already categorized this hash in this call
+                -- Skip if we've already handled this hash in this call
                 if not categorizedHashes[hashStr] then
-                    -- Also skip if already categorized by C++ or previous Lua run
+                    categorizedHashes[hashStr] = true
+                    -- Check if already categorized by C++ or a previous Lua run
                     local existing = RemixMaterial.GetHashCategory and RemixMaterial.GetHashCategory(hashStr)
                     if not existing or existing == 0 then
-                        categorizedHashes[hashStr] = true
-                        
-                        -- Hash already available
                         MsgC(Color(0, 255, 150), string.format("[RemixCategoryManager] Setting category 0x%X for material '%s' (hash %s)\n", 
                             categoryFlags, tryName, hashStr))
-                        
                         local success = RemixCategoryManager.SetHashCategory(hashStr, categoryFlags)
                         if callback then callback(success, hashStr) end
-                        foundAny = true
                     else
-                        -- Already categorized, skip silently
-                        foundAny = true
+                        -- Hash already has a category (e.g. C++ set DECAL_STATIC before Lua ran).
+                        -- Do NOT reassign the category, but still fire the callback so that
+                        -- side-effects like force-albedo registration are not silently dropped.
+                        if callback then callback(true, hashStr) end
                     end
+                    foundAny = true
                 end
             end
         end
@@ -1528,12 +1579,12 @@ function RemixCategoryManager.SmartMarkWorldTextures()
                 end
                 
                 if category then
-                    -- For UnlitTwoTexture+scanline emissives, also register each resolved hash
-                    -- for force-albedo so Remix doesn't suppress emission due to missing mask.
+                    -- Some emissive shaders have no alpha mask, so Remix would suppress emission.
+                    -- Register each resolved hash for force-albedo so Remix emits the full albedo.
                     local forceAlbedoCallback = nil
                     if category == RemixCategoryManager.PRESET.EMISSIVE and RemixMaterial.AddForceAlbedoHash then
-                        local ok, isScanline = pcall(RemixCategoryManager.IsUnlitScanlineEmissive, materialName)
-                        if ok and isScanline then
+                        local ok, needsForce = pcall(RemixCategoryManager.NeedsForceAlbedoEmission, materialName)
+                        if ok and needsForce then
                             forceAlbedoCallback = function(success, hashStr)
                                 if success then RemixMaterial.AddForceAlbedoHash(hashStr) end
                             end
@@ -2295,6 +2346,13 @@ local function DrainPendingCategorizations()
     for _, pending in ipairs(pendingCategorizations) do
         local foundAnyHash = false
 
+        -- callbackFiredForHashes tracks which hashes in this pending entry have already
+        -- had their callback invoked, so the callback fires exactly once per hash even
+        -- across multiple Think ticks while the entry stays in the watch window.
+        if not pending.callbackFiredForHashes then
+            pending.callbackFiredForHashes = {}
+        end
+
         for _, tryName in ipairs(pending.materialsToTry) do
             local allHashes = RemixMaterial.GetAllTextureHashes and RemixMaterial.GetAllTextureHashes(tryName)
             if allHashes and #allHashes > 0 then
@@ -2302,12 +2360,21 @@ local function DrainPendingCategorizations()
                     local existing = RemixMaterial.GetHashCategory and RemixMaterial.GetHashCategory(hashStr)
                     if not existing or existing == 0 then
                         RemixCategoryManager.SetHashCategory(hashStr, pending.categoryFlags)
-                        if pending.callback then pending.callback(true, hashStr) end
+                        if pending.callback and not pending.callbackFiredForHashes[hashStr] then
+                            pending.callbackFiredForHashes[hashStr] = true
+                            pending.callback(true, hashStr)
+                        end
                         -- Reset the watch window each time we categorize a new hash so
                         -- that displacement tiles which render progressively (e.g. the
                         -- player walks across a large blend-displacement) each extend
                         -- the window rather than being cut off by the initial timer.
                         pending.firstApplied = now
+                    elseif pending.callback and not pending.callbackFiredForHashes[hashStr] then
+                        -- Hash already has a category (e.g. C++ set DECAL_STATIC before this
+                        -- queue entry fired). Still invoke the callback once so that side-effects
+                        -- like force-albedo registration are not silently dropped.
+                        pending.callbackFiredForHashes[hashStr] = true
+                        pending.callback(true, hashStr)
                     end
                 end
                 processedTextures[pending.materialName:lower()] = true
