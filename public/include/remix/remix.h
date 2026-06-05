@@ -177,7 +177,7 @@ namespace remix {
   }
 
   struct Interface {
-    HMODULE            m_RemixDLL { nullptr };
+    remixapi_HMODULE   m_RemixDLL { nullptr };
     remixapi_Interface m_CInterface {};
 
     // Functions
@@ -189,10 +189,11 @@ namespace remix {
     Result< remixapi_MeshHandle >     CreateMesh(const remixapi_MeshInfo& info);
     Result< void >                    DestroyMesh(remixapi_MeshHandle handle);
     Result< void >                    SetupCamera(const remixapi_CameraInfo& info);
-         Result< void >                    DrawInstance(const remixapi_InstanceInfo& info);
-     Result< remixapi_LightHandle >    CreateLight(const remixapi_LightInfo& info);
-     Result< remixapi_LightHandle >    CreateLightBatched(const remixapi_LightInfo& info);
-     Result< void >                    DestroyLight(remixapi_LightHandle handle);
+    Result< void >                    SetCameraMediumMaterial(remixapi_MaterialHandle medium);
+    Result< void >                    DrawInstance(const remixapi_InstanceInfo& info);
+    Result< remixapi_LightHandle >    CreateLight(const remixapi_LightInfo& info);
+    Result< remixapi_LightHandle >    CreateLightBatched(const remixapi_LightInfo& info);
+    Result< void >                    DestroyLight(remixapi_LightHandle handle);
     Result< void >                    DrawLightInstance(remixapi_LightHandle handle);
     // Deferred update of an analytical light definition. Applied on render thread.
     Result< void >                    UpdateLightDefinition(remixapi_LightHandle handle, const remixapi_LightInfo& info);
@@ -228,13 +229,14 @@ namespace remix {
     Result<void> SetUIState(UIState state);
   };
 
+#ifndef REMIX_WINAPI_NO_LIBRARY_LOADER
   namespace lib {
     // Helper function to load a .dll of Remix, and initialize it.
     // pRemixD3D9DllPath is a path to .dll file, e.g. "C:\dxvk-remix-nv\public\bin\d3d9.dll"
     [[nodiscard]] inline Result< Interface > loadRemixDllAndInitialize(const std::filesystem::path& remixD3D9DllPath) {
 
       remixapi_Interface interfaceInC = {};
-      HMODULE remixDll = nullptr;
+      remixapi_HMODULE remixDll = nullptr;
 
       remixapi_ErrorCode status =
         remixapi_lib_loadRemixDllAndInitialize(remixD3D9DllPath.c_str(),
@@ -245,7 +247,7 @@ namespace remix {
         return status;
       }
 
-      static_assert(sizeof(remixapi_Interface) == 256,
+  static_assert(sizeof(remixapi_Interface) == 264,
                     "Change version, update C++ wrapper when adding new functions");
 
       remix::Interface interfaceInCpp = {};
@@ -264,6 +266,7 @@ namespace remix {
       return remixapi_lib_shutdownAndUnloadRemixDll(&interfaceInCpp.m_CInterface, interfaceInCpp.m_RemixDLL);
     }
   }
+#endif // !REMIX_WINAPI_NO_LIBRARY_LOADER
 
 
 
@@ -774,6 +777,18 @@ namespace remix {
     return m_CInterface.SetupCamera(&info);
   }
 
+  inline Result< void > Interface::SetCameraMediumMaterial(remixapi_MaterialHandle medium) {
+    if (!m_CInterface.SetCameraMediumMaterial) {
+      return REMIXAPI_ERROR_CODE_NOT_INITIALIZED;
+    }
+
+    remixapi_CameraMediumInfo info {};
+    info.sType = REMIXAPI_STRUCT_TYPE_CAMERA_MEDIUM_INFO;
+    info.pNext = nullptr;
+    info.medium = medium;
+    return m_CInterface.SetCameraMediumMaterial(&info);
+  }
+
 
 
   struct InstanceInfoBoneTransformsEXT : remixapi_InstanceInfoBoneTransformsEXT {
@@ -865,6 +880,16 @@ namespace remix {
       spriteSheetMode = 0;
       collisionMode = 0;
       randomFlipAxis = 0;
+    }
+  };
+
+  struct InstanceInfoGpuInstancingEXT : remixapi_InstanceInfoGpuInstancingEXT {
+    InstanceInfoGpuInstancingEXT() {
+      sType = REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_GPU_INSTANCING_EXT;
+      pNext = nullptr;
+      instanceTransforms_values = nullptr;
+      instanceTransforms_count = 0;
+      static_assert(sizeof remixapi_InstanceInfoGpuInstancingEXT == 32);
     }
   };
 
