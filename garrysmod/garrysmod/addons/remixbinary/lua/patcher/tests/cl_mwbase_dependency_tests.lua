@@ -154,6 +154,10 @@ local ok, err = pcall(function()
     if RTXPatcher.State.mwbase.opticRenderMode ~= "simple" then
         error("MWBase optic render mode should default to simple")
     end
+
+    if RTXPatcher.State.mwbase.opticLensOverride ~= true then
+        error("MWBase optic lens override mode was not recorded")
+    end
 end)
 
 MW_ATTS = oldMW_ATTS

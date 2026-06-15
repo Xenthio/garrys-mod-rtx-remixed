@@ -30,6 +30,7 @@ local cvReticleScale = createClientConVar("rtx_patcher_mwbase_reticle_scale", "1
 local cvOptics = createClientConVar("rtx_patcher_mwbase_optics", "1", "Enable MWBase optic render patch")
 local cvOpticSimpleRender = createClientConVar("rtx_patcher_mwbase_optic_simple_render", "1", "Use a simplified Remix-friendly MWBase optic render path")
 local cvOpticAdsThreshold = createClientConVar("rtx_patcher_mwbase_optic_ads_threshold", "0.9", "ADS threshold for simplified MWBase optic rendering")
+local cvOpticLensOverride = createClientConVar("rtx_patcher_mwbase_optic_lens_override", "1", "Hide MWBase optic lens materials that render opaque in Remix")
 local cvOpticReticle = createClientConVar("rtx_patcher_mwbase_optic_reticle", "1", "Draw MWBase optic reticles in the simplified optic path")
 local cvOpticReticleDepth = createClientConVar("rtx_patcher_mwbase_optic_reticle_depth", "2", "Forward offset for simplified MWBase optic reticles")
 local cvOpticReticleScale = createClientConVar("rtx_patcher_mwbase_optic_reticle_scale", "0.1", "Scale multiplier for simplified MWBase optic reticles")
@@ -138,6 +139,67 @@ local function getWeaponValue(weapon, methodName, fallback)
     return fallback
 end
 
+local transparentLensMaterial
+local function getTransparentLensMaterial()
+    if transparentLensMaterial then return transparentLensMaterial end
+    if not CreateMaterial then return nil end
+
+    transparentLensMaterial = CreateMaterial("rtx_patcher_mwbase_transparent_lens", "UnlitGeneric", {
+        ["$basetexture"] = "color/white",
+        ["$translucent"] = "1",
+        ["$alpha"] = "0",
+        ["$vertexalpha"] = "1",
+        ["$color"] = "[0 0 0]",
+    })
+
+    return transparentLensMaterial
+end
+
+local function normalizedMaterialName(name)
+    return string.Trim(string.lower(tostring(name or "")))
+end
+
+local function isOpticLensMaterialName(name)
+    local materialName = normalizedMaterialName(name)
+    if materialName == "" then return false end
+    if string.find(materialName, "reticle", 1, true) then return false end
+    if string.find(materialName, "icon", 1, true) then return false end
+
+    return string.find(materialName, "lens", 1, true) ~= nil
+        or string.find(materialName, "lense", 1, true) ~= nil
+        or string.find(materialName, "scope_lens", 1, true) ~= nil
+        or string.find(materialName, "4x_lens", 1, true) ~= nil
+end
+
+function MWBase.OverrideOpticLensMaterials(attachment, enabled)
+    if type(attachment) ~= "table" or not attachment.m_Model or not IsValid(attachment.m_Model) then return end
+    if type(attachment.m_Model.GetMaterials) ~= "function" or type(attachment.m_Model.SetSubMaterial) ~= "function" then return end
+
+    attachment._RTXPatcherLensSlots = attachment._RTXPatcherLensSlots or {}
+
+    if not enabled then
+        for slot, previousMaterial in pairs(attachment._RTXPatcherLensSlots) do
+            attachment.m_Model:SetSubMaterial(slot, previousMaterial or "")
+        end
+        return
+    end
+
+    local transparentMaterial = getTransparentLensMaterial()
+    if not transparentMaterial then return end
+
+    for index, materialName in ipairs(attachment.m_Model:GetMaterials() or {}) do
+        if isOpticLensMaterialName(materialName) then
+            local slot = index - 1
+            if attachment._RTXPatcherLensSlots[slot] == nil then
+                attachment._RTXPatcherLensSlots[slot] = type(attachment.m_Model.GetSubMaterial) == "function"
+                    and attachment.m_Model:GetSubMaterial(slot)
+                    or ""
+            end
+            attachment.m_Model:SetSubMaterial(slot, "!rtx_patcher_mwbase_transparent_lens")
+        end
+    end
+end
+
 function MWBase.IsOpticAiming(weapon)
     local aimDelta = getWeaponValue(weapon, "GetAimDelta", 0)
     local aimModeDelta = getWeaponValue(weapon, "GetAimModeDelta", 0)
@@ -193,6 +255,7 @@ end
 
 function MWBase.DrawOpticRender(original, self, weapon, model)
     if not cvOptics:GetBool() or not cvOpticSimpleRender:GetBool() then
+        MWBase.OverrideOpticLensMaterials(self, false)
         return original(self, weapon, model)
     end
 
@@ -205,10 +268,12 @@ function MWBase.DrawOpticRender(original, self, weapon, model)
     end
 
     if not MWBase.IsOpticAiming(weapon) then
+        MWBase.OverrideOpticLensMaterials(self, false)
         return original(self, weapon, model)
     end
 
     MWBase.SetOpticLensBodygroup(self, true)
+    MWBase.OverrideOpticLensMaterials(self, cvOpticLensOverride:GetBool())
     self.m_bRemovedRT = false
     self.m_Model:DrawModel()
     MWBase.DrawOpticReticle(self, self.Reticle, weapon)
@@ -344,6 +409,7 @@ function MWBase.GetModeSummary()
         optics = cvOptics:GetBool(),
         opticRenderMode = cvOpticSimpleRender:GetBool() and "simple" or "original",
         opticAdsThreshold = cvOpticAdsThreshold:GetFloat(),
+        opticLensOverride = cvOpticLensOverride:GetBool(),
         opticReticle = cvOpticReticle:GetBool(),
         opticReticleDepth = cvOpticReticleDepth:GetFloat(),
         opticReticleScale = cvOpticReticleScale:GetFloat(),
