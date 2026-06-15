@@ -14,3 +14,6 @@ build_remote_release.sh
 build_remote_release_win32.sh
 build_remote_debug.sh
 build_remote.sh
+/garrysmod/garrysmod/addons/mw_twr
+/garrysmod/garrysmod/addons/mwbase_original
+.worktrees/
