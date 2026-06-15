@@ -43,12 +43,25 @@ MW_ATTS = {
     att_fake_reflex = {
         Base = "att_sight_reticle",
         DoReticleStencil = function() return "child" end
+    },
+    att_fake_optic = {
+        Base = "att_optic",
+        Optic = {
+            LensBodygroup = "lens"
+        },
+        Reticle = {
+            Attachment = "reticle",
+            Size = 800
+        },
+        DoReticleStencil = function() return "optic-reticle" end,
+        Render = function() return "optic-render" end
     }
 }
 
 mw_utils = {
     IsAttachmentBasedOn = function(current, base)
         return current == base or (current == "att_fake_reflex" and base == "att_sight_reticle")
+            or (current == "att_fake_optic" and base == "att_optic")
     end
 }
 
@@ -105,17 +118,20 @@ local ok, err = pcall(function()
 
     local wrappedBase = false
     local wrappedChild = false
+    local wrappedOptic = false
     local wrappedCustomizationDraw = false
     local wrappedCustomizationBlur = false
     for _, state in pairs(RTXPatcher.State.functionIntercepts) do
         if state.id == "reticle_att_sight_reticle" then wrappedBase = true end
         if state.id == "reticle_att_fake_reflex" then wrappedChild = true end
+        if state.id == "optic_att_fake_optic" then wrappedOptic = true end
         if state.id == "customization_draw" then wrappedCustomizationDraw = true end
         if state.id == "customization_blur" then wrappedCustomizationBlur = true end
     end
 
     if not wrappedBase then error("base reticle attachment was not intercepted") end
     if not wrappedChild then error("child reticle attachment was not intercepted") end
+    if not wrappedOptic then error("optic attachment render was not intercepted") end
     if not wrappedCustomizationDraw then error("customization draw was not intercepted") end
     if not wrappedCustomizationBlur then error("customization blur was not intercepted") end
 
@@ -129,6 +145,14 @@ local ok, err = pcall(function()
 
     if RTXPatcher.State.mwbase.reticleScale ~= 1 then
         error("MWBase reticle scale default should preserve original attachment size")
+    end
+
+    if RTXPatcher.State.mwbase.optics ~= true then
+        error("MWBase optic patch mode was not recorded")
+    end
+
+    if RTXPatcher.State.mwbase.opticRenderMode ~= "simple" then
+        error("MWBase optic render mode should default to simple")
     end
 end)
 

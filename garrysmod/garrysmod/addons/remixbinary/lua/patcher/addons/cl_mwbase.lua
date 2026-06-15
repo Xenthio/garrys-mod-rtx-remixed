@@ -27,6 +27,13 @@ local cvReticleAdsOnly = createClientConVar("rtx_patcher_mwbase_reticle_ads_only
 local cvReticleAdsThreshold = createClientConVar("rtx_patcher_mwbase_reticle_ads_threshold", "0.65", "ADS threshold for MWBase reticle fallback")
 local cvReticleDepth = createClientConVar("rtx_patcher_mwbase_reticle_depth", "100", "Forward offset for MWBase reticle quads")
 local cvReticleScale = createClientConVar("rtx_patcher_mwbase_reticle_scale", "1", "Scale multiplier for MWBase reticle quads")
+local cvOptics = createClientConVar("rtx_patcher_mwbase_optics", "1", "Enable MWBase optic render patch")
+local cvOpticSimpleRender = createClientConVar("rtx_patcher_mwbase_optic_simple_render", "1", "Use a simplified Remix-friendly MWBase optic render path")
+local cvOpticAdsThreshold = createClientConVar("rtx_patcher_mwbase_optic_ads_threshold", "0.9", "ADS threshold for simplified MWBase optic rendering")
+local cvOpticReticle = createClientConVar("rtx_patcher_mwbase_optic_reticle", "1", "Draw MWBase optic reticles in the simplified optic path")
+local cvOpticReticleDepth = createClientConVar("rtx_patcher_mwbase_optic_reticle_depth", "2", "Forward offset for simplified MWBase optic reticles")
+local cvOpticReticleScale = createClientConVar("rtx_patcher_mwbase_optic_reticle_scale", "0.1", "Scale multiplier for simplified MWBase optic reticles")
+local cvOpticReticleMaxSize = createClientConVar("rtx_patcher_mwbase_optic_reticle_max_size", "4", "Maximum world quad size for simplified MWBase optic reticles")
 local cvCustomization = createClientConVar("rtx_patcher_mwbase_customization", "1", "Enable MWBase customization render patch")
 
 Patcher.MWBase = Patcher.MWBase or {}
@@ -68,13 +75,23 @@ function MWBase.IsReady()
     }
 end
 
-local function isBasedOnSightReticle(className, attachment)
-    if className == "att_sight_reticle" then return true end
+local function isBasedOnAttachment(className, baseClassName)
+    if className == baseClassName then return true end
     if mw_utils and type(mw_utils.IsAttachmentBasedOn) == "function" then
-        local ok, based = pcall(mw_utils.IsAttachmentBasedOn, className, "att_sight_reticle")
+        local ok, based = pcall(mw_utils.IsAttachmentBasedOn, className, baseClassName)
         if ok and based then return true end
     end
+    return false
+end
+
+local function isBasedOnSightReticle(className, attachment)
+    if isBasedOnAttachment(className, "att_sight_reticle") then return true end
     return type(attachment) == "table" and type(attachment.DoReticleStencil) == "function" and attachment.Reticle ~= nil
+end
+
+local function isOpticAttachment(className, attachment)
+    if isBasedOnAttachment(className, "att_optic") then return true end
+    return type(attachment) == "table" and type(attachment.Optic) == "table"
 end
 
 function MWBase.PatchReticleAttachment(className, attachment)
@@ -89,10 +106,112 @@ function MWBase.PatchReticleAttachment(className, attachment)
     })
 end
 
+function MWBase.PatchOpticAttachment(className, attachment)
+    if not cvOptics:GetBool() then return false end
+    if type(attachment) ~= "table" or type(attachment.Render) ~= "function" then return false end
+    if not isOpticAttachment(className, attachment) then return false end
+    return Patcher.InterceptFunction(attachment, "Render", {
+        patchId = "mwbase",
+        id = "optic_" .. tostring(className),
+        around = function(original, ...)
+            return MWBase.DrawOpticRender(original, ...)
+        end
+    })
+end
+
 function MWBase.PatchAllReticleAttachments()
     for className, attachment in pairs(MW_ATTS or {}) do
         MWBase.PatchReticleAttachment(className, attachment)
     end
+end
+
+function MWBase.PatchAllOpticAttachments()
+    for className, attachment in pairs(MW_ATTS or {}) do
+        MWBase.PatchOpticAttachment(className, attachment)
+    end
+end
+
+local function getWeaponValue(weapon, methodName, fallback)
+    if weapon and type(weapon[methodName]) == "function" then
+        return weapon[methodName](weapon)
+    end
+    return fallback
+end
+
+function MWBase.IsOpticAiming(weapon)
+    local aimDelta = getWeaponValue(weapon, "GetAimDelta", 0)
+    local aimModeDelta = getWeaponValue(weapon, "GetAimModeDelta", 0)
+    local tacStanceDelta = getWeaponValue(weapon, "GetTacStanceDelta", 0)
+
+    return aimDelta > cvOpticAdsThreshold:GetFloat()
+        and aimModeDelta < 0.5
+        and tacStanceDelta < 0.5
+end
+
+function MWBase.SetOpticLensBodygroup(attachment, open)
+    if type(attachment) ~= "table" or type(attachment.Optic) ~= "table" then return end
+    if not attachment.m_Model or not IsValid(attachment.m_Model) then return end
+    if type(attachment.m_Model.FindBodygroupByName) ~= "function" or type(attachment.m_Model.SetBodygroup) ~= "function" then return end
+
+    local lensBodygroup = attachment.Optic.LensBodygroup
+    if lensBodygroup == nil then return end
+
+    local index = attachment.m_Model:FindBodygroupByName(lensBodygroup)
+    if not index or index < 0 then return end
+
+    attachment.m_Model:SetBodygroup(index, open and 0 or 1)
+end
+
+function MWBase.DrawOpticReticle(attachment, reticle, weapon)
+    if not cvOpticReticle:GetBool() then return end
+    if not attachment or not reticle then return end
+    if not reticle.Material or not reticle.Size then return end
+    if not mw_utils or type(mw_utils.GetFastAttachment) ~= "function" or not attachment.m_Model then return end
+
+    local att = mw_utils.GetFastAttachment(attachment.m_Model, reticle.Attachment)
+    if not att then return end
+
+    local viewmodel = weapon and type(weapon.GetViewModel) == "function" and weapon:GetViewModel() or nil
+    local fovMult = IsValid(viewmodel) and viewmodel.m_AdsFovMult or 1
+    local quadSize = reticle.Size * fovMult * cvOpticReticleScale:GetFloat() * 0.01
+    local maxSize = cvOpticReticleMaxSize:GetFloat()
+    if maxSize > 0 then
+        quadSize = math.min(quadSize, maxSize)
+    end
+
+    local color = reticle.Color or color_white
+    render.SetMaterial(reticle.Material)
+
+    local offset = att.Ang:Forward() * cvOpticReticleDepth:GetFloat()
+    if reticle.Offset ~= nil then
+        offset = offset + att.Ang:Right() * reticle.Offset.x
+        offset = offset + att.Ang:Up() * reticle.Offset.y
+    end
+
+    render.DrawQuadEasy(att.Pos + offset, att.Ang:Forward():GetNegated(), quadSize, quadSize, color, -att.Ang.r + 180)
+end
+
+function MWBase.DrawOpticRender(original, self, weapon, model)
+    if not cvOptics:GetBool() or not cvOpticSimpleRender:GetBool() then
+        return original(self, weapon, model)
+    end
+
+    if type(self) ~= "table" or type(self.Optic) ~= "table" or not self.m_Model or not IsValid(self.m_Model) then
+        return original(self, weapon, model)
+    end
+
+    if type(self.m_Model.DrawModel) ~= "function" then
+        return original(self, weapon, model)
+    end
+
+    if not MWBase.IsOpticAiming(weapon) then
+        return original(self, weapon, model)
+    end
+
+    MWBase.SetOpticLensBodygroup(self, true)
+    self.m_bRemovedRT = false
+    self.m_Model:DrawModel()
+    MWBase.DrawOpticReticle(self, self.Reticle, weapon)
 end
 
 function MWBase.DrawReticleStencil(original, self, model, reticle, weapon)
@@ -222,6 +341,13 @@ function MWBase.GetModeSummary()
         reticleAdsThreshold = cvReticleAdsThreshold:GetFloat(),
         reticleDepth = cvReticleDepth:GetFloat(),
         reticleScale = cvReticleScale:GetFloat(),
+        optics = cvOptics:GetBool(),
+        opticRenderMode = cvOpticSimpleRender:GetBool() and "simple" or "original",
+        opticAdsThreshold = cvOpticAdsThreshold:GetFloat(),
+        opticReticle = cvOpticReticle:GetBool(),
+        opticReticleDepth = cvOpticReticleDepth:GetFloat(),
+        opticReticleScale = cvOpticReticleScale:GetFloat(),
+        opticReticleMaxSize = cvOpticReticleMaxSize:GetFloat(),
         customization = cvCustomization:GetBool()
     }
 end
@@ -234,11 +360,13 @@ Patcher.RegisterPatch({
     depends = MWBase.IsReady,
     apply = function(_, _, context)
         MWBase.PatchAllReticleAttachments()
+        MWBase.PatchAllOpticAttachments()
         Patcher.InterceptHook("OnBuildCustomizedGun", "mwbase_patch_reticle_instances", function(weapon)
             if not IsValid(weapon) or type(weapon.GetAllAttachmentsInUse) ~= "function" then return end
             for _, attachment in pairs(weapon:GetAllAttachmentsInUse() or {}) do
                 if type(attachment) == "table" and attachment.ClassName then
                     MWBase.PatchReticleAttachment("instance_" .. attachment.ClassName .. "_" .. tostring(attachment), attachment)
+                    MWBase.PatchOpticAttachment("instance_" .. attachment.ClassName .. "_" .. tostring(attachment), attachment)
                 end
             end
         end, { patchId = "mwbase" })
