@@ -10,7 +10,12 @@ local oldWeapons = weapons
 local oldScriptedEnts = scripted_ents
 local oldCreateClientConVar = CreateClientConVar
 local oldGetConVar = GetConVar
+local oldIsValid = IsValid
+local oldCreateMaterial = CreateMaterial
+local oldConcommand = concommand
+local oldRender = render
 local storedConVars = {}
+local materialOverrideCalls = {}
 
 local function createFakeConVar(default)
     return {
@@ -34,6 +39,32 @@ end
 GetConVar = function(name)
     return storedConVars[name]
 end
+
+IsValid = function(value)
+    return value ~= nil and value ~= false and value.__invalid ~= true
+end
+
+CreateMaterial = function(name, shader, params)
+    return {
+        name = name,
+        shader = shader,
+        params = params
+    }
+end
+
+concommand = {
+    Add = function() end
+}
+
+render = {
+    MaterialOverrideByIndex = function(slot, material)
+        materialOverrideCalls[#materialOverrideCalls + 1] = {
+            slot = slot,
+            material = material
+        }
+    end,
+    ModelMaterialOverride = function() end
+}
 
 MW_ATTS = {
     att_sight_reticle = {
@@ -158,6 +189,77 @@ local ok, err = pcall(function()
     if RTXPatcher.State.mwbase.opticLensOverride ~= true then
         error("MWBase optic lens override mode was not recorded")
     end
+
+    local function makeFakeModel(materials)
+        return {
+            materials = materials,
+            subMaterials = {},
+            drawCount = 0,
+            GetMaterials = function(self) return self.materials end,
+            GetSubMaterial = function(self, slot) return self.subMaterials[slot] or "" end,
+            SetSubMaterial = function(self, slot, material) self.subMaterials[slot] = material end,
+            DrawModel = function(self) self.drawCount = self.drawCount + 1 end
+        }
+    end
+
+    local opticModel = makeFakeModel({
+        "viper/mw/attachments/attachment_vm_4x_west_body",
+        "lens/4x_lens ",
+        "reticle_ui_stencil"
+    })
+    local hideModel = makeFakeModel({
+        "viper/MW/attachments/attachment_vm_4x_west_lens"
+    })
+    local opticAttachment = {
+        Optic = {
+            LensBodygroup = "lens"
+        },
+        m_Model = opticModel,
+        hideModel = hideModel
+    }
+
+    RTXPatcher.MWBase.OverrideOpticLensMaterials(opticAttachment, true)
+
+    if opticModel.subMaterials[1] ~= "!rtx_patcher_mwbase_transparent_lens" then
+        error("lens/4x_lens material on optic model was not overridden")
+    end
+
+    if opticModel.subMaterials[2] ~= nil then
+        error("reticle material should not be treated as an optic lens")
+    end
+
+    if hideModel.subMaterials[0] ~= "!rtx_patcher_mwbase_transparent_lens" then
+        error("lens material on optic hide model was not overridden")
+    end
+
+    RTXPatcher.MWBase.OverrideOpticLensMaterials(opticAttachment, false)
+
+    if opticModel.subMaterials[1] ~= "" then
+        error("optic model lens material was not restored")
+    end
+
+    if hideModel.subMaterials[0] ~= "" then
+        error("hide model lens material was not restored")
+    end
+
+    materialOverrideCalls = {}
+    RTXPatcher.MWBase.DrawModelWithOpticLensOverrides(opticModel, true)
+
+    if opticModel.drawCount ~= 1 then
+        error("optic model was not drawn through lens override path")
+    end
+
+    if #materialOverrideCalls < 2 then
+        error("draw-time material override was not applied and cleared")
+    end
+
+    if materialOverrideCalls[1].slot ~= 1 or not materialOverrideCalls[1].material then
+        error("draw-time material override did not target lens/4x_lens slot")
+    end
+
+    if materialOverrideCalls[2].slot ~= 1 or materialOverrideCalls[2].material ~= nil then
+        error("draw-time material override was not cleared")
+    end
 end)
 
 MW_ATTS = oldMW_ATTS
@@ -166,6 +268,10 @@ weapons = oldWeapons
 scripted_ents = oldScriptedEnts
 CreateClientConVar = oldCreateClientConVar
 GetConVar = oldGetConVar
+IsValid = oldIsValid
+CreateMaterial = oldCreateMaterial
+concommand = oldConcommand
+render = oldRender
 
 if not ok then
     error(err, 0)

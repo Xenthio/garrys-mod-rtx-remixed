@@ -31,6 +31,7 @@ local cvOptics = createClientConVar("rtx_patcher_mwbase_optics", "1", "Enable MW
 local cvOpticSimpleRender = createClientConVar("rtx_patcher_mwbase_optic_simple_render", "1", "Use a simplified Remix-friendly MWBase optic render path")
 local cvOpticAdsThreshold = createClientConVar("rtx_patcher_mwbase_optic_ads_threshold", "0.9", "ADS threshold for simplified MWBase optic rendering")
 local cvOpticLensOverride = createClientConVar("rtx_patcher_mwbase_optic_lens_override", "1", "Hide MWBase optic lens materials that render opaque in Remix")
+local cvOpticLensDebug = createClientConVar("rtx_patcher_mwbase_optic_lens_debug", "0", "Print MWBase optic lens material override diagnostics")
 local cvOpticReticle = createClientConVar("rtx_patcher_mwbase_optic_reticle", "1", "Draw MWBase optic reticles in the simplified optic path")
 local cvOpticReticleDepth = createClientConVar("rtx_patcher_mwbase_optic_reticle_depth", "2", "Forward offset for simplified MWBase optic reticles")
 local cvOpticReticleScale = createClientConVar("rtx_patcher_mwbase_optic_reticle_scale", "0.1", "Scale multiplier for simplified MWBase optic reticles")
@@ -156,7 +157,11 @@ local function getTransparentLensMaterial()
 end
 
 local function normalizedMaterialName(name)
-    return string.Trim(string.lower(tostring(name or "")))
+    local materialName = string.lower(tostring(name or ""))
+    if string.Trim then
+        return string.Trim(materialName)
+    end
+    return string.match(materialName, "^%s*(.-)%s*$") or materialName
 end
 
 local function isOpticLensMaterialName(name)
@@ -171,32 +176,238 @@ local function isOpticLensMaterialName(name)
         or string.find(materialName, "4x_lens", 1, true) ~= nil
 end
 
-function MWBase.OverrideOpticLensMaterials(attachment, enabled)
-    if type(attachment) ~= "table" or not attachment.m_Model or not IsValid(attachment.m_Model) then return end
-    if type(attachment.m_Model.GetMaterials) ~= "function" or type(attachment.m_Model.SetSubMaterial) ~= "function" then return end
+local function debugOpticLens(...)
+    if not cvOpticLensDebug:GetBool() then return end
+
+    local parts = {}
+    for i = 1, select("#", ...) do
+        parts[#parts + 1] = tostring(select(i, ...))
+    end
+    print("[RTXPatcher][MWBase OpticLens] " .. table.concat(parts, " "))
+end
+
+local function modelCanListMaterials(model)
+    return model and IsValid(model) and type(model.GetMaterials) == "function"
+end
+
+local function addOpticModel(models, seen, label, model)
+    if not modelCanListMaterials(model) or seen[model] then return end
+    seen[model] = true
+    models[#models + 1] = {
+        label = label,
+        model = model
+    }
+end
+
+local function collectOpticModels(attachment)
+    local models = {}
+    local seen = {}
+
+    if type(attachment) ~= "table" then return models end
+
+    addOpticModel(models, seen, "m_Model", attachment.m_Model)
+    addOpticModel(models, seen, "hideModel", attachment.hideModel)
+
+    if attachment.m_Model and type(attachment.m_Model.GetChildren) == "function" then
+        for index, child in ipairs(attachment.m_Model:GetChildren() or {}) do
+            addOpticModel(models, seen, "m_Model child " .. tostring(index), child)
+        end
+    end
+
+    if attachment.hideModel and type(attachment.hideModel.GetChildren) == "function" then
+        for index, child in ipairs(attachment.hideModel:GetChildren() or {}) do
+            addOpticModel(models, seen, "hideModel child " .. tostring(index), child)
+        end
+    end
+
+    return models
+end
+
+local function collectOpticLensSlots(model)
+    local slots = {}
+
+    if not modelCanListMaterials(model) then return slots end
+
+    for index, materialName in ipairs(model:GetMaterials() or {}) do
+        if isOpticLensMaterialName(materialName) then
+            slots[#slots + 1] = {
+                slot = index - 1,
+                materialName = materialName
+            }
+        end
+    end
+
+    return slots
+end
+
+local function restoreOpticLensMaterials(attachment)
+    if type(attachment) ~= "table" or type(attachment._RTXPatcherLensSlots) ~= "table" then return 0 end
+
+    local restored = 0
+    for model, state in pairs(attachment._RTXPatcherLensSlots) do
+        if model and IsValid(model) and type(model.SetSubMaterial) == "function" and type(state) == "table" then
+            for slot, previousMaterial in pairs(state.slots or {}) do
+                model:SetSubMaterial(slot, previousMaterial or "")
+                restored = restored + 1
+            end
+            debugOpticLens("restored", state.label or "model", restored, "slot(s)")
+        end
+    end
+
+    attachment._RTXPatcherLensSlots = nil
+    return restored
+end
+
+local function overrideOpticLensModel(attachment, label, model)
+    if not modelCanListMaterials(model) or type(model.SetSubMaterial) ~= "function" then return 0 end
+
+    local transparentMaterial = getTransparentLensMaterial()
+    if not transparentMaterial then return 0 end
+
+    local slots = collectOpticLensSlots(model)
+    if #slots == 0 then return 0 end
 
     attachment._RTXPatcherLensSlots = attachment._RTXPatcherLensSlots or {}
+    local state = attachment._RTXPatcherLensSlots[model]
+    if not state then
+        state = {
+            label = label,
+            slots = {}
+        }
+        attachment._RTXPatcherLensSlots[model] = state
+    end
 
-    if not enabled then
-        for slot, previousMaterial in pairs(attachment._RTXPatcherLensSlots) do
-            attachment.m_Model:SetSubMaterial(slot, previousMaterial or "")
+    for _, entry in ipairs(slots) do
+        if state.slots[entry.slot] == nil then
+            state.slots[entry.slot] = type(model.GetSubMaterial) == "function"
+                and model:GetSubMaterial(entry.slot)
+                or ""
         end
+        model:SetSubMaterial(entry.slot, "!rtx_patcher_mwbase_transparent_lens")
+        debugOpticLens("override", label, "slot", entry.slot, entry.materialName)
+    end
+
+    return #slots
+end
+
+function MWBase.OverrideOpticLensMaterials(attachment, enabled)
+    if not enabled then
+        return restoreOpticLensMaterials(attachment)
+    end
+
+    local overridden = 0
+    for _, entry in ipairs(collectOpticModels(attachment)) do
+        overridden = overridden + overrideOpticLensModel(attachment, entry.label, entry.model)
+    end
+
+    if Patcher.State then
+        Patcher.State.mwbaseOpticLens = {
+            enabled = true,
+            overridden = overridden
+        }
+    end
+
+    return overridden
+end
+
+function MWBase.DrawModelWithOpticLensOverrides(model, enabled)
+    if not model or not IsValid(model) or type(model.DrawModel) ~= "function" then return end
+
+    if not enabled or not render or type(render.MaterialOverrideByIndex) ~= "function" then
+        model:DrawModel()
         return
     end
 
     local transparentMaterial = getTransparentLensMaterial()
-    if not transparentMaterial then return end
+    if not transparentMaterial then
+        model:DrawModel()
+        return
+    end
 
-    for index, materialName in ipairs(attachment.m_Model:GetMaterials() or {}) do
-        if isOpticLensMaterialName(materialName) then
+    local slots = collectOpticLensSlots(model)
+    if #slots == 0 then
+        model:DrawModel()
+        return
+    end
+
+    for _, entry in ipairs(slots) do
+        render.MaterialOverrideByIndex(entry.slot, transparentMaterial)
+        debugOpticLens("draw override", "slot", entry.slot, entry.materialName)
+    end
+
+    model:DrawModel()
+
+    for _, entry in ipairs(slots) do
+        render.MaterialOverrideByIndex(entry.slot, nil)
+    end
+
+    if render.ModelMaterialOverride then
+        render.ModelMaterialOverride(nil, nil)
+    end
+end
+
+function MWBase.PrintOpticLensMaterials(attachment)
+    if type(attachment) ~= "table" then
+        print("[RTXPatcher][MWBase OpticLens] no optic attachment to inspect")
+        return
+    end
+
+    local modelCount = 0
+    for _, entry in ipairs(collectOpticModels(attachment)) do
+        modelCount = modelCount + 1
+        print("[RTXPatcher][MWBase OpticLens] " .. entry.label)
+
+        for index, materialName in ipairs(entry.model:GetMaterials() or {}) do
             local slot = index - 1
-            if attachment._RTXPatcherLensSlots[slot] == nil then
-                attachment._RTXPatcherLensSlots[slot] = type(attachment.m_Model.GetSubMaterial) == "function"
-                    and attachment.m_Model:GetSubMaterial(slot)
-                    or ""
-            end
-            attachment.m_Model:SetSubMaterial(slot, "!rtx_patcher_mwbase_transparent_lens")
+            local matched = isOpticLensMaterialName(materialName) and "MATCH" or "skip"
+            local subMaterial = type(entry.model.GetSubMaterial) == "function" and entry.model:GetSubMaterial(slot) or ""
+            print(string.format("  [%d] %s | sub=%s | %s", slot, tostring(materialName), tostring(subMaterial), matched))
         end
+    end
+
+    if modelCount == 0 then
+        print("[RTXPatcher][MWBase OpticLens] optic has no inspectable client models")
+    end
+end
+
+function MWBase.FindActiveOpticAttachment()
+    local player = LocalPlayer and LocalPlayer() or nil
+    if not IsValid(player) or type(player.GetActiveWeapon) ~= "function" then return nil, "LocalPlayer unavailable" end
+
+    local weapon = player:GetActiveWeapon()
+    if not IsValid(weapon) then return nil, "active weapon unavailable" end
+
+    if type(weapon.GetSight) == "function" then
+        local sight = weapon:GetSight()
+        if type(sight) == "table" and isOpticAttachment(sight.ClassName or "", sight) then
+            return sight
+        end
+    end
+
+    if type(weapon.GetAllAttachmentsInUse) == "function" then
+        for _, attachment in pairs(weapon:GetAllAttachmentsInUse() or {}) do
+            if type(attachment) == "table" and isOpticAttachment(attachment.ClassName or "", attachment) then
+                return attachment
+            end
+        end
+    end
+
+    return nil, "no active MWBase optic attachment found"
+end
+
+if concommand and concommand.Add and not (_G and _G.RTXPatcher_MWBaseOpticLensDumpCommandAdded) then
+    concommand.Add("rtx_patcher_mwbase_dump_optic_lens", function()
+        local attachment, reason = MWBase.FindActiveOpticAttachment()
+        if not attachment then
+            print("[RTXPatcher][MWBase OpticLens] " .. tostring(reason))
+            return
+        end
+
+        MWBase.PrintOpticLensMaterials(attachment)
+    end)
+
+    if _G then
+        _G.RTXPatcher_MWBaseOpticLensDumpCommandAdded = true
     end
 end
 
@@ -273,9 +484,10 @@ function MWBase.DrawOpticRender(original, self, weapon, model)
     end
 
     MWBase.SetOpticLensBodygroup(self, true)
-    MWBase.OverrideOpticLensMaterials(self, cvOpticLensOverride:GetBool())
+    local overrideLens = cvOpticLensOverride:GetBool()
+    MWBase.OverrideOpticLensMaterials(self, overrideLens)
     self.m_bRemovedRT = false
-    self.m_Model:DrawModel()
+    MWBase.DrawModelWithOpticLensOverrides(self.m_Model, overrideLens)
     MWBase.DrawOpticReticle(self, self.Reticle, weapon)
 end
 
@@ -410,6 +622,7 @@ function MWBase.GetModeSummary()
         opticRenderMode = cvOpticSimpleRender:GetBool() and "simple" or "original",
         opticAdsThreshold = cvOpticAdsThreshold:GetFloat(),
         opticLensOverride = cvOpticLensOverride:GetBool(),
+        opticLensDebug = cvOpticLensDebug:GetBool(),
         opticReticle = cvOpticReticle:GetBool(),
         opticReticleDepth = cvOpticReticleDepth:GetFloat(),
         opticReticleScale = cvOpticReticleScale:GetFloat(),
