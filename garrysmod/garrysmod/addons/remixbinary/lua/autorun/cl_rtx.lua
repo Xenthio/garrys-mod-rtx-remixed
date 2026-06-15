@@ -121,3 +121,8 @@ PersistBinaryConVar("r_forcehwskin", "0")
 
 -- Load all sub-addons
 LoadSubAddons()
+
+local patcherOk, patcherErr = pcall(include, "patcher/cl_init.lua")
+if not patcherOk then
+    DebugPrint("[gmRTX] Warning: Failed to load runtime patcher - " .. tostring(patcherErr))
+end
