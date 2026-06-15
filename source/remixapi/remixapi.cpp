@@ -914,13 +914,13 @@ bool CameraManager::SetupCamera(const remix::CameraInfo& info) {
     return true;
 }
 
-bool CameraManager::SetupParameterizedCamera(const remix::CameraInfoParameterizedEXT& info) {
+bool CameraManager::SetupParameterizedCamera(const remix::CameraInfoParameterizedEXT& info, remix::CameraType type) {
     if (!m_remixInterface) return false;
 
     remix::CameraInfo cameraInfo;
     cameraInfo.sType = REMIXAPI_STRUCT_TYPE_CAMERA_INFO;
     cameraInfo.pNext = const_cast<remix::CameraInfoParameterizedEXT*>(&info);
-    cameraInfo.type = REMIXAPI_CAMERA_TYPE_WORLD;
+    cameraInfo.type = type;
 
     return SetupCamera(cameraInfo);
 }

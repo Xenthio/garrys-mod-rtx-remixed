@@ -74,6 +74,13 @@ LUA_FUNCTION(RemixCamera_SetupParameterizedCamera) {
 
     remix::CameraInfoParameterizedEXT params;
 
+    remix::CameraType cameraType = REMIXAPI_CAMERA_TYPE_WORLD;
+    LUA->GetField(1, "type");
+    if (LUA->IsType(-1, Type::Number)) {
+        cameraType = (remix::CameraType)(int)LUA->GetNumber(-1);
+    }
+    LUA->Pop();
+
     // Position
     LUA->GetField(1, "position");
     if (LUA->IsType(-1, Type::Vector)) {
@@ -134,7 +141,7 @@ LUA_FUNCTION(RemixCamera_SetupParameterizedCamera) {
     }
     LUA->Pop();
 
-    bool result = RemixAPI::Instance().GetCameraManager().SetupParameterizedCamera(params);
+    bool result = RemixAPI::Instance().GetCameraManager().SetupParameterizedCamera(params, cameraType);
     LUA->PushBool(result);
     return 1;
 }
@@ -161,10 +168,15 @@ void CameraManager::InitializeLuaBindings() {
     m_lua->PushNumber((double)remix::CameraType::REMIXAPI_CAMERA_TYPE_VIEW_MODEL);
     m_lua->SetField(-2, "TYPE_VIEW_MODEL");
 
+    m_lua->PushNumber((double)remix::CameraType::REMIXAPI_CAMERA_TYPE_RENDER_TO_TEXTURE);
+    m_lua->SetField(-2, "TYPE_RENDER_TO_TEXTURE");
+
+    m_lua->PushNumber((double)remix::CameraType::REMIXAPI_CAMERA_TYPE_RENDER_TO_TEXTURE);
+    m_lua->SetField(-2, "TYPE_RENDER_VIEW");
+
     m_lua->SetField(-2, "RemixCamera");
     m_lua->Pop();
 }
 
 } // namespace RemixAPI
 #endif
-

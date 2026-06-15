@@ -371,6 +371,7 @@ extern "C" {
     REMIXAPI_CAMERA_TYPE_WORLD,
     REMIXAPI_CAMERA_TYPE_SKY,
     REMIXAPI_CAMERA_TYPE_VIEW_MODEL,
+    REMIXAPI_CAMERA_TYPE_RENDER_TO_TEXTURE,
   } remixapi_CameraType;
 
   typedef enum remixapi_UIState {

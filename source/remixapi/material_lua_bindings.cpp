@@ -765,6 +765,7 @@ static std::vector<const char*> GetRemixCategoryOptions(uint32_t categoryFlags) 
     if (categoryFlags & (1 << 18)) options.push_back("rtx.animatedWaterTextures");  // ANIMATED_WATER
     if (categoryFlags & (1 << 19)) options.push_back("rtx.playerModelTextures");  // THIRD_PERSON_PLAYER_MODEL
     if (categoryFlags & (1 << 24)) options.push_back("rtx.legacyEmissiveTextures");  // LEGACY_EMISSIVE
+    if (categoryFlags & (1 << 25)) options.push_back("rtx.viewSurfaceTextures");  // VIEW_SURFACE
     
     return options;
 }

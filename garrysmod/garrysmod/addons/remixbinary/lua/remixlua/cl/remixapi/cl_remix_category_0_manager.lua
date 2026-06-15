@@ -59,6 +59,8 @@ RemixCategoryManager.CATEGORY = {
     IGNORE_TRANSPARENCY_LAYER = bit.lshift(1, 22), -- 0x400000
     PARTICLE_EMITTER          = bit.lshift(1, 23), -- 0x800000
     LEGACY_EMISSIVE           = bit.lshift(1, 24), -- 0x1000000
+    VIEW_SURFACE              = bit.lshift(1, 25), -- 0x2000000
+    RAYTRACED_RENDER_TARGET   = bit.lshift(1, 25), -- 0x2000000 legacy alias
 }
 
 -- Common category flag combinations
@@ -83,6 +85,9 @@ RemixCategoryManager.PRESET = {
     
     -- For self-illuminated/emissive materials (lights, glows, LED panels)
     EMISSIVE = RemixCategoryManager.CATEGORY.LEGACY_EMISSIVE,  -- 0x1000000
+
+    -- For ordinary material textures that should display the submitted render-view camera
+    VIEW_SURFACE = RemixCategoryManager.CATEGORY.VIEW_SURFACE, -- 0x2000000
     
     -- For player model textures (pseudoplayer, third-person view)
     PLAYER_MODEL = RemixCategoryManager.CATEGORY.THIRD_PERSON_PLAYER_MODEL,  -- 0x80000
@@ -1732,6 +1737,7 @@ concommand.Add("rtx_look_hash", function(ply, cmd, args)
         [0x2000]    = "DECAL_DYNAMIC",
         [0x40000]   = "ANIMATED_WATER",
         [0x1000000] = "LEGACY_EMISSIVE",
+        [0x2000000] = "VIEW_SURFACE",
     }
     local function categoryStr(flags)
         if not flags or flags == 0 then return "none" end
@@ -1782,6 +1788,7 @@ end, nil, "Get the texture hash of the surface the player is looking at")
     The hash can be the Remix-reported hex string (with or without 0x prefix).
     Category flags: DECAL_STATIC=0x1000  PARTICLE=0x400  LEGACY_EMISSIVE=0x1000000
                     SKY=0x4  IGNORE=0x8  ANIMATED_WATER=0x40000
+                    VIEW_SURFACE=0x2000000
     Example: rtx_set_hash_category 44EBDE4ABC8229DD 0x1000
 ]]--
 concommand.Add("rtx_set_hash_category", function(ply, cmd, args)
@@ -1789,7 +1796,7 @@ concommand.Add("rtx_set_hash_category", function(ply, cmd, args)
         MsgC(Color(255, 200, 100), "Usage: rtx_set_hash_category <hash> <category_flags_hex>\n")
         MsgC(Color(255, 200, 100), "  hash:  hex string, e.g. 44EBDE4ABC8229DD or 0x44EBDE4ABC8229DD\n")
         MsgC(Color(255, 200, 100), "  flags: 0x1000=DECAL_STATIC  0x400=PARTICLE  0x1000000=EMISSIVE\n")
-        MsgC(Color(255, 200, 100), "         0x4=SKY  0x8=IGNORE  0x40000=ANIMATED_WATER\n")
+        MsgC(Color(255, 200, 100), "         0x4=SKY  0x8=IGNORE  0x40000=ANIMATED_WATER  0x2000000=VIEW_SURFACE\n")
         return
     end
 
@@ -1819,6 +1826,7 @@ concommand.Add("rtx_set_hash_category", function(ply, cmd, args)
         [0x1000]    = "DECAL_STATIC",
         [0x40000]   = "ANIMATED_WATER",
         [0x1000000] = "LEGACY_EMISSIVE",
+        [0x2000000] = "VIEW_SURFACE",
     }
     for flag, name in pairs(flagMap) do
         if bit.band(flags, flag) ~= 0 then table.insert(names, name) end

@@ -36,6 +36,19 @@ local cvOpticReticle = createClientConVar("rtx_patcher_mwbase_optic_reticle", "1
 local cvOpticReticleDepth = createClientConVar("rtx_patcher_mwbase_optic_reticle_depth", "2", "Forward offset for simplified MWBase optic reticles")
 local cvOpticReticleScale = createClientConVar("rtx_patcher_mwbase_optic_reticle_scale", "0.1", "Scale multiplier for simplified MWBase optic reticles")
 local cvOpticReticleMaxSize = createClientConVar("rtx_patcher_mwbase_optic_reticle_max_size", "4", "Maximum world quad size for simplified MWBase optic reticles")
+local cvOpticViewSurface = createClientConVar("rtx_patcher_mwbase_optic_view_surface", "0", "Submit a raytraced render-view camera for MWBase magnified optics")
+local cvOpticViewSurfaceDebug = createClientConVar("rtx_patcher_mwbase_optic_view_surface_debug", "0", "Print MWBase optic render-view diagnostics")
+local cvOpticViewSurfaceUseOpticFov = createClientConVar("rtx_patcher_mwbase_optic_view_surface_use_optic_fov", "1", "Use MWBase optic FOV values for render-view optic cameras")
+local cvOpticViewSurfaceFov = createClientConVar("rtx_patcher_mwbase_optic_view_surface_fov", "15", "Fallback vertical FOV for MWBase render-view optic cameras")
+local cvOpticViewSurfaceFovScale = createClientConVar("rtx_patcher_mwbase_optic_view_surface_fov_scale", "1", "Scale applied to the MWBase render-view optic camera FOV")
+local cvOpticViewSurfaceAspect = createClientConVar("rtx_patcher_mwbase_optic_view_surface_aspect", "1", "Aspect ratio for MWBase render-view optic camera")
+local cvOpticViewSurfaceNear = createClientConVar("rtx_patcher_mwbase_optic_view_surface_near", "1", "Near plane for MWBase render-view optic camera")
+local cvOpticViewSurfaceFar = createClientConVar("rtx_patcher_mwbase_optic_view_surface_far", "16384", "Far plane for MWBase render-view optic camera")
+local cvOpticViewSurfaceReticleOrigin = createClientConVar("rtx_patcher_mwbase_optic_view_surface_reticle_origin", "0", "Start MWBase render-view optic cameras from the optic reticle attachment")
+local cvOpticViewSurfaceReticleOriginForward = createClientConVar("rtx_patcher_mwbase_optic_view_surface_reticle_origin_forward", "8", "Forward offset from the MWBase optic reticle attachment for render-view optic cameras")
+local cvOpticViewSurfaceOffsetForward = createClientConVar("rtx_patcher_mwbase_optic_view_surface_offset_forward", "0", "Forward offset for MWBase render-view optic camera")
+local cvOpticViewSurfaceOffsetRight = createClientConVar("rtx_patcher_mwbase_optic_view_surface_offset_right", "0", "Right offset for MWBase render-view optic camera")
+local cvOpticViewSurfaceOffsetUp = createClientConVar("rtx_patcher_mwbase_optic_view_surface_offset_up", "0", "Up offset for MWBase render-view optic camera")
 local cvCustomization = createClientConVar("rtx_patcher_mwbase_customization", "1", "Enable MWBase customization render patch")
 
 Patcher.MWBase = Patcher.MWBase or {}
@@ -380,14 +393,14 @@ function MWBase.FindActiveOpticAttachment()
     if type(weapon.GetSight) == "function" then
         local sight = weapon:GetSight()
         if type(sight) == "table" and isOpticAttachment(sight.ClassName or "", sight) then
-            return sight
+            return sight, nil, weapon
         end
     end
 
     if type(weapon.GetAllAttachmentsInUse) == "function" then
         for _, attachment in pairs(weapon:GetAllAttachmentsInUse() or {}) do
             if type(attachment) == "table" and isOpticAttachment(attachment.ClassName or "", attachment) then
-                return attachment
+                return attachment, nil, weapon
             end
         end
     end
@@ -464,6 +477,444 @@ function MWBase.DrawOpticReticle(attachment, reticle, weapon)
     render.DrawQuadEasy(att.Pos + offset, att.Ang:Forward():GetNegated(), quadSize, quadSize, color, -att.Ang.r + 180)
 end
 
+local function debugOpticViewSurface(...)
+    if not cvOpticViewSurfaceDebug:GetBool() then return end
+
+    local parts = {}
+    for i = 1, select("#", ...) do
+        parts[#parts + 1] = tostring(select(i, ...))
+    end
+    print("[RTXPatcher][MWBase ViewSurface] " .. table.concat(parts, " "))
+end
+
+local function getOpticViewSurfaceCategory()
+    if type(RemixCategoryManager) ~= "table" then return nil end
+    if type(RemixCategoryManager.PRESET) == "table" and RemixCategoryManager.PRESET.VIEW_SURFACE then
+        return RemixCategoryManager.PRESET.VIEW_SURFACE
+    end
+    if type(RemixCategoryManager.CATEGORY) == "table" then
+        if RemixCategoryManager.CATEGORY.VIEW_SURFACE then
+            return RemixCategoryManager.CATEGORY.VIEW_SURFACE
+        end
+        return RemixCategoryManager.CATEGORY.RAYTRACED_RENDER_TARGET
+    end
+    return nil
+end
+
+local function combineCategoryFlags(existing, category)
+    existing = tonumber(existing) or 0
+    category = tonumber(category) or 0
+    if category == 0 then return existing end
+
+    if bit and type(bit.band) == "function" then
+        if bit.band(existing, category) ~= 0 then return existing end
+        if type(bit.bor) == "function" then
+            return bit.bor(existing, category)
+        end
+    end
+
+    local quotient = math.floor(existing / category)
+    if quotient % 2 >= 1 then return existing end
+    return existing + category
+end
+
+local function addMaterialCandidate(candidates, seen, name)
+    local candidate = tostring(name or "")
+    if candidate == "" or seen[candidate] then return end
+    seen[candidate] = true
+    candidates[#candidates + 1] = candidate
+end
+
+local function getMaterialCandidates(materialName)
+    local candidates = {}
+    local seen = {}
+    local rawName = tostring(materialName or "")
+
+    addMaterialCandidate(candidates, seen, rawName)
+    addMaterialCandidate(candidates, seen, normalizedMaterialName(rawName))
+
+    return candidates
+end
+
+local function mergeViewSurfaceHashCategory(hashStr, category)
+    if type(RemixMaterial) ~= "table" or type(RemixMaterial.SetHashCategory) ~= "function" then
+        return false
+    end
+
+    local existing = 0
+    if type(RemixMaterial.GetHashCategory) == "function" then
+        local ok, result = pcall(RemixMaterial.GetHashCategory, hashStr)
+        if ok then
+            existing = tonumber(result) or 0
+        end
+    end
+
+    local combined = combineCategoryFlags(existing, category)
+    if combined == existing and existing ~= 0 then
+        return true
+    end
+
+    local ok, result = pcall(RemixMaterial.SetHashCategory, hashStr, combined)
+    return ok and result ~= false
+end
+
+function MWBase.SetViewSurfaceCategoryForMaterial(materialName, state)
+    local category = getOpticViewSurfaceCategory()
+    if not category or type(RemixMaterial) ~= "table" then return false end
+
+    local touched = false
+    local queued = false
+    local candidates = getMaterialCandidates(materialName)
+
+    for _, candidate in ipairs(candidates) do
+        if type(RemixMaterial.GetAllTextureHashes) == "function" then
+            local ok, hashes = pcall(RemixMaterial.GetAllTextureHashes, candidate)
+            if ok and type(hashes) == "table" and #hashes > 0 then
+                for _, hashStr in ipairs(hashes) do
+                    if mergeViewSurfaceHashCategory(hashStr, category) then
+                        touched = true
+                        if state then
+                            state.immediate = (state.immediate or 0) + 1
+                        end
+                        debugOpticViewSurface("hash", hashStr, "material", candidate)
+                    end
+                end
+            end
+        end
+
+        if type(RemixCategoryManager) == "table" and type(RemixCategoryManager.SetMaterialCategory) == "function" then
+            local callback = function(success, hashStr)
+                if success and hashStr then
+                    mergeViewSurfaceHashCategory(hashStr, category)
+                end
+            end
+            local ok = pcall(RemixCategoryManager.SetMaterialCategory, candidate, category, callback)
+            if ok then
+                queued = true
+            end
+        elseif type(RemixMaterial.TrackMaterial) == "function" then
+            local ok = pcall(RemixMaterial.TrackMaterial, candidate)
+            queued = queued or ok
+        end
+    end
+
+    if queued and not touched and state then
+        state.pending = (state.pending or 0) + 1
+    end
+
+    return touched or queued
+end
+
+function MWBase.MarkOpticViewSurfaceMaterials(attachment, force)
+    if type(attachment) ~= "table" then return false end
+
+    local state = attachment._RTXPatcherViewSurfaceMaterials
+    if type(state) == "table" and state.initialized and not force then
+        return (state.marked or 0) > 0 or (state.immediate or 0) > 0 or (state.pending or 0) > 0
+    end
+
+    state = state or {
+        materials = {},
+        marked = 0,
+        immediate = 0,
+        pending = 0,
+    }
+    state.materials = state.materials or {}
+    state.lastRetry = CurTime and CurTime() or nil
+
+    local lensCount = 0
+    for _, modelEntry in ipairs(collectOpticModels(attachment)) do
+        for _, lensEntry in ipairs(collectOpticLensSlots(modelEntry.model)) do
+            lensCount = lensCount + 1
+            local key = normalizedMaterialName(lensEntry.materialName)
+            if key ~= "" and (force or not state.materials[key]) then
+                if MWBase.SetViewSurfaceCategoryForMaterial(lensEntry.materialName, state) then
+                    local isNewMaterial = not state.materials[key]
+                    state.materials[key] = true
+                    if isNewMaterial then
+                        state.marked = (state.marked or 0) + 1
+                    end
+                    debugOpticViewSurface("material", lensEntry.materialName, "slot", lensEntry.slot, "model", modelEntry.label)
+                end
+            end
+        end
+    end
+
+    state.initialized = lensCount > 0 and ((state.marked or 0) > 0 or (state.immediate or 0) > 0 or (state.pending or 0) > 0)
+    state.lensCount = lensCount
+    attachment._RTXPatcherViewSurfaceMaterials = state
+
+    return (state.marked or 0) > 0 or (state.immediate or 0) > 0 or (state.pending or 0) > 0
+end
+
+local function getOpticViewSurfaceFov(attachment)
+    local manualFov = cvOpticViewSurfaceFov:GetFloat()
+    local nativeFov = nil
+
+    if type(attachment) == "table" and type(attachment.Optic) == "table" then
+        nativeFov = tonumber(attachment.Optic.FOV)
+    end
+
+    local baseFov = manualFov
+    local source = "manual"
+
+    if cvOpticViewSurfaceUseOpticFov:GetBool() and nativeFov and nativeFov > 0 then
+        baseFov = nativeFov
+        source = "optic"
+    elseif not baseFov or baseFov <= 0 then
+        baseFov = nativeFov and nativeFov > 0 and nativeFov or 15
+        source = nativeFov and nativeFov > 0 and "optic-fallback" or "fallback"
+    end
+
+    return math.max(1, baseFov * cvOpticViewSurfaceFovScale:GetFloat()), source, nativeFov, manualFov
+end
+
+local function getOpticReticleAttachment(attachment)
+    if not cvOpticViewSurfaceReticleOrigin:GetBool() then return nil end
+    if type(attachment) ~= "table" or type(attachment.Reticle) ~= "table" then return nil end
+    if not attachment.m_Model or not IsValid(attachment.m_Model) then return nil end
+    if type(mw_utils) ~= "table" or type(mw_utils.GetFastAttachment) ~= "function" then return nil end
+
+    local attachmentName = attachment.Reticle.Attachment
+    if not attachmentName then return nil end
+
+    local ok, reticleAttachment = pcall(mw_utils.GetFastAttachment, attachment.m_Model, attachmentName)
+    if not ok or type(reticleAttachment) ~= "table" then return nil end
+    if not reticleAttachment.Pos or not reticleAttachment.Ang then return nil end
+    if type(reticleAttachment.Ang.Forward) ~= "function" then return nil end
+
+    return reticleAttachment, tostring(attachmentName)
+end
+
+local function getOpticViewSurfacePose(attachment)
+    if not EyeAngles or not EyePos then return nil end
+
+    local ang = EyeAngles()
+    local pos = EyePos()
+    if not ang or not pos or type(ang.Forward) ~= "function" or type(ang.Up) ~= "function" or type(ang.Right) ~= "function" then
+        return nil
+    end
+
+    local forward = ang:Forward()
+    local up = ang:Up()
+    local right = ang:Right()
+    local originSource = "eye"
+    local originAttachment = nil
+    local reticleForwardOffset = 0
+
+    local reticleAttachment, reticleAttachmentName = getOpticReticleAttachment(attachment)
+    if reticleAttachment then
+        local reticleForward = reticleAttachment.Ang:Forward()
+        reticleForwardOffset = cvOpticViewSurfaceReticleOriginForward:GetFloat()
+        pos = reticleAttachment.Pos + reticleForward * reticleForwardOffset
+        originSource = "reticle"
+        originAttachment = reticleAttachmentName
+    end
+
+    pos = pos + forward * cvOpticViewSurfaceOffsetForward:GetFloat()
+    pos = pos + right * cvOpticViewSurfaceOffsetRight:GetFloat()
+    pos = pos + up * cvOpticViewSurfaceOffsetUp:GetFloat()
+
+    return pos, forward, up, right, originSource, originAttachment, reticleForwardOffset
+end
+
+function MWBase.SubmitOpticViewSurfaceCamera(attachment, weapon, forceMaterialRetry)
+    if not cvOpticViewSurface:GetBool() then
+        if Patcher.State then
+            Patcher.State.mwbaseOpticViewSurface = { enabled = false }
+        end
+        return false
+    end
+    if type(RemixCamera) ~= "table" or type(RemixCamera.SetupParameterizedCamera) ~= "function" then
+        debugOpticViewSurface("RemixCamera.SetupParameterizedCamera unavailable")
+        return false
+    end
+
+    local cameraType = RemixCamera.TYPE_RENDER_VIEW or RemixCamera.TYPE_RENDER_TO_TEXTURE
+    if cameraType == nil then
+        debugOpticViewSurface("render-view camera type unavailable")
+        return false
+    end
+
+    local marked = MWBase.MarkOpticViewSurfaceMaterials(attachment, forceMaterialRetry)
+    if not marked then
+        debugOpticViewSurface("no lens materials marked")
+        return false
+    end
+
+    local pos, forward, up, right, originSource, originAttachment, reticleForwardOffset = getOpticViewSurfacePose(attachment)
+    if not pos then return false end
+
+    local fov, fovSource, nativeFov, manualFov = getOpticViewSurfaceFov(attachment)
+    local aspect = math.max(0.01, cvOpticViewSurfaceAspect:GetFloat())
+    local nearPlane = math.max(0.01, cvOpticViewSurfaceNear:GetFloat())
+    local farPlane = math.max(nearPlane + 1, cvOpticViewSurfaceFar:GetFloat())
+
+    local ok, result = pcall(RemixCamera.SetupParameterizedCamera, {
+        type = cameraType,
+        position = pos,
+        forward = forward,
+        up = up,
+        right = right,
+        fovYInDegrees = fov,
+        aspect = aspect,
+        nearPlane = nearPlane,
+        farPlane = farPlane,
+    })
+
+    local submitted = ok and result ~= false
+    local viewSurfaceState = attachment and attachment._RTXPatcherViewSurfaceMaterials or nil
+    if Patcher.State then
+        Patcher.State.mwbaseOpticViewSurface = {
+            enabled = true,
+            submitted = submitted,
+            aiming = true,
+            fov = fov,
+            fovSource = fovSource,
+            nativeFov = nativeFov,
+            manualFov = manualFov,
+            originSource = originSource,
+            originAttachment = originAttachment,
+            reticleForwardOffset = reticleForwardOffset,
+            aspect = aspect,
+            nearPlane = nearPlane,
+            farPlane = farPlane,
+            marked = viewSurfaceState and viewSurfaceState.marked or 0,
+            immediate = viewSurfaceState and viewSurfaceState.immediate or 0,
+            pending = viewSurfaceState and viewSurfaceState.pending or 0,
+            frame = FrameNumber and FrameNumber() or nil,
+        }
+    end
+
+    debugOpticViewSurface("camera", "submitted", submitted, "fov", fov, "source", fovSource, "origin", originSource, "origin_attachment", originAttachment, "origin_forward", reticleForwardOffset)
+
+    if not submitted then
+        debugOpticViewSurface("camera submit failed", ok and tostring(result) or tostring(result))
+    end
+
+    return submitted
+end
+
+function MWBase.SubmitActiveOpticViewSurfaceCamera(forceMaterialRetry)
+    if not cvEnabled:GetBool() or not cvOpticViewSurface:GetBool() then return false end
+
+    local attachment, reason, weapon = MWBase.FindActiveOpticAttachment()
+    if not attachment then
+        debugOpticViewSurface(reason)
+        return false
+    end
+
+    if not MWBase.IsOpticAiming(weapon) then
+        if Patcher.State then
+            Patcher.State.mwbaseOpticViewSurface = { enabled = true, submitted = false, aiming = false }
+        end
+        return false
+    end
+
+    local frame = FrameNumber and FrameNumber() or nil
+    local state = Patcher.State and Patcher.State.mwbaseOpticViewSurface or nil
+    if not forceMaterialRetry and frame ~= nil and type(state) == "table" and state.frame == frame then
+        return state.submitted == true
+    end
+
+    return MWBase.SubmitOpticViewSurfaceCamera(attachment, weapon, forceMaterialRetry)
+end
+
+function MWBase.PrintOpticViewSurfaceState(attachment)
+    local state = Patcher.State and Patcher.State.mwbaseOpticViewSurface or nil
+    if type(state) == "table" then
+        print(string.format(
+            "[RTXPatcher][MWBase ViewSurface] enabled=%s submitted=%s aiming=%s marked=%s immediate=%s pending=%s fov=%s source=%s native=%s manual=%s origin=%s origin_attachment=%s origin_forward=%s frame=%s",
+            tostring(state.enabled),
+            tostring(state.submitted),
+            tostring(state.aiming),
+            tostring(state.marked),
+            tostring(state.immediate),
+            tostring(state.pending),
+            tostring(state.fov),
+            tostring(state.fovSource),
+            tostring(state.nativeFov),
+            tostring(state.manualFov),
+            tostring(state.originSource),
+            tostring(state.originAttachment),
+            tostring(state.reticleForwardOffset),
+            tostring(state.frame)
+        ))
+    else
+        print("[RTXPatcher][MWBase ViewSurface] no submitted state")
+    end
+
+    if type(attachment) ~= "table" then
+        print("[RTXPatcher][MWBase ViewSurface] no optic attachment to inspect")
+        return
+    end
+
+    local category = getOpticViewSurfaceCategory()
+    print("[RTXPatcher][MWBase ViewSurface] category=" .. tostring(category))
+
+    for _, modelEntry in ipairs(collectOpticModels(attachment)) do
+        for _, lensEntry in ipairs(collectOpticLensSlots(modelEntry.model)) do
+            print(string.format(
+                "[RTXPatcher][MWBase ViewSurface] %s slot %d material %s",
+                tostring(modelEntry.label),
+                lensEntry.slot,
+                tostring(lensEntry.materialName)
+            ))
+
+            for _, candidate in ipairs(getMaterialCandidates(lensEntry.materialName)) do
+                local hashes = nil
+                if type(RemixMaterial) == "table" and type(RemixMaterial.GetAllTextureHashes) == "function" then
+                    local ok, result = pcall(RemixMaterial.GetAllTextureHashes, candidate)
+                    if ok then hashes = result end
+                end
+
+                if type(hashes) ~= "table" or #hashes == 0 then
+                    print("  " .. candidate .. " -> no hashes")
+                else
+                    for _, hashStr in ipairs(hashes) do
+                        local flags = nil
+                        if type(RemixMaterial.GetHashCategory) == "function" then
+                            local ok, result = pcall(RemixMaterial.GetHashCategory, hashStr)
+                            if ok then flags = result end
+                        end
+                        print(string.format("  %s -> %s category=%s", candidate, tostring(hashStr), tostring(flags)))
+                    end
+                end
+            end
+        end
+    end
+end
+
+local VIEW_SURFACE_DUMP_COMMAND_VERSION = 4
+if concommand and concommand.Add and (not _G or _G.RTXPatcher_MWBaseViewSurfaceDumpCommandVersion ~= VIEW_SURFACE_DUMP_COMMAND_VERSION) then
+    concommand.Add("rtx_patcher_mwbase_dump_view_surface", function()
+        local attachment, reason = MWBase.FindActiveOpticAttachment()
+        if not attachment then
+            print("[RTXPatcher][MWBase ViewSurface] " .. tostring(reason))
+            return
+        end
+
+        local forcedMark = MWBase.MarkOpticViewSurfaceMaterials(attachment, true)
+        print("[RTXPatcher][MWBase ViewSurface] forced_mark=" .. tostring(forcedMark))
+        MWBase.PrintOpticViewSurfaceState(attachment)
+    end)
+
+    if _G then
+        _G.RTXPatcher_MWBaseViewSurfaceDumpCommandVersion = VIEW_SURFACE_DUMP_COMMAND_VERSION
+    end
+end
+
+local VIEW_SURFACE_THINK_HOOK_VERSION = 1
+if hook and hook.Add and (not _G or _G.RTXPatcher_MWBaseViewSurfaceThinkHookVersion ~= VIEW_SURFACE_THINK_HOOK_VERSION) then
+    hook.Add("Think", "RTXPatcher_MWBaseViewSurfaceCamera", function()
+        MWBase.SubmitActiveOpticViewSurfaceCamera(false)
+    end)
+
+    if _G then
+        _G.RTXPatcher_MWBaseViewSurfaceThinkHookVersion = VIEW_SURFACE_THINK_HOOK_VERSION
+    end
+end
+
 function MWBase.DrawOpticRender(original, self, weapon, model)
     if not cvOptics:GetBool() or not cvOpticSimpleRender:GetBool() then
         MWBase.OverrideOpticLensMaterials(self, false)
@@ -483,8 +934,9 @@ function MWBase.DrawOpticRender(original, self, weapon, model)
         return original(self, weapon, model)
     end
 
-    MWBase.SetOpticLensBodygroup(self, true)
-    local overrideLens = cvOpticLensOverride:GetBool()
+    local viewSurfaceActive = MWBase.SubmitOpticViewSurfaceCamera(self, weapon)
+    MWBase.SetOpticLensBodygroup(self, not viewSurfaceActive)
+    local overrideLens = cvOpticLensOverride:GetBool() and not viewSurfaceActive
     MWBase.OverrideOpticLensMaterials(self, overrideLens)
     self.m_bRemovedRT = false
     MWBase.DrawModelWithOpticLensOverrides(self.m_Model, overrideLens)
@@ -627,6 +1079,19 @@ function MWBase.GetModeSummary()
         opticReticleDepth = cvOpticReticleDepth:GetFloat(),
         opticReticleScale = cvOpticReticleScale:GetFloat(),
         opticReticleMaxSize = cvOpticReticleMaxSize:GetFloat(),
+        opticViewSurface = cvOpticViewSurface:GetBool(),
+        opticViewSurfaceDebug = cvOpticViewSurfaceDebug:GetBool(),
+        opticViewSurfaceUseOpticFov = cvOpticViewSurfaceUseOpticFov:GetBool(),
+        opticViewSurfaceFov = cvOpticViewSurfaceFov:GetFloat(),
+        opticViewSurfaceFovScale = cvOpticViewSurfaceFovScale:GetFloat(),
+        opticViewSurfaceAspect = cvOpticViewSurfaceAspect:GetFloat(),
+        opticViewSurfaceNear = cvOpticViewSurfaceNear:GetFloat(),
+        opticViewSurfaceFar = cvOpticViewSurfaceFar:GetFloat(),
+        opticViewSurfaceReticleOrigin = cvOpticViewSurfaceReticleOrigin:GetBool(),
+        opticViewSurfaceReticleOriginForward = cvOpticViewSurfaceReticleOriginForward:GetFloat(),
+        opticViewSurfaceOffsetForward = cvOpticViewSurfaceOffsetForward:GetFloat(),
+        opticViewSurfaceOffsetRight = cvOpticViewSurfaceOffsetRight:GetFloat(),
+        opticViewSurfaceOffsetUp = cvOpticViewSurfaceOffsetUp:GetFloat(),
         customization = cvCustomization:GetBool()
     }
 end

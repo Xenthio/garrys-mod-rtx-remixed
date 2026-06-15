@@ -1136,6 +1136,12 @@ void D3D9TextureTracker::ApplyCategoryToHash(uint64_t hash, uint32_t categoryFla
             Msg("[D3D9] Categorized EMISSIVE: '%s' -> %s\n", materialName, hashStr);
         }
     }
+    if (categoryFlags & (1 << 25)) {
+        g_remix->AddTextureHash("rtx.viewSurfaceTextures", hashStr);
+        if (m_enableDebugOutput) {
+            Msg("[D3D9] Categorized VIEW_SURFACE: '%s' -> %s\n", materialName, hashStr);
+        }
+    }
     
     // Update local tracking.
     // When IGNORED is applied it wins over DECAL: clear any stale DECAL flags so
@@ -1694,4 +1700,3 @@ bool D3D9TextureTracker::IsWorldTexture(const std::string& materialName) const {
 }
 
 #endif // _WIN64
-

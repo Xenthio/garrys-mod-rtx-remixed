@@ -213,7 +213,7 @@ namespace RemixAPI {
         
         // Camera control
         bool SetupCamera(const remix::CameraInfo& info);
-        bool SetupParameterizedCamera(const remix::CameraInfoParameterizedEXT& info);
+        bool SetupParameterizedCamera(const remix::CameraInfoParameterizedEXT& info, remix::CameraType type = REMIXAPI_CAMERA_TYPE_WORLD);
         
         // Lua bindings
         void InitializeLuaBindings();
