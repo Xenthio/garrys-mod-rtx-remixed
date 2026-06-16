@@ -3672,8 +3672,15 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     }
     
     // Calculate PBR values with enhanced logic
-    outProps.roughness = CalculateRoughness(outProps);
-    outProps.metallic = EstimateMetallic(outProps);
+    // Skip Source Engine heuristics for direct-PBR formats (ExoPBR, GPBR) - they already
+    // set their own appropriate defaults (roughness=0.5, metallic=0.0) and rely on
+    // texture maps from their ARM/MRAO textures rather than phong/envmap heuristics.
+    // Without this guard, CalculateRoughness() returns 1.0 (fully matte) for these formats
+    // because they have no $phong or $envmap, overwriting the correct 0.5 default.
+    if (!outProps.isExoPBR && !outProps.isGPBR) {
+        outProps.roughness = CalculateRoughness(outProps);
+        outProps.metallic = EstimateMetallic(outProps);
+    }
     
     if (m_debugOutput) {
         Msg("[MaterialPipeline::ToPBR] %s extracted: hasPhong=%d, phongExp=%.0f, hasBump=%d, hasEnvMask=%d, hasPhongExpTex=%d, hasEnvMapTint=%d, hasEnvMap=%d, normMapAlpha=%d, isGlass=%d\n",

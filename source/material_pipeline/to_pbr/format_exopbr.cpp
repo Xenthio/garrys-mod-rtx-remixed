@@ -267,8 +267,10 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
                         result.skippedCount++;
                     } else if (ctx.writeDDS(emitTex, path)) {
                         result.emissivePath = path;
-                        result.emissionIntensity = props.hasEmissionScale ? props.emissionScale : 1.0f;
                         if (ctx.debugOutput) Msg("[ExoPBR] Wrote emission: %s\n", path.c_str());
+                    }
+                    if (!result.emissivePath.empty()) {
+                        result.emissionIntensity = props.hasEmissionScale ? props.emissionScale : 1.0f;
                     }
                 }
             }
