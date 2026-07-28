@@ -21,8 +21,8 @@ struct PatchEntry {
 	std::vector<uint8_t> patchBytes;    // Bytes to write
 	std::vector<uint8_t> originalBytes; // Saved original bytes
 	void* patchAddress;         // Resolved address
+	void* resolvedModuleBase;   // Module instance used during resolution
 	size_t resolvedLocator;     // Index of the locator that resolved
-	bool requireUniqueSignature; // Reject ambiguous signature matches
 	bool applied;               // Whether patch is currently active
 };
 
@@ -30,18 +30,9 @@ class PatchManager {
 public:
 	static PatchManager& Instance();
 
-	// Register a patch definition
-	void RegisterPatch(
-		const std::string& name,
-		const std::string& moduleName,
-		const char* signature,
-		size_t sigLen,
-		int offset,
-		const std::vector<uint8_t>& patchBytes
-	);
-
 	// Register a patch with ordered, validated signature fallbacks.
-	void RegisterPatchWithFallbacks(
+	// Every locator must provide expected bytes covering the patch range.
+	bool RegisterPatchWithFallbacks(
 		const std::string& name,
 		const std::string& moduleName,
 		const std::vector<PatchLocator>& locators,

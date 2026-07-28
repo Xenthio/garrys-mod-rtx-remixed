@@ -81,40 +81,171 @@ static void RegisterPatchConVars() {
 static void RegisterCullingPatches() {
 	auto& pm = PatchManager::Instance();
 
+	// R_CullBox is compiled into both engine.dll and client.dll. The primary
+	// locator identifies the current function entry exactly. The body fallback
+	// tolerates small prologue/stack-size changes, then searches backwards for
+	// the validated "sub rsp" instruction that still marks the entry point.
+	static const char cullBoxEntrySig[] =
+		"48 83 EC 48 0F 10 22 33 C0 48 8D 51 20 41 0F 10 28";
+	static const char cullBoxBodySig[] =
+		"0F 10 22 33 C0 48 8D 51 20 41 0F 10 28 "
+		"0F 29 74 24 30";
+	const std::vector<uint8_t> expectedCullBoxEntry = {
+		0x48, 0x83, 0xEC // sub rsp, imm8
+	};
+	const std::vector<PatchLocator> cullBoxLocators = {
+		{
+			"current R_CullBox entry",
+			std::string(cullBoxEntrySig, sizeof(cullBoxEntrySig) - 1),
+			0,
+			0,
+			{0x48, 0x83, 0xEC, 0x48, 0x0F, 0x10, 0x22}
+		},
+		{
+			"stable R_CullBox body",
+			std::string(cullBoxBodySig, sizeof(cullBoxBodySig) - 1),
+			-4,
+			8,
+			expectedCullBoxEntry
+		}
+	};
+
 	// engine.dll patches (from applypatch.py patches64)
 	{
 		// c_frustumcull - uses sse instructions in 64bit
-		static const char sig[] = "48 83 EC 48 0F 10";
-		pm.RegisterPatch("rtx_patch_frustumcull_engine", "engine.dll",
-			sig, sizeof(sig) - 1, 0, {0x31, 0xC0, 0xC3}); // xor eax,eax; ret
+		pm.RegisterPatchWithFallbacks(
+			"rtx_patch_frustumcull_engine",
+			"engine.dll",
+			cullBoxLocators,
+			{0x31, 0xC0, 0xC3}); // xor eax,eax; ret
 	}
 	{
 		// brush entity backfaces
-		static const char sig[] = "75 3C F3 0F 10";
-		pm.RegisterPatch("rtx_patch_brush_backfaces", "engine.dll",
-			sig, sizeof(sig) - 1, 0, {0xEB}); // jmp (unconditional)
+		// The body fallback occurs in several related functions, but only this
+		// one has a JNZ two bytes before it. PatchManager requires that this
+		// expected target validation yields exactly one executable address.
+		static const char currentSig[] =
+			"85 F6 75 ? F3 0F 10 15 ? ? ? ? "
+			"F3 0F 59 51 04 F3 0F 10 05 ? ? ? ?";
+		static const char stableBodySig[] =
+			"F3 0F 10 15 ? ? ? ? F3 0F 59 51 04 "
+			"F3 0F 10 05 ? ? ? ? F3 0F 59 01";
+		const std::vector<PatchLocator> locators = {
+			{
+				"current brush backface branch",
+				std::string(currentSig, sizeof(currentSig) - 1),
+				2,
+				0,
+				{0x75} // jnz short
+			},
+			{
+				"stable brush lighting body",
+				std::string(stableBodySig, sizeof(stableBodySig) - 1),
+				-2,
+				4,
+				{0x75} // jnz short
+			}
+		};
+		pm.RegisterPatchWithFallbacks(
+			"rtx_patch_brush_backfaces",
+			"engine.dll",
+			locators,
+			{0xEB}); // jmp short (unconditional)
 	}
 	{
 		// world backfaces #1
 		// PATCH DOCS: in R_DrawLeaf, search for "CBitVec invalid set bitNum" string 
 		// Working as of 2026-02-14, cross reference gmod as of that date if you need to refind
-		static const char sig[] = "7E ? 8B EF";
-		pm.RegisterPatch("rtx_patch_world_backfaces1", "engine.dll",
-			sig, sizeof(sig) - 1, 0, {0xEB}); // jmp (unconditional)
+		static const char currentSig[] =
+			"4D 85 F6 7E ? 8B EF 0F 1F 80 ? ? ? ? "
+			"48 8B 05 ? ? ? ? 49 8B 0C EC";
+		static const char stableBodySig[] =
+			"8B EF 0F 1F 80 ? ? ? ? 48 8B 05 ? ? ? ? "
+			"49 8B 0C EC 48 2B 88 E8 00 00 00";
+		const std::vector<PatchLocator> locators = {
+			{
+				"current R_DrawLeaf backface branch #1",
+				std::string(currentSig, sizeof(currentSig) - 1),
+				3,
+				0,
+				{0x7E} // jle short
+			},
+			{
+				"stable R_DrawLeaf body after branch #1",
+				std::string(stableBodySig, sizeof(stableBodySig) - 1),
+				-2,
+				4,
+				{0x7E} // jle short
+			}
+		};
+		pm.RegisterPatchWithFallbacks(
+			"rtx_patch_world_backfaces1",
+			"engine.dll",
+			locators,
+			{0xEB}); // jmp short (unconditional)
 	}
 	{
 		// world backfaces #2
 		// PATCH DOCS: in R_DrawLeaf, search for "CBitVec invalid set bitNum" string, but a little lower in the function
 		// Working as of 2026-02-14, cross reference gmod as of that date if you need to refind
-		static const char sig[] = "75 ? 48 8B 45 ? F3 0F 10 15";
-		pm.RegisterPatch("rtx_patch_world_backfaces2", "engine.dll",
-			sig, sizeof(sig) - 1, 0, {0xEB}); // jmp (unconditional)
+		static const char currentSig[] =
+			"41 85 D1 75 ? F7 45 00 00 02 00 00 75 ? "
+			"48 8B 45 ? F3 0F 10 15 ? ? ? ?";
+		static const char stableBodySig[] =
+			"48 8B 45 ? F3 0F 10 15 ? ? ? ? "
+			"F3 0F 10 05 ? ? ? ? F3 0F 10 0D ? ? ? ?";
+		const std::vector<PatchLocator> locators = {
+			{
+				"current R_DrawLeaf backface branch #2",
+				std::string(currentSig, sizeof(currentSig) - 1),
+				12,
+				0,
+				{0x75} // jnz short
+			},
+			{
+				"stable R_DrawLeaf body after branch #2",
+				std::string(stableBodySig, sizeof(stableBodySig) - 1),
+				-2,
+				4,
+				{0x75} // jnz short
+			}
+		};
+		pm.RegisterPatchWithFallbacks(
+			"rtx_patch_world_backfaces2",
+			"engine.dll",
+			locators,
+			{0xEB}); // jmp short (unconditional)
 	}
 	{
-		// R_CullNode - wildcard bytes use single ? per byte in ScanSign format
-		static const char sig[] = "48 83 EC 48 80 3D ? ? ? ? ? 48";
-		pm.RegisterPatch("rtx_patch_cullnode", "engine.dll",
-			sig, sizeof(sig) - 1, 0, {0x31, 0xC0, 0xC3}); // xor eax,eax; ret
+		// R_CullNode. The body fallback allows the stack allocation and RIP
+		// displacement to move while requiring a nearby function-entry prologue.
+		static const char currentSig[] =
+			"48 83 EC 48 80 3D ? ? ? ? 00 48 8B D1 "
+			"0F 29 74 24 30 0F 29 7C 24 20";
+		static const char stableBodySig[] =
+			"48 8B D1 0F 29 74 24 30 0F 29 7C 24 20 "
+			"44 0F 29 44 24 10";
+		const std::vector<PatchLocator> locators = {
+			{
+				"current R_CullNode entry",
+				std::string(currentSig, sizeof(currentSig) - 1),
+				0,
+				0,
+				{0x48, 0x83, 0xEC, 0x48}
+			},
+			{
+				"stable R_CullNode body",
+				std::string(stableBodySig, sizeof(stableBodySig) - 1),
+				-11,
+				8,
+				{0x48, 0x83, 0xEC}
+			}
+		};
+		pm.RegisterPatchWithFallbacks(
+			"rtx_patch_cullnode",
+			"engine.dll",
+			locators,
+			{0x31, 0xC0, 0xC3}); // xor eax,eax; ret
 	}
 
 	{
@@ -169,15 +300,47 @@ static void RegisterCullingPatches() {
 	// client.dll patches (from applypatch.py patches64)
 	{
 		// c_frustumcull
-		static const char sig[] = "48 83 EC 48 0F 10 22";
-		pm.RegisterPatch("rtx_patch_frustumcull_client", "client.dll",
-			sig, sizeof(sig) - 1, 0, {0x31, 0xC0, 0xC3}); // xor eax,eax; ret
+		pm.RegisterPatchWithFallbacks(
+			"rtx_patch_frustumcull_client",
+			"client.dll",
+			cullBoxLocators,
+			{0x31, 0xC0, 0xC3}); // xor eax,eax; ret
 	}
 	{
 		// r_forcenovis [getter] - force return 1
-		static const char sig[] = "0F B6 81 54";
-		pm.RegisterPatch("rtx_patch_forcenovis", "client.dll",
-			sig, sizeof(sig) - 1, 0, {0xB0, 0x01, 0xC3}); // mov al,1; ret
+		// The neighborhood fallback tolerates the member offset changing by
+		// identifying the adjacent bool setter/getter and following int getter.
+		static const char currentSig[] =
+			"0F B6 81 54 03 00 00 C3";
+		static const char stableNeighborhoodSig[] =
+			"C6 81 ? ? ? ? 01 C3 "
+			"CC CC CC CC CC CC CC CC "
+			"0F B6 81 ? ? ? ? C3 "
+			"CC CC CC CC CC CC CC CC "
+			"8B 81 ? ? ? ? C3";
+		const std::vector<PatchLocator> locators = {
+			{
+				"current ShouldForceNoVis getter",
+				std::string(currentSig, sizeof(currentSig) - 1),
+				0,
+				0,
+				{0x0F, 0xB6, 0x81}
+			},
+			{
+				"stable ShouldForceNoVis accessor neighborhood",
+				std::string(
+					stableNeighborhoodSig,
+					sizeof(stableNeighborhoodSig) - 1),
+				16,
+				0,
+				{0x0F, 0xB6, 0x81}
+			}
+		};
+		pm.RegisterPatchWithFallbacks(
+			"rtx_patch_forcenovis",
+			"client.dll",
+			locators,
+			{0xB0, 0x01, 0xC3}); // mov al,1; ret
 	}
 
 	pm.ResolveAll();
