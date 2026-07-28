@@ -1,5 +1,6 @@
 #ifdef _WIN64
 #include "remixapi.h"
+#include "material_lua_bindings.h"
 #include <tier0/dbg.h>
 #include <materialsystem/imaterialsystem.h>
 #include <materialsystem/imaterial.h>
@@ -7,6 +8,8 @@
 #include <materialsystem/itexture.h>
 #include <d3d9.h>
 #include <Windows.h>
+#include <mutex>
+#include <unordered_set>
 #include "../d3d9_texture_tracker.h"
 #include "../globalconvars.h"
 #include "../material_pipeline/auto_categorisation/auto_categorisation.h"
@@ -1172,15 +1175,17 @@ LUA_FUNCTION(RemixMaterial_SetDebugOutput) {
 // =========================================================================
 // Force-Albedo Emission Helpers
 // =========================================================================
-// Hashes registered for rtx.legacyEmissiveForceAlbedoString by Lua code.
-// Kept as a set so re-serialisation on each new addition is duplicate-free.
-static std::unordered_set<uint64_t> s_luaForceAlbedoHashes;
+// Shared by Lua and C++ AutoCategorisation. Access through the global helper
+// functions below so updates cannot race or overwrite another path's hashes.
+static std::unordered_set<uint64_t> s_forceAlbedoHashes;
+static std::mutex s_forceAlbedoMutex;
 
-static void UpdateLuaForceAlbedoConfig() {
+// Caller must hold s_forceAlbedoMutex.
+static void UpdateForceAlbedoConfig() {
     if (!g_remix) return;
     
     std::string value;
-    for (uint64_t hash : s_luaForceAlbedoHashes) {
+    for (uint64_t hash : s_forceAlbedoHashes) {
         if (!value.empty()) value += ',';
         char buf[32];
         snprintf(buf, sizeof(buf), "0x%llX", (unsigned long long)hash);
@@ -1192,7 +1197,7 @@ static void UpdateLuaForceAlbedoConfig() {
 // Lua function: RemixMaterial.AddForceAlbedoHash(hashStr)
 // Registers a texture hash for force-albedo emission mode so that Remix emits
 // full albedo colour even when the texture has no alpha mask channel.
-// Call this for every hash belonging to an UnlitTwoTexture+scanline material.
+// Call this for every hash belonging to an UnlitGeneric or UnlitTwoTexture material.
 LUA_FUNCTION(RemixMaterial_AddForceAlbedoHash) {
     if (!g_remix) {
         LUA->ThrowError("RemixMaterial.AddForceAlbedoHash: Remix API not initialized");
@@ -1216,21 +1221,14 @@ LUA_FUNCTION(RemixMaterial_AddForceAlbedoHash) {
         return 1;
     }
     
-    if (s_luaForceAlbedoHashes.insert(hash).second) {
-        UpdateLuaForceAlbedoConfig();
-    }
-    
-    LUA->PushBool(true);
+    LUA->PushBool(::AddForceAlbedoHashCpp(hash));
     return 1;
 }
 
 // Lua function: RemixMaterial.ClearForceAlbedoHashes()
 // Resets the force-albedo list. Call on map change before re-scanning.
 LUA_FUNCTION(RemixMaterial_ClearForceAlbedoHashes) {
-    s_luaForceAlbedoHashes.clear();
-    if (g_remix) {
-        g_remix->SetConfigVariable("rtx.legacyEmissiveForceAlbedoString", "");
-    }
+    ::ClearForceAlbedoHashesCpp();
     LUA->PushBool(true);
     return 1;
 }
@@ -1350,14 +1348,29 @@ void MaterialManager::InitializeLuaBindings() {
 
 } // namespace RemixAPI
 
-// C++ callable (not a Lua binding): remove a single hash from the Lua force-albedo
-// set without going through Lua.  Called by AutoCategorisation::UnapplyFromRemix
-// when a material's hash is corrected and stale state must be cleaned up.
-// Defined outside namespace RemixAPI so the global-scope declaration in the header matches.
-void RemoveLuaForceAlbedoHashCpp(uint64_t hash) {
-    if (RemixAPI::s_luaForceAlbedoHashes.erase(hash)) {
-        RemixAPI::UpdateLuaForceAlbedoConfig();
+bool AddForceAlbedoHashCpp(uint64_t hash) {
+    if (!g_remix || hash == 0) return false;
+
+    std::lock_guard<std::mutex> lock(RemixAPI::s_forceAlbedoMutex);
+    if (RemixAPI::s_forceAlbedoHashes.insert(hash).second) {
+        RemixAPI::UpdateForceAlbedoConfig();
     }
+    return true;
+}
+
+bool RemoveForceAlbedoHashCpp(uint64_t hash) {
+    std::lock_guard<std::mutex> lock(RemixAPI::s_forceAlbedoMutex);
+    if (!RemixAPI::s_forceAlbedoHashes.erase(hash)) {
+        return false;
+    }
+    RemixAPI::UpdateForceAlbedoConfig();
+    return true;
+}
+
+void ClearForceAlbedoHashesCpp() {
+    std::lock_guard<std::mutex> lock(RemixAPI::s_forceAlbedoMutex);
+    RemixAPI::s_forceAlbedoHashes.clear();
+    RemixAPI::UpdateForceAlbedoConfig();
 }
 
 #endif // _WIN64

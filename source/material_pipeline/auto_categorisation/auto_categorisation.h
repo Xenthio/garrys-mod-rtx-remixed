@@ -155,8 +155,8 @@ void ReconcileHashCategories(uint64_t hash);
 
 // Remove all Remix API registrations for a hash.
 // Calls RemoveTextureHash for every category bit stored under this hash,
-// erases the hash from s_hashToCategoryFlags and s_forceAlbedoHashes, and
-// removes the matching s_luaForceAlbedoHashes entry via RemoveLuaForceAlbedoHashCpp.
+// erases the hash from s_hashToCategoryFlags, and removes it from the shared
+// force-albedo registry.
 // Use this when a material's hash changes so stale Remix-side state is cleaned up.
 // @param hash        - The old/wrong hash to remove
 // @param materialName - Clears the per-material flag cache as well

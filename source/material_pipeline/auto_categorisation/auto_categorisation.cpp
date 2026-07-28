@@ -46,12 +46,9 @@ static std::unordered_set<std::string> s_worldTextureNames;
 static Stats s_stats;
 static bool s_initialized = false;
 
-// Materials whose emissive detection path has no alpha mask for Remix to weight against,
-// so they require force-albedo mode (rtx.legacyEmissiveForceAlbedoString).
-// Covers: UnlitTwoTexture+scanline panels, UnlitGeneric+$selfillum.
+// Unlit shaders emit their full albedo regardless of $selfillum or alpha-mask
+// parameters, so their hashes require rtx.legacyEmissiveForceAlbedoString.
 static std::unordered_set<std::string> s_forceAlbedoEmissiveMaterials;
-// Hashes already registered for force-albedo (kept so we can re-serialize without duplicates).
-static std::unordered_set<uint64_t> s_forceAlbedoHashes;
 
 // Filesystem access
 static IFileSystem* s_pFileSystem = nullptr;
@@ -61,19 +58,6 @@ static std::string HashToString(uint64_t hash) {
     char buffer[32];
     snprintf(buffer, sizeof(buffer), "0x%llX", (unsigned long long)hash);
     return std::string(buffer);
-}
-
-// Serialize s_forceAlbedoHashes into rtx.legacyEmissiveForceAlbedoString.
-// Must be called under s_mutex.
-static void UpdateForceAlbedoConfig() {
-    if (!s_remix || s_forceAlbedoHashes.empty()) return;
-    
-    std::string value;
-    for (uint64_t hash : s_forceAlbedoHashes) {
-        if (!value.empty()) value += ',';
-        value += HashToString(hash);
-    }
-    s_remix->SetConfigVariable("rtx.legacyEmissiveForceAlbedoString", value.c_str());
 }
 
 static IFileSystem* GetFileSystem() {
@@ -287,7 +271,7 @@ void Shutdown() {
     s_materialToCategoryFlags.clear();
     s_worldTextureNames.clear();
     s_forceAlbedoEmissiveMaterials.clear();
-    s_forceAlbedoHashes.clear();
+    ClearForceAlbedoHashesCpp();
     s_remix = nullptr;
     s_initialized = false;
     
@@ -306,6 +290,7 @@ void ClearMapState() {
     s_materialToCategoryFlags.clear();
     s_worldTextureNames.clear();
     s_forceAlbedoEmissiveMaterials.clear();
+    ClearForceAlbedoHashesCpp();
     s_stats.pendingCategories = 0;
 }
 
@@ -348,6 +333,7 @@ void SetDebugOutput(bool enabled) {
 // =========================================================================
 
 uint32_t DetectCategory(const std::string& materialName, IMaterial* material) {
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     if (!s_config.enabled) return 0;
     if (materialName.empty()) return 0;
     
@@ -356,11 +342,24 @@ uint32_t DetectCategory(const std::string& materialName, IMaterial* material) {
     
     std::string lowerName = materialName;
     std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), SafeToLower);
+
+    std::string shaderName = GetShaderName(material);
+    std::transform(shaderName.begin(), shaderName.end(), shaderName.begin(), SafeToLower);
+    if (shaderName.empty()) {
+        shaderName = ReadVMTShaderName(materialName);
+    }
+    const bool isUnlitGeneric =
+        shaderName.find("unlitgeneric") == 0;
+    const bool isUnlitTwoTexture =
+        shaderName.find("unlittwotexture") == 0;
+    const bool isUnlitShader =
+        isUnlitGeneric || isUnlitTwoTexture;
     
     uint32_t flags = 0;
     
     // === PRIORITY 1: PARTICLES ===
     if (s_config.particleEnabled) {
+        bool isParticle = false;
         if (lowerName.find("particles/") == 0 || 
             lowerName.find("particle/") == 0 ||
             lowerName.find("effects/") == 0 || 
@@ -369,16 +368,11 @@ uint32_t DetectCategory(const std::string& materialName, IMaterial* material) {
             lowerName.find("/particle/") != std::string::npos ||
             lowerName.find("/effects/") != std::string::npos ||
             lowerName.find("/sprites/") != std::string::npos) {
-            flags = CategoryFlags::PARTICLE;
-            s_stats.particlesCategorized++;
-            return flags;
+            isParticle = true;
         }
         
         // Shader-based particle detection
-        if (material) {
-            std::string shaderName = GetShaderName(material);
-            std::transform(shaderName.begin(), shaderName.end(), shaderName.begin(), SafeToLower);
-            
+        if (!isParticle && material) {
             // Check for particle shaders
             // NOTE: Use prefix matching (== 0) to handle DX version suffixes (e.g., Sprite_dx6, Cable_dx6, Modulate_dx6)
             // This also naturally excludes DecalModulate since "decalmodulate" doesn't start with "modulate"
@@ -387,13 +381,11 @@ uint32_t DetectCategory(const std::string& materialName, IMaterial* material) {
                                      shaderName.find("modulate") == 0);
             
             if (isParticleShader) {
-                flags = CategoryFlags::PARTICLE;
-                s_stats.particlesCategorized++;
-                return flags;
+                isParticle = true;
             }
             
             // UnlitGeneric with $vertexalpha + $vertexcolor = particle
-            if (shaderName.find("unlitgeneric") != std::string::npos) {
+            if (!isParticle && isUnlitGeneric) {
                 bool hasVertexAlpha = false;
                 bool hasVertexColor = false;
                 
@@ -410,16 +402,27 @@ uint32_t DetectCategory(const std::string& materialName, IMaterial* material) {
                 }
                 
                 if (hasVertexAlpha && hasVertexColor) {
-                    flags = CategoryFlags::PARTICLE;
-                    s_stats.particlesCategorized++;
-                    return flags;
+                    isParticle = true;
                 }
+            }
+        }
+
+        if (isParticle) {
+            flags |= CategoryFlags::PARTICLE;
+            s_stats.particlesCategorized++;
+
+            // Preserve the established particle priority for ordinary shaders,
+            // but an unlit particle is still inherently emissive and must carry
+            // both category bits.
+            if (!isUnlitShader || !s_config.emissiveEnabled) {
+                s_stats.materialsScanned++;
+                return flags;
             }
         }
     }
     
     // === PRIORITY 2: DECALS ===
-    if (s_config.decalEnabled) {
+    if (s_config.decalEnabled && !(flags & CategoryFlags::PARTICLE)) {
         bool isDecal = false;
         
         // Method 1: Check $decal VMT parameter
@@ -434,8 +437,6 @@ uint32_t DetectCategory(const std::string& materialName, IMaterial* material) {
         // Method 2: Shader-based detection (Decal, DecalModulate shaders)
         // Note: Runtime shaders have DX version suffixes (e.g., DecalModulate_dx6)
         if (!isDecal && material) {
-            std::string shaderName = GetShaderName(material);
-            std::transform(shaderName.begin(), shaderName.end(), shaderName.begin(), SafeToLower);
             // Check for decal shaders using prefix match to handle DX suffixes
             // - DecalModulate, DecalModulate_dx6, etc.
             // - Decal, Decal_dx6, etc. (but not DecalModulate which starts with "decal" too)
@@ -475,16 +476,19 @@ uint32_t DetectCategory(const std::string& materialName, IMaterial* material) {
     // === EMISSIVE CHECK (can combine with other categories) ===
     if (s_config.emissiveEnabled) {
         bool isDecal = ((flags & CategoryFlags::DECAL_STATIC) != 0);
-        bool isEmissive = false;
+        // Source's unlit shaders do not receive scene lighting. Their complete
+        // albedo is therefore emission regardless of $selfillum or alpha data.
+        bool isEmissive = isUnlitShader;
+        if (isUnlitShader) {
+            s_forceAlbedoEmissiveMaterials.insert(materialName);
+        }
         
         // Method 1: Check IMaterial::FindVar for $selfillum
-        if (!isDecal && material) {
+        if (!isDecal && !isEmissive && material) {
             bool found = false;
             IMaterialVar* pVar = material->FindVar("$selfillum", &found, false);
             if (found && pVar && pVar->GetIntValue() == 1) {
                 isEmissive = true;
-                // Note: UnlitGeneric $selfillum textures typically carry the emissive mask in
-                // their alpha channel, so Remix can handle weighting without force-albedo mode.
             }
             
             // Method 2: Check $emissive var (vector)
@@ -498,45 +502,16 @@ uint32_t DetectCategory(const std::string& materialName, IMaterial* material) {
                     }
                 }
             }
-            
-            // Method 3: Shader-based — UnlitTwoTexture with a scanline overlay is emissive.
-            // Only flag it when $texture2 or %tooltexture references a scanline texture,
-            // so generic UnlitTwoTexture blends aren't incorrectly lit.
-            if (!isEmissive) {
-                std::string shaderName = GetShaderName(material);
-                std::transform(shaderName.begin(), shaderName.end(), shaderName.begin(), SafeToLower);
-                if (shaderName.find("unlittwotexture") == 0) {
-                    auto HasScanlineVar = [&](const char* varName) -> bool {
-                        bool found = false;
-                        IMaterialVar* pVar = material->FindVar(varName, &found, false);
-                        if (!found || !pVar) return false;
-                        const char* val = pVar->GetStringValue();
-                        if (!val) return false;
-                        std::string lower = val;
-                        std::transform(lower.begin(), lower.end(), lower.begin(), SafeToLower);
-                        return lower.find("scanline") != std::string::npos;
-                    };
-                    if (HasScanlineVar("$texture2") || HasScanlineVar("%tooltexture")) {
-                        isEmissive = true;
-                        // Mark this material so ApplyToHash can register force-albedo emission.
-                        // UnlitTwoTexture+scanline panels have no alpha mask, so without this
-                        // Remix would silently suppress their emission.
-                        s_forceAlbedoEmissiveMaterials.insert(materialName);
-                    }
-                }
-            }
         }
         
-        // Method 4: Read VMT file directly (fallback when material pointer is unavailable)
+        // Method 3: Read VMT file directly (fallback when material pointer is unavailable)
         if (!isDecal && !isEmissive) {
             if (CheckVMTForSelfillum(materialName, s_config.debugOutput)) {
                 isEmissive = true;
-                // UnlitGeneric $selfillum textures carry their own alpha-channel emissive mask;
-                // no force-albedo insertion needed here.
             }
         }
         
-        // Method 5: Keyword-based detection
+        // Method 4: Keyword-based detection
         if (!isDecal && !isEmissive) {
             bool hasOnSuffix = (lowerName.find("_on") != std::string::npos);
             bool isKnownEmissivePack = (lowerName.find("pkvoidplaces") != std::string::npos ||
@@ -736,8 +711,14 @@ void ApplyToHash(uint64_t hash, uint32_t flags, const std::string& materialName)
             }
         }
     
-        // Store mapping (merge with existing internal flags, minus any cleared bits)
-        s_hashToCategoryFlags[hash] = (existingInternal & ~CategoryFlags::PARTICLE) | flags;
+        // Store mapping without discarding an existing particle bit when a
+        // second pass only adds EMISSIVE. DECAL_STATIC is the one category
+        // that deliberately supersedes PARTICLE.
+        uint32_t mergedFlags = existingInternal | flags;
+        if (flags & CategoryFlags::DECAL_STATIC) {
+            mergedFlags &= ~CategoryFlags::PARTICLE;
+        }
+        s_hashToCategoryFlags[hash] = mergedFlags;
     
         // Apply to Remix API
         if (flags & CategoryFlags::PARTICLE) {
@@ -748,15 +729,13 @@ void ApplyToHash(uint64_t hash, uint32_t flags, const std::string& materialName)
         }
         if (flags & CategoryFlags::EMISSIVE) {
             s_remix->AddTextureHash("rtx.legacyEmissiveTextures", hashStr.c_str());
-            // UnlitTwoTexture+scanline panels have no alpha mask. Without force-albedo mode
-            // Remix suppresses emission for maskless textures, so register the hash here.
+            // Source unlit shaders emit their full albedo. Register the hash in
+            // the shared force-albedo registry so Remix does the same.
             if (s_forceAlbedoEmissiveMaterials.count(materialName)) {
-                if (s_forceAlbedoHashes.insert(hash).second) {
-                    UpdateForceAlbedoConfig();
-                    if (s_config.debugOutput) {
-                        Msg("[AutoCategorisation] Registered force-albedo for maskless emissive hash 0x%llX (%s)\n",
-                            hash, materialName.c_str());
-                    }
+                AddForceAlbedoHashCpp(hash);
+                if (s_config.debugOutput) {
+                    Msg("[AutoCategorisation] Registered force-albedo for unlit emissive hash 0x%llX (%s)\n",
+                        hash, materialName.c_str());
                 }
             }
         }
@@ -837,15 +816,7 @@ void ReconcileHashCategories(uint64_t hash) {
         clearTrackerEmissive =
             (trackerFlags & CategoryFlags::EMISSIVE) != 0;
 
-        if (s_forceAlbedoHashes.erase(hash)) {
-            if (s_forceAlbedoHashes.empty()) {
-                s_remix->SetConfigVariable(
-                    "rtx.legacyEmissiveForceAlbedoString", "");
-            } else {
-                UpdateForceAlbedoConfig();
-            }
-        }
-        RemoveLuaForceAlbedoHashCpp(hash);
+        RemoveForceAlbedoHashCpp(hash);
 
         if (s_config.debugOutput) {
             Msg("[AutoCategorisation] Removed EMISSIVE from contested hash "
@@ -956,17 +927,7 @@ void UnapplyFromRemix(uint64_t hash, const std::string& materialName) {
     s_hashToCategoryFlags.erase(it);
     s_materialToCategoryFlags.erase(materialName);
 
-    if (s_forceAlbedoHashes.erase(hash)) {
-        if (s_forceAlbedoHashes.empty()) {
-            if (s_remix) {
-                s_remix->SetConfigVariable("rtx.legacyEmissiveForceAlbedoString", "");
-            }
-        } else {
-            UpdateForceAlbedoConfig();
-        }
-    }
-
-    RemoveLuaForceAlbedoHashCpp(hash);
+    RemoveForceAlbedoHashCpp(hash);
 
     if (s_config.debugOutput) {
         Msg("[AutoCategorisation] UnapplyFromRemix: removed hash %s (flags 0x%X) for material '%s'\n",
