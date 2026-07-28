@@ -294,6 +294,21 @@ void Shutdown() {
     Msg("[MaterialPipeline::AutoCategorisation] Shutdown\n");
 }
 
+void ClearMapState() {
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
+
+    for (auto& pending : s_pendingCategories) {
+        if (pending.texture) {
+            pending.texture->Release();
+        }
+    }
+    s_pendingCategories.clear();
+    s_materialToCategoryFlags.clear();
+    s_worldTextureNames.clear();
+    s_forceAlbedoEmissiveMaterials.clear();
+    s_stats.pendingCategories = 0;
+}
+
 void SetConfig(const Config& config) {
     std::lock_guard<std::recursive_mutex> lock(s_mutex);
     s_config = config;
@@ -648,51 +663,58 @@ bool ApplyKnownCategoryToTexture(const std::string& materialName, IDirect3DTextu
 
 void ApplyToHash(uint64_t hash, uint32_t flags, const std::string& materialName) {
     if (!s_remix || hash == 0 || flags == 0) return;
-    
-    std::lock_guard<std::recursive_mutex> lock(s_mutex);
-    
-    // Retrieve existing flags from both maps for priority decisions.
-    uint32_t existingInternal = 0;
-    auto existingIt = s_hashToCategoryFlags.find(hash);
-    if (existingIt != s_hashToCategoryFlags.end()) {
-        existingInternal = existingIt->second;
-    }
-    
-    // Also check the D3D9 tracker map, which is populated by the Lua BSP scan.
-    uint32_t existingTracker = 0;
-    D3D9TextureTracker::Instance().GetHashCategoryFlags(hash, &existingTracker);
-    
-    uint32_t existingAny = existingInternal | existingTracker;
-    
-    // DECAL_STATIC (world geometry) takes priority over PARTICLE.
-    // Check both the category flag maps and the BSP world material reverse map so
-    // that translucent world brushes (intentionally left uncategorized) are also
-    // protected from hash collisions with particle/sprite effects.
-    if (flags & CategoryFlags::PARTICLE) {
-        bool isWorldGeometry =
-            (existingAny & CategoryFlags::DECAL_STATIC) != 0 ||
-            D3D9TextureTracker::Instance().IsAnyBSPWorldMaterialForHash(hash);
-        if (isWorldGeometry) {
-            flags &= ~CategoryFlags::PARTICLE;
-            if (s_config.debugOutput) {
-                Msg("[AutoCategorisation] Skipping PARTICLE for hash 0x%llX (%s): world geometry\n",
-                    hash, materialName.c_str());
-            }
-            if (flags == 0) return;
-        }
-    }
 
-    // DECAL_STATIC must not be applied when any material sharing this hash is not
-    // in the world-texture decal list.  This covers:
-    //   • non-BSP model textures (HasNonBSPWorldMaterialForHash)
-    //   • BSP brushes excluded from DECAL_STATIC, e.g. translucent/nodecal surfaces
-    //     (HasMaterialNotInWorldListForHash, which checks the world texture list directly)
-    //   • hashes already resolved as contested retroactively (IsHashContested)
-    if (flags & CategoryFlags::DECAL_STATIC) {
-        bool shouldBlock =
-            D3D9TextureTracker::Instance().IsHashContested(hash) ||
-            D3D9TextureTracker::Instance().HasMaterialNotInWorldListForHash(hash);
-        if (shouldBlock) {
+    // Snapshot tracker state before taking the AutoCategorisation lock. The
+    // render hook uses the opposite direction (tracker -> AutoCategorisation),
+    // so holding both locks here would allow a worker/render-thread deadlock.
+    auto& tracker = D3D9TextureTracker::Instance();
+    uint32_t existingTracker = 0;
+    tracker.GetHashCategoryFlags(hash, &existingTracker);
+    const bool hasBSPWorldMaterial =
+        (flags & CategoryFlags::PARTICLE) &&
+        tracker.IsAnyBSPWorldMaterialForHash(hash);
+    const bool blockDecal =
+        (flags & CategoryFlags::DECAL_STATIC) &&
+        (tracker.IsHashContested(hash) ||
+         tracker.HasMaterialNotInWorldListForHash(hash));
+
+    {
+        std::lock_guard<std::recursive_mutex> lock(s_mutex);
+
+        // Retrieve existing flags from both maps for priority decisions.
+        uint32_t existingInternal = 0;
+        auto existingIt = s_hashToCategoryFlags.find(hash);
+        if (existingIt != s_hashToCategoryFlags.end()) {
+            existingInternal = existingIt->second;
+        }
+
+        uint32_t existingAny = existingInternal | existingTracker;
+    
+        // DECAL_STATIC (world geometry) takes priority over PARTICLE.
+        // Check both the category flag maps and the BSP world material reverse map so
+        // that translucent world brushes (intentionally left uncategorized) are also
+        // protected from hash collisions with particle/sprite effects.
+        if (flags & CategoryFlags::PARTICLE) {
+            const bool isWorldGeometry =
+                (existingAny & CategoryFlags::DECAL_STATIC) != 0 ||
+                hasBSPWorldMaterial;
+            if (isWorldGeometry) {
+                flags &= ~CategoryFlags::PARTICLE;
+                if (s_config.debugOutput) {
+                    Msg("[AutoCategorisation] Skipping PARTICLE for hash 0x%llX (%s): world geometry\n",
+                        hash, materialName.c_str());
+                }
+                if (flags == 0) return;
+            }
+        }
+
+        // DECAL_STATIC must not be applied when any material sharing this hash is not
+        // in the world-texture decal list.  This covers:
+        //   • non-BSP model textures (HasNonBSPWorldMaterialForHash)
+        //   • BSP brushes excluded from DECAL_STATIC, e.g. translucent/nodecal surfaces
+        //     (HasMaterialNotInWorldListForHash, which checks the world texture list directly)
+        //   • hashes already resolved as contested retroactively (IsHashContested)
+        if ((flags & CategoryFlags::DECAL_STATIC) && blockDecal) {
             flags &= ~CategoryFlags::DECAL_STATIC;
             if (s_config.debugOutput) {
                 Msg("[AutoCategorisation] Skipping DECAL_STATIC for hash 0x%llX (%s): hash shared with non-decal material\n",
@@ -700,49 +722,142 @@ void ApplyToHash(uint64_t hash, uint32_t flags, const std::string& materialName)
             }
             if (flags == 0) return;
         }
-    }
     
-    // Convert hash to string format for Remix API
-    std::string hashStr = HashToString(hash);
+        // Convert hash to string format for Remix API
+        std::string hashStr = HashToString(hash);
     
-    // When DECAL_STATIC (world geometry) is being applied, remove any prior
-    // PARTICLE tag that may have been set before the BSP scan completed.
-    if ((flags & CategoryFlags::DECAL_STATIC) && (existingAny & CategoryFlags::PARTICLE)) {
-        s_remix->RemoveTextureHash("rtx.particleTextures", hashStr.c_str());
-        if (s_config.debugOutput) {
-            Msg("[AutoCategorisation] Removing PARTICLE for hash 0x%llX (%s): overridden by world geometry\n",
-                hash, materialName.c_str());
+        // When DECAL_STATIC (world geometry) is being applied, remove any prior
+        // PARTICLE tag that may have been set before the BSP scan completed.
+        if ((flags & CategoryFlags::DECAL_STATIC) && (existingAny & CategoryFlags::PARTICLE)) {
+            s_remix->RemoveTextureHash("rtx.particleTextures", hashStr.c_str());
+            if (s_config.debugOutput) {
+                Msg("[AutoCategorisation] Removing PARTICLE for hash 0x%llX (%s): overridden by world geometry\n",
+                    hash, materialName.c_str());
+            }
         }
-    }
     
-    // Store mapping (merge with existing internal flags, minus any cleared bits)
-    s_hashToCategoryFlags[hash] = (existingInternal & ~CategoryFlags::PARTICLE) | flags;
+        // Store mapping (merge with existing internal flags, minus any cleared bits)
+        s_hashToCategoryFlags[hash] = (existingInternal & ~CategoryFlags::PARTICLE) | flags;
     
-    // Apply to Remix API
-    if (flags & CategoryFlags::PARTICLE) {
-        s_remix->AddTextureHash("rtx.particleTextures", hashStr.c_str());
-    }
-    if (flags & CategoryFlags::DECAL_STATIC) {
-        s_remix->AddTextureHash("rtx.decalTextures", hashStr.c_str());
-    }
-    if (flags & CategoryFlags::EMISSIVE) {
-        s_remix->AddTextureHash("rtx.legacyEmissiveTextures", hashStr.c_str());
-        // UnlitTwoTexture+scanline panels have no alpha mask. Without force-albedo mode
-        // Remix suppresses emission for maskless textures, so register the hash here.
-        if (s_forceAlbedoEmissiveMaterials.count(materialName)) {
-            if (s_forceAlbedoHashes.insert(hash).second) {
-                UpdateForceAlbedoConfig();
-                if (s_config.debugOutput) {
-                    Msg("[AutoCategorisation] Registered force-albedo for maskless emissive hash 0x%llX (%s)\n",
-                        hash, materialName.c_str());
+        // Apply to Remix API
+        if (flags & CategoryFlags::PARTICLE) {
+            s_remix->AddTextureHash("rtx.particleTextures", hashStr.c_str());
+        }
+        if (flags & CategoryFlags::DECAL_STATIC) {
+            s_remix->AddTextureHash("rtx.decalTextures", hashStr.c_str());
+        }
+        if (flags & CategoryFlags::EMISSIVE) {
+            s_remix->AddTextureHash("rtx.legacyEmissiveTextures", hashStr.c_str());
+            // UnlitTwoTexture+scanline panels have no alpha mask. Without force-albedo mode
+            // Remix suppresses emission for maskless textures, so register the hash here.
+            if (s_forceAlbedoEmissiveMaterials.count(materialName)) {
+                if (s_forceAlbedoHashes.insert(hash).second) {
+                    UpdateForceAlbedoConfig();
+                    if (s_config.debugOutput) {
+                        Msg("[AutoCategorisation] Registered force-albedo for maskless emissive hash 0x%llX (%s)\n",
+                            hash, materialName.c_str());
+                    }
                 }
             }
         }
+
+        if (s_config.debugOutput) {
+            Msg("[AutoCategorisation] Applied flags 0x%X to hash 0x%llX (%s)\n",
+                flags, hash, materialName.c_str());
+        }
     }
-    
-    if (s_config.debugOutput) {
-        Msg("[AutoCategorisation] Applied flags 0x%X to hash 0x%llX (%s)\n", 
-            flags, hash, materialName.c_str());
+
+    // Reconciliation may query the tracker, so run it after releasing s_mutex.
+    ReconcileHashCategories(hash);
+}
+
+void ReconcileHashCategories(uint64_t hash) {
+    if (!s_remix || hash == 0) return;
+
+    auto& tracker = D3D9TextureTracker::Instance();
+    uint32_t trackerFlags = 0;
+    tracker.GetHashCategoryFlags(hash, &trackerFlags);
+    const auto materialNames = tracker.GetMaterialsForHash(hash);
+    if (materialNames.empty()) {
+        return;
+    }
+
+    bool clearTrackerEmissive = false;
+    {
+        std::lock_guard<std::recursive_mutex> lock(s_mutex);
+
+        uint32_t internalFlags = 0;
+        auto internalIt = s_hashToCategoryFlags.find(hash);
+        if (internalIt != s_hashToCategoryFlags.end()) {
+            internalFlags = internalIt->second;
+        }
+        if (!((internalFlags | trackerFlags) & CategoryFlags::EMISSIVE)) {
+            return;
+        }
+
+        std::string conflictingMaterial;
+        for (const auto& materialName : materialNames) {
+            IMaterial* material = nullptr;
+            if (materials) {
+                material = materials->FindMaterial(
+                    materialName.c_str(), TEXTURE_GROUP_OTHER, false);
+                if (material && material->IsErrorMaterial()) {
+                    material = nullptr;
+                }
+            }
+
+            // Validation must describe the material, independent of whether the
+            // user currently enabled automatic emissive assignment.
+            const Config savedConfig = s_config;
+            s_config.enabled = true;
+            s_config.emissiveEnabled = true;
+            const uint32_t detectedFlags =
+                DetectCategory(materialName, material);
+            s_config = savedConfig;
+            if (!(detectedFlags & CategoryFlags::EMISSIVE)) {
+                conflictingMaterial = materialName;
+                break;
+            }
+        }
+
+        if (conflictingMaterial.empty()) {
+            return;
+        }
+
+        const std::string hashStr = HashToString(hash);
+        s_remix->RemoveTextureHash(
+            "rtx.legacyEmissiveTextures", hashStr.c_str());
+
+        if (internalIt != s_hashToCategoryFlags.end()) {
+            internalIt->second &= ~CategoryFlags::EMISSIVE;
+            if (internalIt->second == 0) {
+                s_hashToCategoryFlags.erase(internalIt);
+            }
+        }
+        clearTrackerEmissive =
+            (trackerFlags & CategoryFlags::EMISSIVE) != 0;
+
+        if (s_forceAlbedoHashes.erase(hash)) {
+            if (s_forceAlbedoHashes.empty()) {
+                s_remix->SetConfigVariable(
+                    "rtx.legacyEmissiveForceAlbedoString", "");
+            } else {
+                UpdateForceAlbedoConfig();
+            }
+        }
+        RemoveLuaForceAlbedoHashCpp(hash);
+
+        if (s_config.debugOutput) {
+            Msg("[AutoCategorisation] Removed EMISSIVE from contested hash "
+                "0x%llX: material '%s' sharing the hash is not emissive\n",
+                hash, conflictingMaterial.c_str());
+        }
+    }
+
+    // Keep tracker and AutoCategorisation lock acquisition disjoint.
+    if (clearTrackerEmissive) {
+        tracker.SetHashCategoryFlags(
+            hash, trackerFlags & ~CategoryFlags::EMISSIVE);
     }
 }
 
@@ -786,10 +901,12 @@ int RecheckWorldTextures() {
 // =========================================================================
 
 void SetHashCategoryFlags(uint64_t hash, uint32_t flags) {
-    std::lock_guard<std::recursive_mutex> lock(s_mutex);
-    s_hashToCategoryFlags[hash] = flags;
+    {
+        std::lock_guard<std::recursive_mutex> lock(s_mutex);
+        s_hashToCategoryFlags[hash] = flags;
+    }
     
-    // Also apply to Remix
+    // Apply after releasing s_mutex because ApplyToHash snapshots tracker state.
     if (s_remix && hash != 0 && flags != 0) {
         ApplyToHash(hash, flags, "manual");
     }
@@ -882,50 +999,52 @@ void AddPendingCategory(IDirect3DTexture9* texture,
 
 int RetryPendingCategories() {
     if (!s_remix) return 0;
-    
-    std::lock_guard<std::recursive_mutex> lock(s_mutex);
-    
-    int categorized = 0;
-    auto it = s_pendingCategories.begin();
-    
-    while (it != s_pendingCategories.end()) {
-        auto result = s_remix->dxvk_GetTextureHash(it->texture);
-        if (result && result.value() != 0) {
-            uint64_t hash = result.value();
-            
-            // Store mapping
-            s_hashToCategoryFlags[hash] = it->categoryFlags;
-            
-            // Convert hash to string format for Remix API
-            std::string hashStr = HashToString(hash);
-            
-            // Apply to Remix API - all category types (same as ApplyToHash)
-            if (it->categoryFlags & CategoryFlags::PARTICLE) {
-                s_remix->AddTextureHash("rtx.particleTextures", hashStr.c_str());
+
+    struct ReadyCategory {
+        PendingCategory pending;
+        uint64_t hash;
+    };
+    std::vector<ReadyCategory> ready;
+    bool debugOutput = false;
+
+    {
+        std::lock_guard<std::recursive_mutex> lock(s_mutex);
+        auto it = s_pendingCategories.begin();
+
+        while (it != s_pendingCategories.end()) {
+            auto result = s_remix->dxvk_GetTextureHash(it->texture);
+            if (result && result.value() != 0) {
+                // Move the queue's owned COM reference into the local work list.
+                ready.push_back({*it, result.value()});
+                it = s_pendingCategories.erase(it);
+            } else {
+                ++it;
             }
-            if (it->categoryFlags & CategoryFlags::DECAL_STATIC) {
-                s_remix->AddTextureHash("rtx.decalTextures", hashStr.c_str());
-            }
-            if (it->categoryFlags & CategoryFlags::EMISSIVE) {
-                s_remix->AddTextureHash("rtx.legacyEmissiveTextures", hashStr.c_str());
-            }
-            
-            if (s_config.debugOutput) {
-                Msg("[AutoCategorisation] Retry succeeded for '%s' -> hash 0x%llX, flags 0x%X\n", 
-                    it->materialName.c_str(), hash, it->categoryFlags);
-            }
-            
-            // Release texture and remove from list
-            it->texture->Release();
-            it = s_pendingCategories.erase(it);
-            categorized++;
-        } else {
-            ++it;
         }
+
+        s_stats.pendingCategories = static_cast<int>(s_pendingCategories.size());
+        debugOutput = s_config.debugOutput;
     }
-    
-    s_stats.pendingCategories = static_cast<int>(s_pendingCategories.size());
-    return categorized;
+
+    // Apply outside s_mutex. ApplyToHash reads tracker state, while the render
+    // hook can call into AutoCategorisation with the tracker lock already held.
+    for (const auto& item : ready) {
+        ApplyToHash(
+            item.hash,
+            item.pending.categoryFlags,
+            item.pending.materialName);
+
+        if (debugOutput) {
+            Msg("[AutoCategorisation] Retry succeeded for '%s' -> hash 0x%llX, flags 0x%X\n",
+                item.pending.materialName.c_str(),
+                item.hash,
+                item.pending.categoryFlags);
+        }
+
+        item.pending.texture->Release();
+    }
+
+    return static_cast<int>(ready.size());
 }
 
 size_t GetPendingCount() {

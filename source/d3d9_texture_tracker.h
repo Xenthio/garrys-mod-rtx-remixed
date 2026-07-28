@@ -18,6 +18,32 @@ class IMatRenderContext;
 // Hooks IDirect3DDevice9::SetTexture to track which textures are used by which materials
 class D3D9TextureTracker {
 public:
+    // Stable, AddRef'd snapshot of a material's tracked D3D textures.
+    // The tracker can keep accepting render-thread observations while callers
+    // inspect this copy without retaining a pointer into an unordered_map value.
+    class TextureSnapshot {
+    public:
+        TextureSnapshot() = default;
+        ~TextureSnapshot();
+
+        TextureSnapshot(const TextureSnapshot&) = delete;
+        TextureSnapshot& operator=(const TextureSnapshot&) = delete;
+        TextureSnapshot(TextureSnapshot&& other) noexcept;
+        TextureSnapshot& operator=(TextureSnapshot&& other) noexcept;
+
+        bool empty() const { return m_textures.empty(); }
+        size_t size() const { return m_textures.size(); }
+        IDirect3DTexture9* operator[](size_t index) const { return m_textures[index]; }
+        std::vector<IDirect3DTexture9*>::const_iterator begin() const { return m_textures.begin(); }
+        std::vector<IDirect3DTexture9*>::const_iterator end() const { return m_textures.end(); }
+        const std::vector<IDirect3DTexture9*>& Get() const { return m_textures; }
+
+    private:
+        friend class D3D9TextureTracker;
+        void Reset();
+        std::vector<IDirect3DTexture9*> m_textures;
+    };
+
     static D3D9TextureTracker& Instance();
 
     // Initialize the tracker with the D3D9 device
@@ -47,7 +73,7 @@ public:
     IDirect3DTexture9* GetTextureForMaterial(const char* materialName);
     
     // Get all texture variants for a material
-    const std::vector<IDirect3DTexture9*>* GetTextureVariantsForMaterial(const char* materialName);
+    TextureSnapshot GetTextureVariantsForMaterial(const char* materialName);
 
     // Invalidate/clear cached textures for a specific material
     // Call this when a material's $basetexture is changed at runtime (e.g., by Lua)
@@ -58,20 +84,13 @@ public:
     void ClearCache();
 
     // Get cache statistics
-    size_t GetCacheSize() const { return m_textureCache.size(); }
+    size_t GetCacheSize() const;
     
     // Check if initialized
     bool IsInitialized() const { return m_bInitialized; }
 
     // Get all cached materials
-    std::vector<std::string> GetCachedMaterials() const {
-        std::vector<std::string> materials;
-        materials.reserve(m_textureCache.size());
-        for (const auto& pair : m_textureCache) {
-            materials.push_back(pair.first);
-        }
-        return materials;
-    }
+    std::vector<std::string> GetCachedMaterials() const;
 
     // Hash-to-Category mapping system
     void SetHashCategoryFlags(uint64_t textureHash, uint32_t categoryFlags);
@@ -127,6 +146,11 @@ public:
     // Returns true if any material known to share this hash is registered as BSP
     // world geometry, meaning PARTICLE should not be applied to it.
     bool IsAnyBSPWorldMaterialForHash(uint64_t hash) const;
+
+    // Snapshot all verified Stage 0 material names currently associated with a
+    // Remix hash. Used to reject global category bits when the Source materials
+    // sharing that hash disagree (notably LEGACY_EMISSIVE).
+    std::vector<std::string> GetMaterialsForHash(uint64_t hash) const;
 
     // Returns true if any material known to share this hash is NOT registered as
     // BSP world geometry, meaning DECAL_STATIC should not be applied to that hash
@@ -211,6 +235,15 @@ private:
     // Re-hook Bind if the render context instance has changed
     void EnsureBindHook();
 
+    // Verify that a bound D3D texture agrees with the Source material sampler
+    // we intend to track ($basetexture for Stage 0, $basetexture2 for Stage 1).
+    // Must be called while m_mutex is held.
+    bool ValidateTextureAssociation(
+        IMaterial* material,
+        DWORD stage,
+        IDirect3DTexture9* texture,
+        const std::string& materialName);
+
     // Original function pointer
     typedef HRESULT (STDMETHODCALLTYPE *SetTexture_t)(
         IDirect3DDevice9* pDevice,
@@ -228,35 +261,17 @@ private:
     IDirect3DDevice9Ex* m_pDevice = nullptr;
     IMatRenderContext* m_pRenderContext = nullptr;
     
-    // Current material being rendered (set by Bind hooks)
-    std::string m_currentMaterialName;
-    IMaterial* m_currentMaterial = nullptr;
-
-    // D3D9 stage at which the current material's $detail texture is bound.
-    //   0 = no $detail
-    //   1 = VertexLitGeneric / UnlitGeneric: detail at Stage 1
-    //   2 = LightmappedGeneric (no $bumpmap): detail at Stage 2
-    //   3 = LightmappedGeneric + $bumpmap or $basetexture2: Stage 2 is occupied
-    //       (normal map or lightmap-after-blend-shift), so $detail is rendered in
-    //       a separate overlay pass: SetTexture(0, detail) then SetTexture(1, detail).
-    //       Detected at Stage 1 by comparing the texture pointer against
-    //       m_currentStage0Texture (same pointer = overlay pass).
-    // Set at Stage 0; read at Stage 1/2 to apply IGNORED to the detail texture.
-    int m_currentMaterialDetailStage = 0;
-
     // Per-material cache: maps material name -> detail stage (0/1/2/3).
     // Avoids calling FindVar + GetShaderName on every Stage 0 call for the same material.
     std::unordered_map<std::string, int> m_detailTextureCache;
 
-    // Last D3D9 texture bound at Stage 0 for the current material.
-    // Used to detect the bumpmapped LightmappedGeneric detail overlay pass:
-    // when Stage 1 is bound with the same pointer as Stage 0, both are the
-    // detail texture and should be marked IGNORED.
-    // Reset to nullptr on each Bind call.
-    IDirect3DTexture9* m_currentStage0Texture = nullptr;
-
     // Cache: material name -> set of D3D9 textures (materials can have multiple texture variants)
     std::unordered_map<std::string, std::vector<IDirect3DTexture9*>> m_textureCache;
+
+    // The Source texture identity expected for each accepted D3D pointer.
+    // One Source texture may be shared by many VMTs, but the same live D3D
+    // pointer must never silently change from one Source texture to another.
+    std::unordered_map<IDirect3DTexture9*, std::string> m_textureSourceIdentities;
 
     // Reverse map: texture hash -> set of material names that use it (Stage 0 only).
     // Populated as new Stage 0 variants are discovered in Hook_SetTexture.
@@ -307,4 +322,3 @@ private:
 };
 
 #endif // _WIN64
-

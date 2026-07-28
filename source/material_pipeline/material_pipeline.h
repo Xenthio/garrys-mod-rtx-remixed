@@ -51,7 +51,6 @@
 #include <thread>
 #include <condition_variable>
 #include <unordered_map>
-#include <unordered_set>
 #include <mutex>
 #include <atomic>
 #include <functional>
@@ -227,7 +226,11 @@ public:
     // Get all tracked material names
     std::vector<std::string> GetTrackedMaterials() const;
     
-    // Clear tracking cache (for map changes)
+    // Clear runtime observations/queues while preserving ToPBR's persistent
+    // processing cache. Used at map boundaries.
+    void ClearMapState();
+
+    // Clear all tracking and ToPBR processing caches.
     void ClearCache();
     
     // =====================================================================
@@ -335,7 +338,11 @@ private:
     // Process stages 1-3 (ShaderFixes, HashCollision, AutoCategorisation) for a material.
     // This is the core logic shared by ProcessMaterial() and ProcessPendingMaterials().
     // Stage 4 (ToPBR) is handled separately since it can be sync or async.
-    void ProcessMaterialStages(const std::string& materialName, IMaterial* material, IDirect3DTexture9* texture);
+    void ProcessMaterialStages(
+        const std::string& materialName,
+        IMaterial* material,
+        IDirect3DTexture9* texture,
+        bool processAllTrackedVariants = false);
     
     // Internal state
     bool m_initialized = false;
@@ -357,6 +364,9 @@ private:
     struct PendingMaterial {
         std::string name;
         uint64_t hash;
+        // Exact Stage 0 texture that produced this observation. The queue owns
+        // one COM reference until the worker finishes processing the entry.
+        IDirect3DTexture9* texture = nullptr;
     };
     std::vector<PendingMaterial> m_pendingMaterials;
     mutable std::mutex m_pendingMutex;
@@ -374,7 +384,6 @@ private:
     
     // Worker queue (materials waiting for Stages 1-3 processing)
     std::queue<PendingMaterial> m_workerQueue;
-    std::unordered_set<std::string> m_workerQueuedNames;  // Dedup
     mutable std::mutex m_workerMutex;
     std::condition_variable m_workerCondition;
     

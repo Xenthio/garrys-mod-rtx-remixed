@@ -91,6 +91,10 @@ void Initialize(remix::Interface* remix);
 // Shutdown and cleanup
 void Shutdown();
 
+// Clear material-name observations and pending texture references at a map
+// boundary while retaining applied hash flags for collision reconciliation.
+void ClearMapState();
+
 // Configure the system
 void SetConfig(const Config& config);
 const Config& GetConfig();
@@ -143,6 +147,11 @@ uint32_t DetectCategory(const std::string& materialName, IMaterial* material);
 // @param flags - Category flags to apply
 // @param materialName - For logging
 void ApplyToHash(uint64_t hash, uint32_t flags, const std::string& materialName);
+
+// Re-evaluate global category bits after another verified Source material is
+// associated with a hash. LEGACY_EMISSIVE is removed when any material sharing
+// the hash is not emissive, since Remix categories operate on the hash globally.
+void ReconcileHashCategories(uint64_t hash);
 
 // Remove all Remix API registrations for a hash.
 // Calls RemoveTextureHash for every category bit stored under this hash,

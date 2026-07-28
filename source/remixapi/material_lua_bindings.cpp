@@ -9,6 +9,8 @@
 #include <Windows.h>
 #include "../d3d9_texture_tracker.h"
 #include "../globalconvars.h"
+#include "../material_pipeline/auto_categorisation/auto_categorisation.h"
+#include "../material_pipeline/material_pipeline.h"
 
 using namespace GarrysMod::Lua;
 
@@ -432,34 +434,6 @@ LUA_FUNCTION(RemixMaterial_TrackMaterial) {
     if (materials) {
         IMaterial* pMaterial = materials->FindMaterial(materialName, TEXTURE_GROUP_MODEL);
         if (pMaterial && !pMaterial->IsErrorMaterial()) {
-            // Set the current material name DIRECTLY on the tracker before binding.
-            // We cannot rely on Hook_Bind firing because the IMatRenderContext vtable
-            // hook may be on a stale instance (Source Engine can return different
-            // render context objects from GetRenderContext()).
-            D3D9TextureTracker::Instance().SetCurrentMaterial(pMaterial);
-            
-            IMatRenderContext* pContext = materials->GetRenderContext();
-            if (pContext) {
-                pContext->Bind(pMaterial);
-                
-                // Force a tiny draw to ensure the driver processes the bind and calls SetTexture
-                // This is critical for the D3D9 texture tracker to see the texture
-                pContext->DrawScreenSpaceRectangle(
-                    pMaterial,
-                    0, 0, 1, 1, // x, y, w, h (1x1 pixel)
-                    0, 0, 1, 1, // texture coords
-                    1, 1        // texture size
-                );
-
-                // CRITICAL FIX: Flush the command buffer to ensure the driver sees the draw call immediately
-                // Without this, the driver might batch the draw call and execute it later, causing a race condition
-                // where we check for the texture hash before it has been captured.
-                // NOTE: IMatRenderContext doesn't have a Flush() method exposed directly in our interface headers,
-                // but DrawScreenSpaceRectangle should be enough for most drivers. 
-                // If not, we might need to find another way to flush.
-                // However, D3D9's SetTexture is immediate context, so as long as the engine calls it, we're good.
-            }
-
             // Get the base texture var
             bool bFound;
             IMaterialVar* pVar = pMaterial->FindVar("$basetexture", &bFound, false);
@@ -480,9 +454,13 @@ LUA_FUNCTION(RemixMaterial_TrackMaterial) {
             Warning("[RemixMaterial] TrackMaterial: Material '%s' not found or is error material\n", materialName);
         }
     }
-    
-    // Always clear the current material tracking to prevent "stuck" tracking
-    D3D9TextureTracker::Instance().SetCurrentMaterial(nullptr);
+
+    // Do not bind and draw the material here. In queued rendering mode the Lua
+    // call runs on the main thread while SetTexture runs later on the render
+    // thread; forcing hundreds of 1x1 draws during BSP categorization allowed a
+    // material name from one thread to be paired with another draw's texture.
+    // Download() is enough to make the resource resident. The persistent Lua
+    // pending queue will categorize it when a real draw provides a verified hash.
     
     LUA->PushBool(true);
     return 1;
@@ -506,9 +484,10 @@ LUA_FUNCTION(RemixMaterial_GetTextureHash) {
     }
     
     // Get all texture variants for this material
-    const std::vector<IDirect3DTexture9*>* variants = D3D9TextureTracker::Instance().GetTextureVariantsForMaterial(materialName);
+    auto variants =
+        D3D9TextureTracker::Instance().GetTextureVariantsForMaterial(materialName);
     
-    if (!variants || variants->empty()) {
+    if (variants.empty()) {
         // Quiet warning to avoid spam
         // Warning("[RemixMaterial] GetTextureHash: Material '%s' not found in texture cache\n", materialName);
         LUA->PushNumber(0);
@@ -519,38 +498,24 @@ LUA_FUNCTION(RemixMaterial_GetTextureHash) {
     
     // Try all variants and collect their hashes
     uint64_t firstValidHash = 0;
-    for (size_t i = 0; i < variants->size(); ++i) {
-        IDirect3DTexture9* d3dTexture = (*variants)[i];
+    for (size_t i = 0; i < variants.size(); ++i) {
+        IDirect3DTexture9* d3dTexture = variants[i];
         
-        // Validate the texture pointer is still valid before using it
         if (!d3dTexture) {
             continue;
         }
+
+        // The tracker snapshot owns a COM reference for the duration of this
+        // function, so the pointer cannot disappear while Remix reads its hash.
+        auto result = g_remix->dxvk_GetTextureHash(d3dTexture);
         
-        // Try to AddRef/Release to test if the pointer is still valid
-        // If this crashes, the texture was already released by the engine
-        ULONG refCount = d3dTexture->AddRef();
-        if (refCount > 1) {
-            // Texture is still alive, release the ref we just added
-            d3dTexture->Release();
+        if (result) {
+            uint64_t hash = result.value();
+            // Msg("[RemixMaterial]   Variant %zu (0x%p): Hash = 0x%llX\n", i, d3dTexture, hash);
             
-            // Now safe to query the hash
-            auto result = g_remix->dxvk_GetTextureHash(d3dTexture);
-            
-            if (result) {
-                uint64_t hash = result.value();
-                // Msg("[RemixMaterial]   Variant %zu (0x%p): Hash = 0x%llX\n", i, d3dTexture, hash);
-                
-                if (firstValidHash == 0) {
-                    firstValidHash = hash;
-                }
+            if (firstValidHash == 0) {
+                firstValidHash = hash;
             }
-        } else {
-            // Texture has been deleted (refcount was 0 before our AddRef)
-            // Release and skip this variant
-            d3dTexture->Release();
-            Warning("[RemixMaterial] GetTextureHash: Texture variant %zu (0x%p) for '%s' has been released\n", 
-                    i, d3dTexture, materialName);
         }
     }
     
@@ -589,9 +554,10 @@ LUA_FUNCTION(RemixMaterial_GetAllTextureHashes) {
         return 1;
     }
     
-    const std::vector<IDirect3DTexture9*>* variants = D3D9TextureTracker::Instance().GetTextureVariantsForMaterial(materialName);
+    auto variants =
+        D3D9TextureTracker::Instance().GetTextureVariantsForMaterial(materialName);
     
-    if (!variants || variants->empty()) {
+    if (variants.empty()) {
         LUA->CreateTable(); // Return empty table
         return 1;
     }
@@ -600,30 +566,23 @@ LUA_FUNCTION(RemixMaterial_GetAllTextureHashes) {
     LUA->CreateTable();
     int idx = 1;
     
-    for (size_t i = 0; i < variants->size(); ++i) {
-        IDirect3DTexture9* d3dTexture = (*variants)[i];
+    for (size_t i = 0; i < variants.size(); ++i) {
+        IDirect3DTexture9* d3dTexture = variants[i];
         
         if (!d3dTexture) continue;
         
-        ULONG refCount = d3dTexture->AddRef();
-        if (refCount > 1) {
-            d3dTexture->Release();
-            
-            auto result = g_remix->dxvk_GetTextureHash(d3dTexture);
-            if (result) {
-                uint64_t hash = result.value();
-                if (hash != 0) {
-                    char hashStr[32];
-                    sprintf_s(hashStr, "0x%llX", hash);
-                    
-                    LUA->PushNumber(idx);
-                    LUA->PushString(hashStr);
-                    LUA->SetTable(-3);
-                    idx++;
-                }
+        auto result = g_remix->dxvk_GetTextureHash(d3dTexture);
+        if (result) {
+            uint64_t hash = result.value();
+            if (hash != 0) {
+                char hashStr[32];
+                sprintf_s(hashStr, "0x%llX", hash);
+
+                LUA->PushNumber(idx);
+                LUA->PushString(hashStr);
+                LUA->SetTable(-3);
+                idx++;
             }
-        } else {
-            d3dTexture->Release();
         }
     }
     
@@ -674,36 +633,28 @@ LUA_FUNCTION(RemixMaterial_FindMaterialByHash) {
     
     // Check each material's texture hash
     for (const auto& materialName : allMaterials) {
-        const std::vector<IDirect3DTexture9*>* variants = 
+        auto variants =
             D3D9TextureTracker::Instance().GetTextureVariantsForMaterial(materialName.c_str());
         
-        if (!variants || variants->empty()) {
+        if (variants.empty()) {
             continue;
         }
         
         // Check all texture variants for this material
-        for (IDirect3DTexture9* d3dTexture : *variants) {
+        for (IDirect3DTexture9* d3dTexture : variants) {
             if (!d3dTexture) {
                 continue;
             }
             
-            // Validate texture is still alive
-            ULONG refCount = d3dTexture->AddRef();
-            if (refCount > 1) {
-                d3dTexture->Release();
-                
-                // Get the hash from Remix
-                auto result = g_remix->dxvk_GetTextureHash(d3dTexture);
-                if (result) {
-                    uint64_t hash = result.value();
-                    if (hash == queryHash) {
-                        matchingMaterials.push_back(materialName);
-                        Msg("[RemixMaterial]   Found match: '%s' (hash 0x%llX)\n", materialName.c_str(), hash);
-                        break; // Found a match, no need to check other variants
-                    }
+            // The snapshot keeps every pointer alive during this lookup.
+            auto result = g_remix->dxvk_GetTextureHash(d3dTexture);
+            if (result) {
+                uint64_t hash = result.value();
+                if (hash == queryHash) {
+                    matchingMaterials.push_back(materialName);
+                    Msg("[RemixMaterial]   Found match: '%s' (hash 0x%llX)\n", materialName.c_str(), hash);
+                    break; // Found a match, no need to check other variants
                 }
-            } else {
-                d3dTexture->Release();
             }
         }
     }
@@ -831,6 +782,11 @@ LUA_FUNCTION(RemixMaterial_SetHashCategory) {
     // Always store locally so GetHashCategory reflects the intent regardless of
     // whether the Remix API accepted the call this frame.
     D3D9TextureTracker::Instance().SetHashCategoryFlags(textureHash, categoryFlags);
+
+    // Lua-driven scans and the C++ pipeline must obey the same global-hash
+    // collision rule. In particular, do not let an emissive material make a
+    // non-emissive material glow when both resolve to the same Remix hash.
+    MaterialPipeline::AutoCategorisation::ReconcileHashCategories(textureHash);
     
     LUA->PushBool(success);
     return 1;
@@ -933,7 +889,12 @@ LUA_FUNCTION(RemixMaterial_GetHashCategory) {
 // Lua function: RemixMaterial.ClearTextureCache()
 // Clears the D3D9 texture tracker cache
 LUA_FUNCTION(RemixMaterial_ClearTextureCache) {
-    D3D9TextureTracker::Instance().ClearCache();
+    auto& pipeline = MaterialPipeline::Pipeline::Instance();
+    if (pipeline.IsInitialized()) {
+        pipeline.ClearMapState();
+    } else {
+        D3D9TextureTracker::Instance().ClearCache();
+    }
     LUA->PushBool(true);
     return 1;
 }

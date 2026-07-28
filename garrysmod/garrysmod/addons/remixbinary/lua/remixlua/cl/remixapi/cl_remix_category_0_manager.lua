@@ -2413,6 +2413,12 @@ hook.Add("InitPostEntity", "RemixCategoryManager_InitFlags", function()
     pendingCategorizations = {}
     currentMapToken = game.GetMap() or ""
 
+    -- Drop previous-map texture associations and synchronize the C++ pipeline
+    -- worker before starting this map's scan.
+    if RemixMaterial and RemixMaterial.ClearTextureCache then
+        RemixMaterial.ClearTextureCache()
+    end
+
     -- Clear the C++ BSP world material registry so previous-map entries don't
     -- persist into the new map's BSP scan.
     if RemixMaterial and RemixMaterial.ClearBSPWorldMaterials then
