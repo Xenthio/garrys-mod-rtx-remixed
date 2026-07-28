@@ -9,6 +9,7 @@
 #include <materialsystem/itexture.h>
 #include <filesystem.h>
 #include <algorithm>
+#include <atomic>
 #include <functional>
 #include <cctype>
 #include <remix/remix.h>
@@ -21,6 +22,86 @@ extern remix::Interface* g_remix;
 
 // Local filesystem pointer - we'll initialize this ourselves
 static IFileSystem* s_pFileSystem = nullptr;
+
+namespace {
+
+// Render state must be thread-local. Source can issue Bind calls on a queued
+// main-thread context while IDirect3DDevice9::SetTexture runs on the render
+// thread; sharing one "current material" between them lets unrelated draws
+// overwrite each other's identity.
+struct ThreadMaterialState {
+    uint64_t generation = 0;
+    std::string materialName;
+    IMaterial* material = nullptr;
+    bool bindPending = false;
+
+    // D3D9 stage at which this material's $detail texture is expected:
+    //   0 = none, 1 = Stage 1, 2 = Stage 2, 3 = separate Stage 0/1 overlay.
+    int detailStage = 0;
+    bool hasBaseTexture2 = false;
+    IDirect3DTexture9* stage0Texture = nullptr;
+};
+
+thread_local ThreadMaterialState s_threadMaterialState;
+std::atomic<uint64_t> s_materialStateGeneration{1};
+
+static ThreadMaterialState& GetThreadMaterialState() {
+    ThreadMaterialState& state = s_threadMaterialState;
+    const uint64_t generation =
+        s_materialStateGeneration.load(std::memory_order_acquire);
+    if (state.generation != generation) {
+        state = ThreadMaterialState{};
+        state.generation = generation;
+    }
+    return state;
+}
+
+static void InvalidateThreadMaterialStates() {
+    s_materialStateGeneration.fetch_add(1, std::memory_order_acq_rel);
+    // Reset this caller immediately; other threads reset lazily the next time
+    // they enter a Bind/SetTexture hook.
+    s_threadMaterialState = ThreadMaterialState{};
+}
+
+static std::string NormalizeTextureName(const char* name) {
+    std::string normalized = name ? name : "";
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+        [](unsigned char c) {
+            return c == '\\' ? '/' : static_cast<char>(std::tolower(c));
+        });
+    return normalized;
+}
+
+static bool GetMaterialTexture(
+    IMaterial* material,
+    const char* variableName,
+    ITexture** outTexture)
+{
+    if (outTexture) {
+        *outTexture = nullptr;
+    }
+    if (!material || !variableName) {
+        return false;
+    }
+
+    bool found = false;
+    IMaterialVar* variable = material->FindVar(variableName, &found, false);
+    if (!found || !variable) {
+        return false;
+    }
+
+    ITexture* texture = variable->GetTextureValue();
+    if (!texture || texture->IsError()) {
+        return false;
+    }
+
+    if (outTexture) {
+        *outTexture = texture;
+    }
+    return true;
+}
+
+} // namespace
 
 // Helper to get filesystem interface
 static IFileSystem* GetFileSystem() {
@@ -83,6 +164,32 @@ namespace VTableHook {
 D3D9TextureTracker& D3D9TextureTracker::Instance() {
     static D3D9TextureTracker instance;
     return instance;
+}
+
+D3D9TextureTracker::TextureSnapshot::~TextureSnapshot() {
+    Reset();
+}
+
+D3D9TextureTracker::TextureSnapshot::TextureSnapshot(TextureSnapshot&& other) noexcept {
+    m_textures.swap(other.m_textures);
+}
+
+D3D9TextureTracker::TextureSnapshot&
+D3D9TextureTracker::TextureSnapshot::operator=(TextureSnapshot&& other) noexcept {
+    if (this != &other) {
+        Reset();
+        m_textures.swap(other.m_textures);
+    }
+    return *this;
+}
+
+void D3D9TextureTracker::TextureSnapshot::Reset() {
+    for (auto* texture : m_textures) {
+        if (texture) {
+            texture->Release();
+        }
+    }
+    m_textures.clear();
 }
 
 D3D9TextureTracker::~D3D9TextureTracker() {
@@ -166,6 +273,7 @@ void D3D9TextureTracker::Shutdown() {
             }
         }
         m_textureCache.clear();
+        m_textureSourceIdentities.clear();
         
         // Clear pending categorizations
         for (auto& pending : m_pendingCategories) {
@@ -174,9 +282,23 @@ void D3D9TextureTracker::Shutdown() {
             }
         }
         m_pendingCategories.clear();
+
+        for (auto& pending : m_pendingBSPHashes) {
+            if (pending.texture) {
+                pending.texture->Release();
+            }
+        }
+        m_pendingBSPHashes.clear();
+        m_pendingHashResolution.clear();
+
+        m_detailTextureCache.clear();
+        m_hashToMaterials.clear();
+        m_hashToCategoryFlags.clear();
+        m_bspWorldMaterials.clear();
+        m_contestedDecalHashes.clear();
+        m_worldTextureNames.clear();
         
-        m_currentMaterialName.clear();
-        m_currentMaterial = nullptr;
+        InvalidateThreadMaterialStates();
     }
     
     m_pDevice = nullptr;
@@ -232,25 +354,28 @@ void D3D9TextureTracker::EnsureBindHook() {
 }
 
 void D3D9TextureTracker::SetCurrentMaterial(IMaterial* pMaterial) {
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
-    m_currentMaterial = pMaterial;
+    ThreadMaterialState& state = GetThreadMaterialState();
+    state.material = pMaterial;
+    state.bindPending = pMaterial != nullptr;
     // Reset per-draw-call state so the previous material's Stage 0 texture
     // doesn't bleed into the overlay-pass detection of the next material.
-    m_currentStage0Texture = nullptr;
+    state.stage0Texture = nullptr;
+    state.detailStage = 0;
+    state.hasBaseTexture2 = false;
     
     if (pMaterial) {
         const char* name = pMaterial->GetName();
         if (name) {
-            // Normalize to lowercase to handle case-insensitive Source Engine names
-            std::string lowerName = name;
-            std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), 
-                [](unsigned char c){ return std::tolower(c); });
-            m_currentMaterialName = lowerName;
+            state.materialName = NormalizeTextureName(name);
         } else {
-            m_currentMaterialName.clear();
+            state.materialName.clear();
         }
+
+        ITexture* baseTexture2 = nullptr;
+        state.hasBaseTexture2 =
+            GetMaterialTexture(pMaterial, "$basetexture2", &baseTexture2);
     } else {
-        m_currentMaterialName.clear();
+        state.materialName.clear();
     }
 }
 
@@ -275,10 +400,12 @@ IDirect3DTexture9* D3D9TextureTracker::GetTextureForMaterial(const char* materia
     return nullptr;
 }
 
-const std::vector<IDirect3DTexture9*>* D3D9TextureTracker::GetTextureVariantsForMaterial(const char* materialName) {
+D3D9TextureTracker::TextureSnapshot
+D3D9TextureTracker::GetTextureVariantsForMaterial(const char* materialName) {
+    TextureSnapshot snapshot;
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!materialName || !materialName[0]) {
-        return nullptr;
+        return snapshot;
     }
 
     // Normalize lookup key
@@ -288,10 +415,97 @@ const std::vector<IDirect3DTexture9*>* D3D9TextureTracker::GetTextureVariantsFor
 
     auto it = m_textureCache.find(lowerName);
     if (it != m_textureCache.end()) {
-        return &it->second;
+        snapshot.m_textures.reserve(it->second.size());
+        for (auto* texture : it->second) {
+            if (texture) {
+                texture->AddRef();
+                snapshot.m_textures.push_back(texture);
+            }
+        }
     }
 
-    return nullptr;
+    return snapshot;
+}
+
+std::vector<std::string> D3D9TextureTracker::GetCachedMaterials() const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::vector<std::string> materialNames;
+    materialNames.reserve(m_textureCache.size());
+    for (const auto& entry : m_textureCache) {
+        materialNames.push_back(entry.first);
+    }
+    return materialNames;
+}
+
+size_t D3D9TextureTracker::GetCacheSize() const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    return m_textureCache.size();
+}
+
+bool D3D9TextureTracker::ValidateTextureAssociation(
+    IMaterial* material,
+    DWORD stage,
+    IDirect3DTexture9* texture,
+    const std::string& materialName)
+{
+    if (!material || !texture || (stage != 0 && stage != 1)) {
+        return false;
+    }
+
+    const char* variableName = stage == 0 ? "$basetexture" : "$basetexture2";
+    ITexture* expectedTexture = nullptr;
+    if (!GetMaterialTexture(material, variableName, &expectedTexture)) {
+        if (m_enableDebugOutput) {
+            Msg("[D3D9TextureTracker] Rejected Stage %lu texture 0x%p for '%s': no valid %s\n",
+                stage, texture, materialName.c_str(), variableName);
+        }
+        return false;
+    }
+
+    D3DSURFACE_DESC description = {};
+    if (FAILED(texture->GetLevelDesc(0, &description))) {
+        if (m_enableDebugOutput) {
+            Msg("[D3D9TextureTracker] Rejected Stage %lu texture 0x%p for '%s': GetLevelDesc failed\n",
+                stage, texture, materialName.c_str());
+        }
+        return false;
+    }
+
+    const int expectedWidth = expectedTexture->GetActualWidth();
+    const int expectedHeight = expectedTexture->GetActualHeight();
+    if ((expectedWidth > 0 && description.Width != static_cast<UINT>(expectedWidth)) ||
+        (expectedHeight > 0 && description.Height != static_cast<UINT>(expectedHeight))) {
+        if (m_enableDebugOutput) {
+            Msg("[D3D9TextureTracker] Rejected Stage %lu texture 0x%p for '%s': "
+                "%ux%u does not match %s '%s' (%dx%d)\n",
+                stage, texture, materialName.c_str(),
+                description.Width, description.Height,
+                variableName, expectedTexture->GetName(),
+                expectedWidth, expectedHeight);
+        }
+        return false;
+    }
+
+    const std::string expectedIdentity =
+        NormalizeTextureName(expectedTexture->GetName());
+    if (expectedIdentity.empty()) {
+        return false;
+    }
+
+    auto identityIt = m_textureSourceIdentities.find(texture);
+    if (identityIt != m_textureSourceIdentities.end() &&
+        identityIt->second != expectedIdentity) {
+        if (m_enableDebugOutput) {
+            Msg("[D3D9TextureTracker] Rejected texture identity mismatch for 0x%p: "
+                "'%s' expects '%s', pointer was already verified as '%s'\n",
+                texture, materialName.c_str(), expectedIdentity.c_str(),
+                identityIt->second.c_str());
+        }
+        return false;
+    }
+
+    m_textureSourceIdentities[texture] = expectedIdentity;
+    return true;
 }
 
 size_t D3D9TextureTracker::InvalidateMaterialCache(const char* materialName) {
@@ -327,6 +541,7 @@ size_t D3D9TextureTracker::InvalidateMaterialCache(const char* materialName) {
         // Release texture references
         for (auto* tex : it->second) {
             if (tex) {
+                m_textureSourceIdentities.erase(tex);
                 tex->Release();
             }
         }
@@ -345,6 +560,10 @@ size_t D3D9TextureTracker::InvalidateMaterialCache(const char* materialName) {
     if (totalCount == 0) {
         return 0;
     }
+
+    // A runtime material update may retain the same material name while changing
+    // its Source texture variables. Force every hook thread to rediscover them.
+    InvalidateThreadMaterialStates();
     
     if (m_enableDebugOutput) {
         Msg("[D3D9TextureTracker] Invalidated cache for '%s' and variants (%zu textures)\n", materialName, totalCount);
@@ -365,11 +584,12 @@ void D3D9TextureTracker::ClearCache() {
         }
     }
     m_textureCache.clear();
+    m_textureSourceIdentities.clear();
     m_detailTextureCache.clear();
     m_hashToMaterials.clear();
     m_bspWorldMaterials.clear();
     m_contestedDecalHashes.clear();
-    m_currentMaterialDetailStage = 0;
+    InvalidateThreadMaterialStates();
     
     // Also clear pending categorizations
     for (auto& pending : m_pendingCategories) {
@@ -400,12 +620,14 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
     IDirect3DBaseTexture9* pTexture)
 {
     D3D9TextureTracker& tracker = Instance();
+    ThreadMaterialState& drawState = GetThreadMaterialState();
+    bool materialIdentityConflict = false;
+    uint64_t hashToReconcile = 0;
 
-    // Always query the currently bound material via GetCurrentMaterial() for Stage 0.
-    // This is more reliable than Hook_Bind which depends on a fragile vtable hook that
-    // may be applied to a stale IMatRenderContext instance (queued vs immediate context).
-    // GetCurrentMaterial() is called BEFORE acquiring our mutex to avoid potential deadlocks
-    // with the material system's internal locks.
+    // Cross-check the Bind hook against GetCurrentMaterial on Stage 0. A disagreement
+    // means the queued and immediate material contexts are out of phase, so rejecting
+    // this observation is safer than permanently assigning the texture to either name.
+    // The next draw will normally provide another, consistent observation.
     if (Stage == 0 && pTexture && materials) {
         IMatRenderContext* ctx = materials->GetRenderContext();
         if (ctx) {
@@ -413,11 +635,29 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
             if (pCurMat) {
                 const char* name = pCurMat->GetName();
                 if (name && name[0]) {
-                    // SetCurrentMaterial handles its own locking
-                    tracker.SetCurrentMaterial(pCurMat);
+                    const std::string queriedName = NormalizeTextureName(name);
+                    if (drawState.bindPending &&
+                        !drawState.materialName.empty() &&
+                        drawState.materialName != queriedName) {
+                        materialIdentityConflict = true;
+                        if (tracker.m_enableDebugOutput) {
+                            Msg("[D3D9TextureTracker] Rejected Stage 0 identity disagreement: "
+                                "Bind='%s', GetCurrentMaterial='%s', texture=0x%p\n",
+                                drawState.materialName.c_str(), queriedName.c_str(), pTexture);
+                        }
+                    }
+                    if (drawState.materialName != queriedName) {
+                        tracker.SetCurrentMaterial(pCurMat);
+                    } else {
+                        // GetCurrentMaterial is queried for every Stage 0 pass.
+                        // Do not reset the per-draw detail state when it merely
+                        // confirms the material already supplied by Hook_Bind.
+                        drawState.material = pCurMat;
+                    }
                 }
             }
         }
+        drawState.bindPending = false;
     }
 
     {
@@ -425,14 +665,14 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
 
         // Always log if we have a current material to help debug
 #ifdef _DEBUG
-        if (Stage == 0 && pTexture && !tracker.m_currentMaterialName.empty()) {
-            // Msg("[D3D9TextureTracker] SetTexture(0, %p) for '%s'\n", pTexture, tracker.m_currentMaterialName.c_str());
+        if (Stage == 0 && pTexture && !drawState.materialName.empty()) {
+            // Msg("[D3D9TextureTracker] SetTexture(0, %p) for '%s'\n", pTexture, drawState.materialName.c_str());
         }
 #endif
 
         // DEBUG: Log all texture stages for displacement materials
-        if (pTexture && !tracker.m_currentMaterialName.empty()) {
-            std::string lowerName = tracker.m_currentMaterialName;
+        if (pTexture && !drawState.materialName.empty()) {
+            std::string lowerName = drawState.materialName;
             std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), 
                 [](unsigned char c){ return std::tolower(c); });
             
@@ -443,23 +683,38 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                     dispSetTexCount++;
                     if (dispSetTexCount <= 20) {
                         Msg("[D3D9TextureTracker] SetTexture(Stage=%d, 0x%p) for displacement '%s'\n", 
-                            Stage, pTexture, tracker.m_currentMaterialName.c_str());
+                            Stage, pTexture, drawState.materialName.c_str());
                     }
                 }
             }
         }
 
-        // Track textures at stage 0 and stage 1 (displacement materials use multi-stage blending)
-        if ((Stage == 0 || Stage == 1) && pTexture) {
+        // Stage 1 is only a material texture when the VMT actually declares
+        // $basetexture2. For ordinary materials it is a lightmap, bump/detail
+        // texture, or another shader input and must never inherit Stage 0's category.
+        const bool shouldTrackMaterialTexture =
+            Stage == 0 || (Stage == 1 && drawState.hasBaseTexture2);
+
+        // Remember every Stage 0 pointer, including rejected auxiliary passes.
+        // A following Stage 1 bind of the same pointer is the signal used to
+        // identify LightmappedGeneric's separate $detail overlay pass.
+        if (Stage == 0 && pTexture && pTexture->GetType() == D3DRTYPE_TEXTURE) {
+            drawState.stage0Texture =
+                static_cast<IDirect3DTexture9*>(pTexture);
+        }
+
+        if (shouldTrackMaterialTexture && !materialIdentityConflict && pTexture) {
             // Check if this is a 2D texture (not cube/volume)
             D3DRESOURCETYPE resType = pTexture->GetType();
             if (resType == D3DRTYPE_TEXTURE) {
                 IDirect3DTexture9* p2DTexture = static_cast<IDirect3DTexture9*>(pTexture);
                 
                 // If we have a current material name, use it
-                if (!tracker.m_currentMaterialName.empty()) {
+                if (!drawState.materialName.empty() &&
+                    tracker.ValidateTextureAssociation(
+                        drawState.material, Stage, p2DTexture, drawState.materialName)) {
                     // For Stage 1 textures, append "_stage1" to the material name to track separately
-                    std::string trackingName = tracker.m_currentMaterialName;
+                    std::string trackingName = drawState.materialName;
                     if (Stage == 1) {
                         trackingName += "_stage1";
                     }
@@ -476,14 +731,14 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                     //       overlay pass where the engine calls SetTexture(0/1, detail).
                     //       The normal Stage 2 path is not used in this case.
                     if (Stage == 0) {
-                        auto cacheIt = tracker.m_detailTextureCache.find(tracker.m_currentMaterialName);
+                        auto cacheIt = tracker.m_detailTextureCache.find(drawState.materialName);
                         if (cacheIt != tracker.m_detailTextureCache.end()) {
-                            tracker.m_currentMaterialDetailStage = cacheIt->second;
+                            drawState.detailStage = cacheIt->second;
                         } else {
                             int detailStage = 0;
-                            if (tracker.m_currentMaterial) {
+                            if (drawState.material) {
                                 bool found = false;
-                                IMaterialVar* pDetailVar = tracker.m_currentMaterial->FindVar("$detail", &found, false);
+                                IMaterialVar* pDetailVar = drawState.material->FindVar("$detail", &found, false);
                                 // GetStringValue() returns "" for resolved texture vars; use
                                 // GetTextureValue() which is reliable for both loaded and
                                 // not-yet-loaded textures.
@@ -491,7 +746,7 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                                     pDetailVar->GetTextureValue() &&
                                     !pDetailVar->GetTextureValue()->IsError();
                                 if (hasDetail) {
-                                    const char* shaderName = tracker.m_currentMaterial->GetShaderName();
+                                    const char* shaderName = drawState.material->GetShaderName();
                                     if (shaderName) {
                                         std::string lowerShader = shaderName;
                                         std::transform(lowerShader.begin(), lowerShader.end(),
@@ -511,26 +766,21 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                                             // In both cases set detailStage=3 so we detect the detail
                                             // via the Stage 0/Stage 1 co-binding heuristic.
                                             bool foundBump = false;
-                                            IMaterialVar* pBumpVar = tracker.m_currentMaterial->FindVar("$bumpmap", &foundBump, false);
+                                            IMaterialVar* pBumpVar = drawState.material->FindVar("$bumpmap", &foundBump, false);
                                             bool hasBump = foundBump && pBumpVar &&
                                                 pBumpVar->GetTextureValue() &&
                                                 !pBumpVar->GetTextureValue()->IsError();
 
-                                            bool foundBase2 = false;
-                                            IMaterialVar* pBase2Var = tracker.m_currentMaterial->FindVar("$basetexture2", &foundBase2, false);
-                                            bool hasBase2 = foundBase2 && pBase2Var &&
-                                                pBase2Var->GetTextureValue() &&
-                                                !pBase2Var->GetTextureValue()->IsError();
-
-                                            detailStage = (hasBump || hasBase2) ? 3 : 2;
+                                            detailStage =
+                                                (hasBump || drawState.hasBaseTexture2) ? 3 : 2;
                                         }
                                     } else {
                                         detailStage = 2; // safe default
                                     }
                                 }
                             }
-                            tracker.m_detailTextureCache[tracker.m_currentMaterialName] = detailStage;
-                            tracker.m_currentMaterialDetailStage = detailStage;
+                            tracker.m_detailTextureCache[drawState.materialName] = detailStage;
+                            drawState.detailStage = detailStage;
                         }
                     }
                     
@@ -562,7 +812,7 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                         // Re-enable logging for debugging texture capture issues
                         if (tracker.m_enableDebugOutput) {
                             Msg("[D3D9TextureTracker] NEW texture variant #%zu: 0x%p for '%s'%s (hash: 0x%llX)\n", 
-                                textures.size(), p2DTexture, tracker.m_currentMaterialName.c_str(), 
+                                textures.size(), p2DTexture, drawState.materialName.c_str(),
                                 Stage == 1 ? " [STAGE1]" : "", hash);
                         }
                             
@@ -570,9 +820,10 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                         // Also handle stale category tags caused by hash collisions between
                         // BSP world materials and non-world materials (models, etc.).
                         if (Stage == 0 && hash != 0) {
-                            tracker.m_hashToMaterials[hash].insert(tracker.m_currentMaterialName);
+                            tracker.m_hashToMaterials[hash].insert(drawState.materialName);
+                            hashToReconcile = hash;
 
-                            std::string lowerMatName = tracker.m_currentMaterialName;
+                            std::string lowerMatName = drawState.materialName;
                             std::transform(lowerMatName.begin(), lowerMatName.end(),
                                 lowerMatName.begin(), [](unsigned char c){ return std::tolower(c); });
 
@@ -600,7 +851,7 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                                         hash, acFlags & ~PARTICLE);
                                     if (tracker.m_enableDebugOutput) {
                                         Msg("[D3D9TextureTracker] Removed stale PARTICLE for BSP world material '%s' (hash %s)\n",
-                                            tracker.m_currentMaterialName.c_str(), hashStr);
+                                            drawState.materialName.c_str(), hashStr);
                                     }
                                 }
                             }
@@ -611,7 +862,7 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                             // and the hash already carries DECAL_STATIC from a colliding world brush,
                             // mark it as permanently contested and remove the tag.  The contested
                             // state prevents RecheckWorldTextures from silently re-applying it.
-                            if (!tracker.IsWorldTexture(tracker.m_currentMaterialName)) {
+                            if (!tracker.IsWorldTexture(drawState.materialName)) {
                                 if (allExistingFlags & DECAL_STATIC) {
                                     char hashStr[32];
                                     sprintf_s(hashStr, "0x%llX", hash);
@@ -622,7 +873,7 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                                         hash, acFlags & ~DECAL_STATIC);
                                     if (tracker.m_enableDebugOutput) {
                                         Msg("[D3D9TextureTracker] Hash %s contested: removed DECAL_STATIC for non-decal material '%s'\n",
-                                            hashStr, tracker.m_currentMaterialName.c_str());
+                                            hashStr, drawState.materialName.c_str());
                                     }
                                 }
                             }
@@ -635,12 +886,12 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                         // only mechanism that lets us retroactively remove a stale PARTICLE tag
                         // once the hash is resolved and we discover the collision.
                         if (Stage == 0 && hash == 0) {
-                            std::string lowerForBSP = tracker.m_currentMaterialName;
+                            std::string lowerForBSP = drawState.materialName;
                             std::transform(lowerForBSP.begin(), lowerForBSP.end(),
                                 lowerForBSP.begin(), [](unsigned char c){ return std::tolower(c); });
                             if (tracker.m_bspWorldMaterials.count(lowerForBSP)) {
                                 p2DTexture->AddRef();
-                                tracker.m_pendingBSPHashes.push_back({p2DTexture, tracker.m_currentMaterialName});
+                                tracker.m_pendingBSPHashes.push_back({p2DTexture, drawState.materialName});
                             }
                         }
 
@@ -651,13 +902,13 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                             if (hash != 0) {
                                 // Hash is ready — notify the pipeline immediately.
                                 MaterialPipeline::Pipeline::OnNewMaterialDetected(
-                                    tracker.m_currentMaterialName, hash, p2DTexture);
+                                    drawState.materialName, hash, p2DTexture);
 
                                 // For animated textures: apply any already-detected category flags
                                 // to new variants as they appear (no need for re-detection).
                                 if (textures.size() > 1) {
                                     MaterialPipeline::AutoCategorisation::ApplyKnownCategoryToTexture(
-                                        tracker.m_currentMaterialName, p2DTexture);
+                                        drawState.materialName, p2DTexture);
                                 }
                             } else {
                                 // Remix hasn't processed this texture yet — defer pipeline
@@ -665,7 +916,7 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                                 // a valid non-zero hash.  The pointer is kept alive by
                                 // m_textureCache; no extra AddRef is needed here.
                                 tracker.m_pendingHashResolution.push_back(
-                                    {p2DTexture, tracker.m_currentMaterialName});
+                                    {p2DTexture, drawState.materialName});
 
                                 // For animated textures: if this material was already
                                 // categorized via a prior frame, fast-apply the stored
@@ -675,20 +926,14 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                                 // via ApplyKnownCategoryToTexture when textures.size()>1.
                                 if (textures.size() > 1) {
                                     MaterialPipeline::AutoCategorisation::ApplyKnownCategoryToTexture(
-                                        tracker.m_currentMaterialName, p2DTexture);
+                                        drawState.materialName, p2DTexture);
                                 }
                             }
                         }
 
-                        // Track the most-recently bound Stage 0 texture.
-                        // Used below to detect the bumpmapped LMG detail overlay pass.
-                        if (Stage == 0) {
-                            tracker.m_currentStage0Texture = p2DTexture;
-                        }
-
                         // VertexLitGeneric + $detail: Stage 1 is the detail texture.
                         // Apply IGNORED so RTX Remix skips it.
-                        if (Stage == 1 && tracker.m_currentMaterialDetailStage == 1 && g_remix) {
+                        if (Stage == 1 && drawState.detailStage == 1 && g_remix) {
                             using namespace MaterialPipeline::AutoCategorisation::CategoryFlags;
                             if (hash != 0) {
                                 uint32_t existingFlags = 0;
@@ -698,7 +943,7 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                                 if (!(existingFlags & IGNORED)) {
                                     if (tracker.m_enableDebugOutput) {
                                         Msg("[D3D9TextureTracker] Ignoring detail texture (Stage1/VLG) for '%s' (hash 0x%llX)\n",
-                                            tracker.m_currentMaterialName.c_str(), hash);
+                                            drawState.materialName.c_str(), hash);
                                     }
                                     tracker.ApplyCategoryToHash(hash, IGNORED, trackingName.c_str());
                                 }
@@ -724,7 +969,8 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                     }
                 } else {
                     // DEBUG: Log textures that are set without a material name
-                    if (tracker.m_enableDebugOutput) {
+                    if (drawState.materialName.empty() &&
+                        tracker.m_enableDebugOutput) {
                         // DEBUG: Log unmatched textures occasionally
                         static int unmatchedCount = 0;
                         unmatchedCount++;
@@ -745,18 +991,60 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
             }
         }
 
+        // VertexLitGeneric / UnlitGeneric + $detail uses Stage 1 for the detail
+        // sampler. It is intentionally handled outside the material-variant cache:
+        // Stage 1 is not a second base texture and must only receive IGNORED.
+        if (Stage == 1 && drawState.detailStage == 1 && pTexture && g_remix &&
+            pTexture->GetType() == D3DRTYPE_TEXTURE) {
+            using namespace MaterialPipeline::AutoCategorisation::CategoryFlags;
+            IDirect3DTexture9* detailTexture =
+                static_cast<IDirect3DTexture9*>(pTexture);
+            auto result = g_remix->dxvk_GetTextureHash(detailTexture);
+            if (result && result.value() != 0) {
+                const uint64_t hash = result.value();
+                uint32_t existingFlags = 0;
+                tracker.GetHashCategoryFlags(hash, &existingFlags);
+                if (!(existingFlags & IGNORED)) {
+                    if (tracker.m_enableDebugOutput) {
+                        Msg("[D3D9TextureTracker] Ignoring Stage 1 detail for '%s' "
+                            "(hash 0x%llX)\n",
+                            drawState.materialName.c_str(), hash);
+                    }
+                    tracker.ApplyCategoryToHash(
+                        hash, IGNORED, drawState.materialName.c_str());
+                }
+            } else if (result) {
+                bool alreadyPending = false;
+                for (const auto& pending : tracker.m_pendingCategories) {
+                    if (pending.texture == detailTexture &&
+                        pending.categoryFlags == IGNORED) {
+                        alreadyPending = true;
+                        break;
+                    }
+                }
+                if (!alreadyPending) {
+                    detailTexture->AddRef();
+                    tracker.m_pendingCategories.push_back({
+                        detailTexture,
+                        drawState.materialName + "_detail",
+                        IGNORED
+                    });
+                }
+            }
+        }
+
         // LightmappedGeneric + $bumpmap + $detail (detailStage==3):
         // The engine renders $detail in a separate overlay pass using two consecutive
         // SetTexture calls:  SetTexture(0, detail)  then  SetTexture(1, detail).
         // The reliable signal is that Stage 1 receives the SAME D3D9 pointer as Stage 0.
         // We check this every frame (not just for new variants) so that IGNORED persists
         // even after AutoCat's pending-retry may have re-added the hash to rtx.decalTextures.
-        if (Stage == 1 && tracker.m_currentMaterialDetailStage == 3 &&
-            pTexture && tracker.m_currentStage0Texture && g_remix) {
+        if (Stage == 1 && drawState.detailStage == 3 &&
+            pTexture && drawState.stage0Texture && g_remix) {
             D3DRESOURCETYPE resType = pTexture->GetType();
             if (resType == D3DRTYPE_TEXTURE) {
                 IDirect3DTexture9* p2DTexture = static_cast<IDirect3DTexture9*>(pTexture);
-                if (p2DTexture == tracker.m_currentStage0Texture) {
+                if (p2DTexture == drawState.stage0Texture) {
                     using namespace MaterialPipeline::AutoCategorisation::CategoryFlags;
                     auto result = g_remix->dxvk_GetTextureHash(p2DTexture);
                     if (result && result.value() != 0) {
@@ -766,9 +1054,9 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                         if (!(existingFlags & IGNORED)) {
                             if (tracker.m_enableDebugOutput) {
                                 Msg("[D3D9TextureTracker] Ignoring detail overlay texture (Stage1/LMG+bump) for '%s' (hash 0x%llX)\n",
-                                    tracker.m_currentMaterialName.c_str(), hash);
+                                    drawState.materialName.c_str(), hash);
                             }
-                            tracker.ApplyCategoryToHash(hash, IGNORED, tracker.m_currentMaterialName.c_str());
+                            tracker.ApplyCategoryToHash(hash, IGNORED, drawState.materialName.c_str());
                         }
                     } else if (result) {
                         // Hash not ready — queue for retry
@@ -783,7 +1071,7 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                             p2DTexture->AddRef();
                             PendingCategory pc;
                             pc.texture = p2DTexture;
-                            pc.materialName = tracker.m_currentMaterialName + "_detail_overlay";
+                            pc.materialName = drawState.materialName + "_detail_overlay";
                             pc.categoryFlags = IGNORED;
                             tracker.m_pendingCategories.push_back(pc);
                         }
@@ -795,7 +1083,7 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
         // Stage 2: detail texture for LightmappedGeneric — mark as IGNORED so RTX Remix skips it.
         // LightmappedGeneric binds: Stage 0 = base, Stage 1 = lightmap, Stage 2 = $detail.
         // We only fire when Stage 0 determined the detail is at Stage 2 (LightmappedGeneric path).
-        if (Stage == 2 && pTexture && tracker.m_currentMaterialDetailStage == 2 && g_remix) {
+        if (Stage == 2 && pTexture && drawState.detailStage == 2 && g_remix) {
             D3DRESOURCETYPE resType = pTexture->GetType();
             if (resType == D3DRTYPE_TEXTURE) {
                 IDirect3DTexture9* p2DTexture = static_cast<IDirect3DTexture9*>(pTexture);
@@ -811,9 +1099,9 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                     if (!(existingFlags & IGNORED)) {
                         if (tracker.m_enableDebugOutput) {
                             Msg("[D3D9TextureTracker] Ignoring detail texture for '%s' (hash 0x%llX)\n",
-                                tracker.m_currentMaterialName.c_str(), hash);
+                                drawState.materialName.c_str(), hash);
                         }
-                        tracker.ApplyCategoryToHash(hash, IGNORED, tracker.m_currentMaterialName.c_str());
+                        tracker.ApplyCategoryToHash(hash, IGNORED, drawState.materialName.c_str());
                     }
                 } else if (result) {
                     // Hash not ready yet — queue for retry
@@ -825,13 +1113,18 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                         p2DTexture->AddRef();
                         PendingCategory pc;
                         pc.texture = p2DTexture;
-                        pc.materialName = tracker.m_currentMaterialName + "_detail";
+                        pc.materialName = drawState.materialName + "_detail";
                         pc.categoryFlags = IGNORED;
                         tracker.m_pendingCategories.push_back(pc);
                     }
                 }
             }
         }
+    }
+
+    if (hashToReconcile != 0) {
+        MaterialPipeline::AutoCategorisation::ReconcileHashCategories(
+            hashToReconcile);
     }
 
     // Periodically check if the render context changed and re-hook Bind if needed.
@@ -907,6 +1200,7 @@ void D3D9TextureTracker::Hook_Bind(IMatRenderContext* pContext, IMaterial* pMate
 
 // Hash-to-Category mapping implementation
 void D3D9TextureTracker::SetHashCategoryFlags(uint64_t textureHash, uint32_t categoryFlags) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     m_hashToCategoryFlags[textureHash] = categoryFlags;
     if (m_enableDebugOutput) {
         Msg("[D3D9TextureTracker] Set category flags 0x%X for hash 0x%llX\n", categoryFlags, textureHash);
@@ -914,6 +1208,7 @@ void D3D9TextureTracker::SetHashCategoryFlags(uint64_t textureHash, uint32_t cat
 }
 
 void D3D9TextureTracker::RemoveHashCategoryFlags(uint64_t textureHash) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     auto it = m_hashToCategoryFlags.find(textureHash);
     if (it != m_hashToCategoryFlags.end()) {
         m_hashToCategoryFlags.erase(it);
@@ -924,6 +1219,7 @@ void D3D9TextureTracker::RemoveHashCategoryFlags(uint64_t textureHash) {
 }
 
 void D3D9TextureTracker::ClearHashCategoryMappings() {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     size_t count = m_hashToCategoryFlags.size();
     m_hashToCategoryFlags.clear();
     if (m_enableDebugOutput) {
@@ -932,6 +1228,7 @@ void D3D9TextureTracker::ClearHashCategoryMappings() {
 }
 
 bool D3D9TextureTracker::GetHashCategoryFlags(uint64_t textureHash, uint32_t* outCategoryFlags) const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     auto it = m_hashToCategoryFlags.find(textureHash);
     if (it != m_hashToCategoryFlags.end()) {
         if (outCategoryFlags) {
@@ -1179,6 +1476,7 @@ void D3D9TextureTracker::ApplyCategoryToHash(uint64_t hash, uint32_t categoryFla
 }
 
 int D3D9TextureTracker::RetryPendingHashResolution() {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!g_remix || m_pendingHashResolution.empty()) return 0;
 
     using namespace MaterialPipeline::AutoCategorisation::CategoryFlags;
@@ -1197,6 +1495,7 @@ int D3D9TextureTracker::RetryPendingHashResolution() {
 
         // Insert into the hash→materials reverse map.
         m_hashToMaterials[hash].insert(pending.materialName);
+        MaterialPipeline::AutoCategorisation::ReconcileHashCategories(hash);
 
         // Run the same collision-detection logic that the !found path applies
         // for immediately-available hashes.
@@ -1270,6 +1569,7 @@ int D3D9TextureTracker::RetryPendingHashResolution() {
 }
 
 int D3D9TextureTracker::RetryPendingCategories() {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!g_remix) return 0;
     
     if (m_pendingCategories.empty()) return 0;
@@ -1389,6 +1689,8 @@ int D3D9TextureTracker::RetryPendingCategories() {
 
 int D3D9TextureTracker::RescanAllMaterials() {
     if (!g_remix || !materials) return 0;
+
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     
     // Check if auto-categorization is enabled
     if (!m_enableAutoCategorization) {
@@ -1688,6 +1990,22 @@ bool D3D9TextureTracker::IsAnyBSPWorldMaterialForHash(uint64_t hash) const {
     return false;
 }
 
+std::vector<std::string>
+D3D9TextureTracker::GetMaterialsForHash(uint64_t hash) const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::vector<std::string> materialNames;
+    auto it = m_hashToMaterials.find(hash);
+    if (it == m_hashToMaterials.end()) {
+        return materialNames;
+    }
+
+    materialNames.reserve(it->second.size());
+    for (const auto& name : it->second) {
+        materialNames.push_back(name);
+    }
+    return materialNames;
+}
+
 bool D3D9TextureTracker::HasNonBSPWorldMaterialForHash(uint64_t hash) const {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
     auto it = m_hashToMaterials.find(hash);
@@ -1814,4 +2132,3 @@ bool D3D9TextureTracker::IsWorldTexture(const std::string& materialName) const {
 }
 
 #endif // _WIN64
-

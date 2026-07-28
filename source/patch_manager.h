@@ -6,15 +6,23 @@
 #include <string>
 #include <functional>
 
+struct PatchLocator {
+	std::string description;             // Human-readable locator variant
+	std::string signature;               // Signature to find (ScanSign format)
+	int offset;                          // Preferred offset from signature to patch
+	int offsetSearchRadius;              // Search around offset for expectedBytes
+	std::vector<uint8_t> expectedBytes;   // Bytes expected at the patch address
+};
+
 struct PatchEntry {
 	std::string name;           // Human-readable name
 	std::string moduleName;     // DLL to patch (e.g. "engine.dll")
-	std::string signature;      // Signature to find (ScanSign format)
-	size_t sigLen;              // Length of signature string
-	int offset;                 // Offset from found address to patch
+	std::vector<PatchLocator> locators;   // Ordered signature fallbacks
 	std::vector<uint8_t> patchBytes;    // Bytes to write
 	std::vector<uint8_t> originalBytes; // Saved original bytes
 	void* patchAddress;         // Resolved address
+	void* resolvedModuleBase;   // Module instance used during resolution
+	size_t resolvedLocator;     // Index of the locator that resolved
 	bool applied;               // Whether patch is currently active
 };
 
@@ -22,13 +30,12 @@ class PatchManager {
 public:
 	static PatchManager& Instance();
 
-	// Register a patch definition
-	void RegisterPatch(
+	// Register a patch with ordered, validated signature fallbacks.
+	// Every locator must provide expected bytes covering the patch range.
+	bool RegisterPatchWithFallbacks(
 		const std::string& name,
 		const std::string& moduleName,
-		const char* signature,
-		size_t sigLen,
-		int offset,
+		const std::vector<PatchLocator>& locators,
 		const std::vector<uint8_t>& patchBytes
 	);
 

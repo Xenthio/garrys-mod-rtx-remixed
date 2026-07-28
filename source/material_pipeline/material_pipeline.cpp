@@ -120,15 +120,21 @@ void Pipeline::Shutdown() {
 void Pipeline::OnNewMaterialDetected(const std::string& materialName, uint64_t textureHash, IDirect3DTexture9* pTexture) {
     Pipeline& pipeline = Instance();
     
-    if (!pipeline.IsInitialized()) {
+    if (!pipeline.IsInitialized() || !pTexture) {
         return;
     }
+
+    // Keep the exact observed texture alive until the worker consumes it.
+    // Looking it up by material name later used to select the cache's first
+    // pointer (or every pointer), which amplified one bad association across
+    // unrelated variants.
+    pTexture->AddRef();
     
     // Queue the material for processing on the main thread
     // We do NOT process here because we're inside a D3D9 hook
     {
         std::lock_guard<std::mutex> lock(pipeline.m_pendingMutex);
-        pipeline.m_pendingMaterials.push_back({materialName, textureHash});
+        pipeline.m_pendingMaterials.push_back({materialName, textureHash, pTexture});
     }
     
     // Fire the detected callback (lightweight, safe to call from hook)
@@ -222,6 +228,11 @@ void Pipeline::ShutdownInternal() {
     // Clear pending materials queue
     {
         std::lock_guard<std::mutex> pendingLock(m_pendingMutex);
+        for (auto& pending : m_pendingMaterials) {
+            if (pending.texture) {
+                pending.texture->Release();
+            }
+        }
         m_pendingMaterials.clear();
     }
     
@@ -315,7 +326,8 @@ int Pipeline::QueueAllMaterials() {
 // =========================================================================
 void Pipeline::ProcessMaterialStages(const std::string& materialName, 
                                       IMaterial* material, 
-                                      IDirect3DTexture9* texture) {
+                                      IDirect3DTexture9* texture,
+                                      bool processAllTrackedVariants) {
     // -------------------------------------------------------------------------
     // STAGE 1: ShaderFixes
     // -------------------------------------------------------------------------
@@ -357,19 +369,23 @@ void Pipeline::ProcessMaterialStages(const std::string& materialName,
     // STAGE 3: AutoCategorisation
     // -------------------------------------------------------------------------
     // Classify material as particle, decal, emissive, sky, water, etc.
-    // Use ALL texture variants for better hash coverage (animated textures have many variants,
-    // some may have hash=0 while others have valid hashes)
-    const std::vector<IDirect3DTexture9*>* textureVariants = 
-        D3D9TextureTracker::Instance().GetTextureVariantsForMaterial(materialName.c_str());
-    
-    if (textureVariants && !textureVariants->empty()) {
-        uint32_t categoryFlags = AutoCategorisation::DetectAndApplyAllVariants(materialName, material, textureVariants);
-        if (categoryFlags != 0 && m_config.debugOutput) {
-            Msg("[MaterialPipeline] Stage 3 (AutoCategorisation): %s - flags 0x%X (%zu variants)\n", 
-                materialName.c_str(), categoryFlags, textureVariants->size());
+    if (processAllTrackedVariants) {
+        auto textureVariants =
+            D3D9TextureTracker::Instance().GetTextureVariantsForMaterial(
+                materialName.c_str());
+        if (!textureVariants.empty()) {
+            uint32_t categoryFlags =
+                AutoCategorisation::DetectAndApplyAllVariants(
+                    materialName, material, &textureVariants.Get());
+            if (categoryFlags != 0 && m_config.debugOutput) {
+                Msg("[MaterialPipeline] Stage 3 (AutoCategorisation): %s - "
+                    "flags 0x%X (%zu verified variants)\n",
+                    materialName.c_str(), categoryFlags, textureVariants.size());
+            }
         }
     } else if (texture) {
-        // Fallback to single texture if variants not available
+        // Normal hook-driven processing is deliberately scoped to the exact,
+        // verified Stage 0 pointer that produced the detection event.
         uint32_t categoryFlags = AutoCategorisation::DetectAndApply(materialName, material, texture);
         if (categoryFlags != 0 && m_config.debugOutput) {
             Msg("[MaterialPipeline] Stage 3 (AutoCategorisation): %s - flags 0x%X\n", 
@@ -407,13 +423,17 @@ bool Pipeline::ProcessMaterial(const std::string& materialName) {
         }
     }
     
-    // Get texture pointer for stages that need it
-    IDirect3DTexture9* texture = D3D9TextureTracker::Instance().GetTextureForMaterial(materialName.c_str());
+    // Keep a stable reference while the blocking path inspects this material.
+    auto textureSnapshot =
+        D3D9TextureTracker::Instance().GetTextureVariantsForMaterial(
+            materialName.c_str());
+    IDirect3DTexture9* texture =
+        textureSnapshot.empty() ? nullptr : textureSnapshot[0];
     
     // -------------------------------------------------------------------------
     // STAGES 1-3: ShaderFixes, HashCollision, AutoCategorisation
     // -------------------------------------------------------------------------
-    ProcessMaterialStages(materialName, material, texture);
+    ProcessMaterialStages(materialName, material, texture, true);
     
     // -------------------------------------------------------------------------
     // STAGE 4: ToPBR (BLOCKING - runs synchronously)
@@ -468,12 +488,9 @@ int Pipeline::ProcessPendingMaterials() {
             std::lock_guard<std::mutex> workerLock(m_workerMutex);
             
             for (auto& pending : m_pendingMaterials) {
-                // Dedup: skip materials already in the worker queue
-                if (m_workerQueuedNames.find(pending.name) != m_workerQueuedNames.end()) {
-                    continue;
-                }
-                
-                m_workerQueuedNames.insert(pending.name);
+                // Every entry represents a distinct verified D3D pointer. Do not
+                // deduplicate by material name: animated/$basetexture2 variants
+                // need their own hash resolved against their own pointer.
                 m_workerQueue.push(std::move(pending));
                 queued++;
             }
@@ -530,8 +547,12 @@ void Pipeline::StopWorkerThread() {
     // Clear the worker queue
     {
         std::lock_guard<std::mutex> lock(m_workerMutex);
-        while (!m_workerQueue.empty()) m_workerQueue.pop();
-        m_workerQueuedNames.clear();
+        while (!m_workerQueue.empty()) {
+            if (m_workerQueue.front().texture) {
+                m_workerQueue.front().texture->Release();
+            }
+            m_workerQueue.pop();
+        }
     }
     
     Msg("[MaterialPipeline] Background worker thread stopped\n");
@@ -557,8 +578,21 @@ void Pipeline::WorkerThreadFunc() {
             m_workerQueue.pop();
         }
         
-        // Process this material through Stages 1-3 on the worker thread
-        ProcessMaterialOnWorker(pending);
+        // Process this exact observation through Stages 1-3.
+        try {
+            ProcessMaterialOnWorker(pending);
+        } catch (const std::exception& e) {
+            Warning("[MaterialPipeline] Worker exception for '%s': %s\n",
+                pending.name.c_str(), e.what());
+        } catch (...) {
+            Warning("[MaterialPipeline] Worker exception for '%s'\n",
+                pending.name.c_str());
+        }
+
+        if (pending.texture) {
+            pending.texture->Release();
+            pending.texture = nullptr;
+        }
     }
     
     Msg("[MaterialPipeline] Worker thread exiting\n");
@@ -567,7 +601,26 @@ void Pipeline::WorkerThreadFunc() {
 void Pipeline::ProcessMaterialOnWorker(const PendingMaterial& pending) {
     extern IMaterialSystem* materials;
     
-    if (!m_config.autoProcessing) return;
+    if (!m_config.autoProcessing || !pending.texture || !m_remix) return;
+
+    // Revalidate the queued observation before applying any category. The hash
+    // and pointer were captured together in SetTexture; if Remix no longer
+    // reports that same pair, discard it instead of falling back to another
+    // cached texture for the material.
+    auto currentHash = m_remix->dxvk_GetTextureHash(pending.texture);
+    if (!currentHash || currentHash.value() == 0 ||
+        currentHash.value() != pending.hash) {
+        if (m_config.debugOutput) {
+            Warning("[MaterialPipeline] Dropped stale texture observation for '%s': "
+                "queued=0x%llX current=0x%llX texture=0x%p\n",
+                pending.name.c_str(),
+                static_cast<unsigned long long>(pending.hash),
+                static_cast<unsigned long long>(
+                    currentHash ? currentHash.value() : 0),
+                pending.texture);
+        }
+        return;
+    }
     
     // Get the IMaterial for stages that need it
     // FindMaterial is thread-safe for reads in Source Engine
@@ -579,13 +632,10 @@ void Pipeline::ProcessMaterialOnWorker(const PendingMaterial& pending) {
         }
     }
     
-    // Get texture pointer for stages that need it
-    IDirect3DTexture9* texture = D3D9TextureTracker::Instance().GetTextureForMaterial(pending.name.c_str());
-    
     // -------------------------------------------------------------------------
     // STAGES 1-3: ShaderFixes, HashCollision, AutoCategorisation
     // -------------------------------------------------------------------------
-    ProcessMaterialStages(pending.name, material, texture);
+    ProcessMaterialStages(pending.name, material, pending.texture, false);
     
     // -------------------------------------------------------------------------
     // STAGE 4: ToPBR (queue for ToPBR's own background worker)
@@ -626,11 +676,13 @@ size_t Pipeline::GetQueueSize() const {
 uint64_t Pipeline::GetTextureHash(const std::string& materialName) const {
     if (!m_initialized) return 0;
     
-    auto* texture = D3D9TextureTracker::Instance().GetTextureForMaterial(materialName.c_str());
-    if (!texture) return 0;
+    auto textures =
+        D3D9TextureTracker::Instance().GetTextureVariantsForMaterial(
+            materialName.c_str());
+    if (textures.empty()) return 0;
     
     if (m_remix) {
-        auto result = m_remix->dxvk_GetTextureHash(texture);
+        auto result = m_remix->dxvk_GetTextureHash(textures[0]);
         if (result) {
             return result.value();
         }
@@ -644,19 +696,52 @@ std::vector<std::string> Pipeline::GetTrackedMaterials() const {
     return D3D9TextureTracker::Instance().GetCachedMaterials();
 }
 
-void Pipeline::ClearCache() {
+void Pipeline::ClearMapState() {
     if (!m_initialized) return;
-    
-    // Clear worker queue
+
+    // Synchronize with the worker so an observation already popped from the
+    // queue cannot finish categorizing a previous-map material after the cache
+    // has been cleared.
+    const bool restartWorker = m_workerRunning.load();
+    if (restartWorker) {
+        StopWorkerThread();
+    }
+
+    // Clear both hand-off queues and release their exact-texture references.
     {
-        std::lock_guard<std::mutex> lock(m_workerMutex);
-        while (!m_workerQueue.empty()) m_workerQueue.pop();
-        m_workerQueuedNames.clear();
+        std::lock_guard<std::mutex> pendingLock(m_pendingMutex);
+        for (auto& pending : m_pendingMaterials) {
+            if (pending.texture) {
+                pending.texture->Release();
+            }
+        }
+        m_pendingMaterials.clear();
+
+        std::lock_guard<std::mutex> workerLock(m_workerMutex);
+        while (!m_workerQueue.empty()) {
+            if (m_workerQueue.front().texture) {
+                m_workerQueue.front().texture->Release();
+            }
+            m_workerQueue.pop();
+        }
     }
     
+    AutoCategorisation::ClearMapState();
     D3D9TextureTracker::Instance().ClearCache();
+
+    if (restartWorker && m_initialized) {
+        StartWorkerThread();
+    }
+
+    Msg("[MaterialPipeline] Map tracking state cleared\n");
+}
+
+void Pipeline::ClearCache() {
+    if (!m_initialized) return;
+
+    ClearMapState();
     ToPBR::TextureProcessor::Instance().ClearCache();
-    
+
     Msg("[MaterialPipeline] Cache cleared\n");
 }
 
@@ -840,8 +925,11 @@ int Pipeline::ProcessAllMaterialsThroughPipeline() {
             }
         }
         
-        // Get texture pointer for stages that need it
-        IDirect3DTexture9* texture = D3D9TextureTracker::Instance().GetTextureForMaterial(materialName.c_str());
+        auto textureSnapshot =
+            D3D9TextureTracker::Instance().GetTextureVariantsForMaterial(
+                materialName.c_str());
+        IDirect3DTexture9* texture =
+            textureSnapshot.empty() ? nullptr : textureSnapshot[0];
         
         // -------------------------------------------------------------------------
         // STAGE 1: ShaderFixes (FAST - runs synchronously)
@@ -877,11 +965,12 @@ int Pipeline::ProcessAllMaterialsThroughPipeline() {
         // -------------------------------------------------------------------------
         // STAGE 3: AutoCategorisation (FAST - runs synchronously)
         // -------------------------------------------------------------------------
-        const std::vector<IDirect3DTexture9*>* variants = 
+        auto variants =
             D3D9TextureTracker::Instance().GetTextureVariantsForMaterial(materialName.c_str());
         
-        if (variants && !variants->empty()) {
-            AutoCategorisation::DetectAndApplyAllVariants(materialName, material, variants);
+        if (!variants.empty()) {
+            AutoCategorisation::DetectAndApplyAllVariants(
+                materialName, material, &variants.Get());
         } else if (texture) {
             AutoCategorisation::DetectAndApply(materialName, material, texture);
         }

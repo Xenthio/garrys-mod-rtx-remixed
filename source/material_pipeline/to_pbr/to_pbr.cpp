@@ -3993,16 +3993,16 @@ int TextureProcessor::ProcessTrackedMaterialsBatch(int maxBatch) {
         }
         
         // Get the texture hash from the tracker
-        const std::vector<IDirect3DTexture9*>* variants = 
+        auto variants =
             D3D9TextureTracker::Instance().GetTextureVariantsForMaterial(matName.c_str());
         
-        if (!variants || variants->empty()) {
+        if (variants.empty()) {
             continue;
         }
         
         // Get hash for first variant
         uint64_t textureHash = 0;
-        for (IDirect3DTexture9* tex : *variants) {
+        for (IDirect3DTexture9* tex : variants) {
             if (!tex) continue;
             auto result = g_remix->dxvk_GetTextureHash(tex);
             if (result && result.value() != 0) {
@@ -4115,16 +4115,16 @@ bool TextureProcessor::ProcessSingleMaterial(const std::string& materialName) {
     }
     
     // Get the texture hash from the tracker
-    const std::vector<IDirect3DTexture9*>* variants = 
+    auto variants =
         D3D9TextureTracker::Instance().GetTextureVariantsForMaterial(materialName.c_str());
     
-    if (!variants || variants->empty()) {
+    if (variants.empty()) {
         return false;
     }
     
     // Get hash for first variant
     uint64_t textureHash = 0;
-    for (IDirect3DTexture9* tex : *variants) {
+    for (IDirect3DTexture9* tex : variants) {
         if (!tex) continue;
         auto result = g_remix->dxvk_GetTextureHash(tex);
         if (result && result.value() != 0) {
@@ -4452,10 +4452,10 @@ bool TextureProcessor::ProcessMaterialOnWorker(const std::string& materialName) 
     }
     
     // Get the texture hash from the tracker
-    const std::vector<IDirect3DTexture9*>* variants = 
+    auto variants =
         D3D9TextureTracker::Instance().GetTextureVariantsForMaterial(materialName.c_str());
     
-    if (!variants || variants->empty()) {
+    if (variants.empty()) {
         std::lock_guard<std::recursive_mutex> lock(m_mutex);
         m_processedMaterials.insert(materialName);
         return false;
@@ -4463,7 +4463,7 @@ bool TextureProcessor::ProcessMaterialOnWorker(const std::string& materialName) 
     
     // Get hash for first variant
     uint64_t textureHash = 0;
-    for (IDirect3DTexture9* tex : *variants) {
+    for (IDirect3DTexture9* tex : variants) {
         if (!tex) continue;
         auto result = g_remix->dxvk_GetTextureHash(tex);
         if (result && result.value() != 0) {

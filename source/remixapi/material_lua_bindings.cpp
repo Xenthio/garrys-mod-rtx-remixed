@@ -1,5 +1,6 @@
 #ifdef _WIN64
 #include "remixapi.h"
+#include "material_lua_bindings.h"
 #include <tier0/dbg.h>
 #include <materialsystem/imaterialsystem.h>
 #include <materialsystem/imaterial.h>
@@ -7,8 +8,12 @@
 #include <materialsystem/itexture.h>
 #include <d3d9.h>
 #include <Windows.h>
+#include <mutex>
+#include <unordered_set>
 #include "../d3d9_texture_tracker.h"
 #include "../globalconvars.h"
+#include "../material_pipeline/auto_categorisation/auto_categorisation.h"
+#include "../material_pipeline/material_pipeline.h"
 
 using namespace GarrysMod::Lua;
 
@@ -432,34 +437,6 @@ LUA_FUNCTION(RemixMaterial_TrackMaterial) {
     if (materials) {
         IMaterial* pMaterial = materials->FindMaterial(materialName, TEXTURE_GROUP_MODEL);
         if (pMaterial && !pMaterial->IsErrorMaterial()) {
-            // Set the current material name DIRECTLY on the tracker before binding.
-            // We cannot rely on Hook_Bind firing because the IMatRenderContext vtable
-            // hook may be on a stale instance (Source Engine can return different
-            // render context objects from GetRenderContext()).
-            D3D9TextureTracker::Instance().SetCurrentMaterial(pMaterial);
-            
-            IMatRenderContext* pContext = materials->GetRenderContext();
-            if (pContext) {
-                pContext->Bind(pMaterial);
-                
-                // Force a tiny draw to ensure the driver processes the bind and calls SetTexture
-                // This is critical for the D3D9 texture tracker to see the texture
-                pContext->DrawScreenSpaceRectangle(
-                    pMaterial,
-                    0, 0, 1, 1, // x, y, w, h (1x1 pixel)
-                    0, 0, 1, 1, // texture coords
-                    1, 1        // texture size
-                );
-
-                // CRITICAL FIX: Flush the command buffer to ensure the driver sees the draw call immediately
-                // Without this, the driver might batch the draw call and execute it later, causing a race condition
-                // where we check for the texture hash before it has been captured.
-                // NOTE: IMatRenderContext doesn't have a Flush() method exposed directly in our interface headers,
-                // but DrawScreenSpaceRectangle should be enough for most drivers. 
-                // If not, we might need to find another way to flush.
-                // However, D3D9's SetTexture is immediate context, so as long as the engine calls it, we're good.
-            }
-
             // Get the base texture var
             bool bFound;
             IMaterialVar* pVar = pMaterial->FindVar("$basetexture", &bFound, false);
@@ -480,9 +457,13 @@ LUA_FUNCTION(RemixMaterial_TrackMaterial) {
             Warning("[RemixMaterial] TrackMaterial: Material '%s' not found or is error material\n", materialName);
         }
     }
-    
-    // Always clear the current material tracking to prevent "stuck" tracking
-    D3D9TextureTracker::Instance().SetCurrentMaterial(nullptr);
+
+    // Do not bind and draw the material here. In queued rendering mode the Lua
+    // call runs on the main thread while SetTexture runs later on the render
+    // thread; forcing hundreds of 1x1 draws during BSP categorization allowed a
+    // material name from one thread to be paired with another draw's texture.
+    // Download() is enough to make the resource resident. The persistent Lua
+    // pending queue will categorize it when a real draw provides a verified hash.
     
     LUA->PushBool(true);
     return 1;
@@ -506,9 +487,10 @@ LUA_FUNCTION(RemixMaterial_GetTextureHash) {
     }
     
     // Get all texture variants for this material
-    const std::vector<IDirect3DTexture9*>* variants = D3D9TextureTracker::Instance().GetTextureVariantsForMaterial(materialName);
+    auto variants =
+        D3D9TextureTracker::Instance().GetTextureVariantsForMaterial(materialName);
     
-    if (!variants || variants->empty()) {
+    if (variants.empty()) {
         // Quiet warning to avoid spam
         // Warning("[RemixMaterial] GetTextureHash: Material '%s' not found in texture cache\n", materialName);
         LUA->PushNumber(0);
@@ -519,38 +501,24 @@ LUA_FUNCTION(RemixMaterial_GetTextureHash) {
     
     // Try all variants and collect their hashes
     uint64_t firstValidHash = 0;
-    for (size_t i = 0; i < variants->size(); ++i) {
-        IDirect3DTexture9* d3dTexture = (*variants)[i];
+    for (size_t i = 0; i < variants.size(); ++i) {
+        IDirect3DTexture9* d3dTexture = variants[i];
         
-        // Validate the texture pointer is still valid before using it
         if (!d3dTexture) {
             continue;
         }
+
+        // The tracker snapshot owns a COM reference for the duration of this
+        // function, so the pointer cannot disappear while Remix reads its hash.
+        auto result = g_remix->dxvk_GetTextureHash(d3dTexture);
         
-        // Try to AddRef/Release to test if the pointer is still valid
-        // If this crashes, the texture was already released by the engine
-        ULONG refCount = d3dTexture->AddRef();
-        if (refCount > 1) {
-            // Texture is still alive, release the ref we just added
-            d3dTexture->Release();
+        if (result) {
+            uint64_t hash = result.value();
+            // Msg("[RemixMaterial]   Variant %zu (0x%p): Hash = 0x%llX\n", i, d3dTexture, hash);
             
-            // Now safe to query the hash
-            auto result = g_remix->dxvk_GetTextureHash(d3dTexture);
-            
-            if (result) {
-                uint64_t hash = result.value();
-                // Msg("[RemixMaterial]   Variant %zu (0x%p): Hash = 0x%llX\n", i, d3dTexture, hash);
-                
-                if (firstValidHash == 0) {
-                    firstValidHash = hash;
-                }
+            if (firstValidHash == 0) {
+                firstValidHash = hash;
             }
-        } else {
-            // Texture has been deleted (refcount was 0 before our AddRef)
-            // Release and skip this variant
-            d3dTexture->Release();
-            Warning("[RemixMaterial] GetTextureHash: Texture variant %zu (0x%p) for '%s' has been released\n", 
-                    i, d3dTexture, materialName);
         }
     }
     
@@ -589,9 +557,10 @@ LUA_FUNCTION(RemixMaterial_GetAllTextureHashes) {
         return 1;
     }
     
-    const std::vector<IDirect3DTexture9*>* variants = D3D9TextureTracker::Instance().GetTextureVariantsForMaterial(materialName);
+    auto variants =
+        D3D9TextureTracker::Instance().GetTextureVariantsForMaterial(materialName);
     
-    if (!variants || variants->empty()) {
+    if (variants.empty()) {
         LUA->CreateTable(); // Return empty table
         return 1;
     }
@@ -600,30 +569,23 @@ LUA_FUNCTION(RemixMaterial_GetAllTextureHashes) {
     LUA->CreateTable();
     int idx = 1;
     
-    for (size_t i = 0; i < variants->size(); ++i) {
-        IDirect3DTexture9* d3dTexture = (*variants)[i];
+    for (size_t i = 0; i < variants.size(); ++i) {
+        IDirect3DTexture9* d3dTexture = variants[i];
         
         if (!d3dTexture) continue;
         
-        ULONG refCount = d3dTexture->AddRef();
-        if (refCount > 1) {
-            d3dTexture->Release();
-            
-            auto result = g_remix->dxvk_GetTextureHash(d3dTexture);
-            if (result) {
-                uint64_t hash = result.value();
-                if (hash != 0) {
-                    char hashStr[32];
-                    sprintf_s(hashStr, "0x%llX", hash);
-                    
-                    LUA->PushNumber(idx);
-                    LUA->PushString(hashStr);
-                    LUA->SetTable(-3);
-                    idx++;
-                }
+        auto result = g_remix->dxvk_GetTextureHash(d3dTexture);
+        if (result) {
+            uint64_t hash = result.value();
+            if (hash != 0) {
+                char hashStr[32];
+                sprintf_s(hashStr, "0x%llX", hash);
+
+                LUA->PushNumber(idx);
+                LUA->PushString(hashStr);
+                LUA->SetTable(-3);
+                idx++;
             }
-        } else {
-            d3dTexture->Release();
         }
     }
     
@@ -674,36 +636,28 @@ LUA_FUNCTION(RemixMaterial_FindMaterialByHash) {
     
     // Check each material's texture hash
     for (const auto& materialName : allMaterials) {
-        const std::vector<IDirect3DTexture9*>* variants = 
+        auto variants =
             D3D9TextureTracker::Instance().GetTextureVariantsForMaterial(materialName.c_str());
         
-        if (!variants || variants->empty()) {
+        if (variants.empty()) {
             continue;
         }
         
         // Check all texture variants for this material
-        for (IDirect3DTexture9* d3dTexture : *variants) {
+        for (IDirect3DTexture9* d3dTexture : variants) {
             if (!d3dTexture) {
                 continue;
             }
             
-            // Validate texture is still alive
-            ULONG refCount = d3dTexture->AddRef();
-            if (refCount > 1) {
-                d3dTexture->Release();
-                
-                // Get the hash from Remix
-                auto result = g_remix->dxvk_GetTextureHash(d3dTexture);
-                if (result) {
-                    uint64_t hash = result.value();
-                    if (hash == queryHash) {
-                        matchingMaterials.push_back(materialName);
-                        Msg("[RemixMaterial]   Found match: '%s' (hash 0x%llX)\n", materialName.c_str(), hash);
-                        break; // Found a match, no need to check other variants
-                    }
+            // The snapshot keeps every pointer alive during this lookup.
+            auto result = g_remix->dxvk_GetTextureHash(d3dTexture);
+            if (result) {
+                uint64_t hash = result.value();
+                if (hash == queryHash) {
+                    matchingMaterials.push_back(materialName);
+                    Msg("[RemixMaterial]   Found match: '%s' (hash 0x%llX)\n", materialName.c_str(), hash);
+                    break; // Found a match, no need to check other variants
                 }
-            } else {
-                d3dTexture->Release();
             }
         }
     }
@@ -831,6 +785,11 @@ LUA_FUNCTION(RemixMaterial_SetHashCategory) {
     // Always store locally so GetHashCategory reflects the intent regardless of
     // whether the Remix API accepted the call this frame.
     D3D9TextureTracker::Instance().SetHashCategoryFlags(textureHash, categoryFlags);
+
+    // Lua-driven scans and the C++ pipeline must obey the same global-hash
+    // collision rule. In particular, do not let an emissive material make a
+    // non-emissive material glow when both resolve to the same Remix hash.
+    MaterialPipeline::AutoCategorisation::ReconcileHashCategories(textureHash);
     
     LUA->PushBool(success);
     return 1;
@@ -933,7 +892,12 @@ LUA_FUNCTION(RemixMaterial_GetHashCategory) {
 // Lua function: RemixMaterial.ClearTextureCache()
 // Clears the D3D9 texture tracker cache
 LUA_FUNCTION(RemixMaterial_ClearTextureCache) {
-    D3D9TextureTracker::Instance().ClearCache();
+    auto& pipeline = MaterialPipeline::Pipeline::Instance();
+    if (pipeline.IsInitialized()) {
+        pipeline.ClearMapState();
+    } else {
+        D3D9TextureTracker::Instance().ClearCache();
+    }
     LUA->PushBool(true);
     return 1;
 }
@@ -1211,15 +1175,17 @@ LUA_FUNCTION(RemixMaterial_SetDebugOutput) {
 // =========================================================================
 // Force-Albedo Emission Helpers
 // =========================================================================
-// Hashes registered for rtx.legacyEmissiveForceAlbedoString by Lua code.
-// Kept as a set so re-serialisation on each new addition is duplicate-free.
-static std::unordered_set<uint64_t> s_luaForceAlbedoHashes;
+// Shared by Lua and C++ AutoCategorisation. Access through the global helper
+// functions below so updates cannot race or overwrite another path's hashes.
+static std::unordered_set<uint64_t> s_forceAlbedoHashes;
+static std::mutex s_forceAlbedoMutex;
 
-static void UpdateLuaForceAlbedoConfig() {
+// Caller must hold s_forceAlbedoMutex.
+static void UpdateForceAlbedoConfig() {
     if (!g_remix) return;
     
     std::string value;
-    for (uint64_t hash : s_luaForceAlbedoHashes) {
+    for (uint64_t hash : s_forceAlbedoHashes) {
         if (!value.empty()) value += ',';
         char buf[32];
         snprintf(buf, sizeof(buf), "0x%llX", (unsigned long long)hash);
@@ -1231,7 +1197,7 @@ static void UpdateLuaForceAlbedoConfig() {
 // Lua function: RemixMaterial.AddForceAlbedoHash(hashStr)
 // Registers a texture hash for force-albedo emission mode so that Remix emits
 // full albedo colour even when the texture has no alpha mask channel.
-// Call this for every hash belonging to an UnlitTwoTexture+scanline material.
+// Call this for every hash belonging to an UnlitGeneric or UnlitTwoTexture material.
 LUA_FUNCTION(RemixMaterial_AddForceAlbedoHash) {
     if (!g_remix) {
         LUA->ThrowError("RemixMaterial.AddForceAlbedoHash: Remix API not initialized");
@@ -1255,21 +1221,14 @@ LUA_FUNCTION(RemixMaterial_AddForceAlbedoHash) {
         return 1;
     }
     
-    if (s_luaForceAlbedoHashes.insert(hash).second) {
-        UpdateLuaForceAlbedoConfig();
-    }
-    
-    LUA->PushBool(true);
+    LUA->PushBool(::AddForceAlbedoHashCpp(hash));
     return 1;
 }
 
 // Lua function: RemixMaterial.ClearForceAlbedoHashes()
 // Resets the force-albedo list. Call on map change before re-scanning.
 LUA_FUNCTION(RemixMaterial_ClearForceAlbedoHashes) {
-    s_luaForceAlbedoHashes.clear();
-    if (g_remix) {
-        g_remix->SetConfigVariable("rtx.legacyEmissiveForceAlbedoString", "");
-    }
+    ::ClearForceAlbedoHashesCpp();
     LUA->PushBool(true);
     return 1;
 }
@@ -1389,14 +1348,29 @@ void MaterialManager::InitializeLuaBindings() {
 
 } // namespace RemixAPI
 
-// C++ callable (not a Lua binding): remove a single hash from the Lua force-albedo
-// set without going through Lua.  Called by AutoCategorisation::UnapplyFromRemix
-// when a material's hash is corrected and stale state must be cleaned up.
-// Defined outside namespace RemixAPI so the global-scope declaration in the header matches.
-void RemoveLuaForceAlbedoHashCpp(uint64_t hash) {
-    if (RemixAPI::s_luaForceAlbedoHashes.erase(hash)) {
-        RemixAPI::UpdateLuaForceAlbedoConfig();
+bool AddForceAlbedoHashCpp(uint64_t hash) {
+    if (!g_remix || hash == 0) return false;
+
+    std::lock_guard<std::mutex> lock(RemixAPI::s_forceAlbedoMutex);
+    if (RemixAPI::s_forceAlbedoHashes.insert(hash).second) {
+        RemixAPI::UpdateForceAlbedoConfig();
     }
+    return true;
+}
+
+bool RemoveForceAlbedoHashCpp(uint64_t hash) {
+    std::lock_guard<std::mutex> lock(RemixAPI::s_forceAlbedoMutex);
+    if (!RemixAPI::s_forceAlbedoHashes.erase(hash)) {
+        return false;
+    }
+    RemixAPI::UpdateForceAlbedoConfig();
+    return true;
+}
+
+void ClearForceAlbedoHashesCpp() {
+    std::lock_guard<std::mutex> lock(RemixAPI::s_forceAlbedoMutex);
+    RemixAPI::s_forceAlbedoHashes.clear();
+    RemixAPI::UpdateForceAlbedoConfig();
 }
 
 #endif // _WIN64
