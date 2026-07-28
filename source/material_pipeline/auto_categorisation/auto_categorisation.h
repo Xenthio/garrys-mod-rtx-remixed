@@ -59,6 +59,7 @@ namespace CategoryFlags {
     constexpr uint32_t HIDDEN                    = 0x20000;
     constexpr uint32_t ANIMATED_WATER            = 0x40000;   // Must match tracker
     constexpr uint32_t EMISSIVE                  = 0x1000000; // Must match tracker
+    constexpr uint32_t RASTER_OVERLAY            = 0x4000000; // Raster-only overlay draw
 }
 
 // =========================================================================

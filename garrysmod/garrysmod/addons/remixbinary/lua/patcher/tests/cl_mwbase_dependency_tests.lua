@@ -14,8 +14,18 @@ local oldIsValid = IsValid
 local oldCreateMaterial = CreateMaterial
 local oldConcommand = concommand
 local oldRender = render
+local oldGetViewEntity = GetViewEntity
+local oldCurTime = CurTime
+local oldStencilAlways = STENCIL_ALWAYS
+local oldStencilReplace = STENCIL_REPLACE
+local oldStencilKeep = STENCIL_KEEP
+local oldStencilEqual = STENCIL_EQUAL
 local storedConVars = {}
 local materialOverrideCalls = {}
+local modelMaterialOverrideCalls = {}
+local blendCalls = {}
+local currentModelMaterialOverride = nil
+local currentBlend = 1
 
 local function createFakeConVar(default)
     return {
@@ -63,7 +73,25 @@ render = {
             material = material
         }
     end,
-    ModelMaterialOverride = function() end
+    ModelMaterialOverride = function(material)
+        currentModelMaterialOverride = material
+        modelMaterialOverrideCalls[#modelMaterialOverrideCalls + 1] = material
+    end,
+    SetBlend = function(blend)
+        currentBlend = blend
+        blendCalls[#blendCalls + 1] = blend
+    end,
+    SetStencilWriteMask = function() end,
+    SetStencilTestMask = function() end,
+    SetStencilReferenceValue = function() end,
+    SetStencilCompareFunction = function() end,
+    SetStencilPassOperation = function() end,
+    SetStencilFailOperation = function() end,
+    SetStencilZFailOperation = function() end,
+    SetStencilEnable = function() end,
+    ClearStencil = function() end,
+    SetMaterial = function() end,
+    DrawQuadEasy = function() end
 }
 
 MW_ATTS = {
@@ -190,6 +218,17 @@ local ok, err = pcall(function()
         error("MWBase optic lens override mode was not recorded")
     end
 
+    MWBASE_STENCIL_REFVALUE = 69
+    local reticleRef = RTXPatcher.MWBase.GetReticleOverlayStencilReference(MW_ATTS.att_fake_reflex)
+    if reticleRef ~= 70 then
+        error("plain reticle explicit overlay should use MWBase reticle stencil ref 70, got " .. tostring(reticleRef))
+    end
+
+    local opticRef = RTXPatcher.MWBase.GetReticleOverlayStencilReference(MW_ATTS.att_fake_optic)
+    if opticRef ~= 71 then
+        error("optic explicit overlay should auto-select MWBase lens stencil ref 71, got " .. tostring(opticRef))
+    end
+
     local function makeFakeModel(materials)
         return {
             materials = materials,
@@ -260,6 +299,65 @@ local ok, err = pcall(function()
     if materialOverrideCalls[2].slot ~= 1 or materialOverrideCalls[2].material ~= nil then
         error("draw-time material override was not cleared")
     end
+
+    STENCIL_ALWAYS = 1
+    STENCIL_REPLACE = 2
+    STENCIL_KEEP = 3
+    STENCIL_EQUAL = 4
+    GetViewEntity = function() return nil end
+    CurTime = function() return 0 end
+    mw_utils.GetFastAttachment = function() return nil end
+
+    local stencilMaskModel = makeFakeModel({
+        "viper/MW/attachments/attachment_vm_4x_west_lens"
+    })
+    stencilMaskModel.draws = {}
+    stencilMaskModel.DrawModel = function(self)
+        self.drawCount = self.drawCount + 1
+        self.draws[#self.draws + 1] = {
+            blend = currentBlend,
+            material = currentModelMaterialOverride
+        }
+    end
+
+    local fallbackCalled = false
+    modelMaterialOverrideCalls = {}
+    blendCalls = {}
+    currentModelMaterialOverride = nil
+    currentBlend = 1
+
+    RTXPatcher.MWBase.DrawReticleStencil(function()
+        fallbackCalled = true
+    end, MW_ATTS.att_fake_optic, stencilMaskModel, {
+        Attachment = "reticle",
+        Size = 800,
+    }, {
+        GetAimDelta = function() return 1 end
+    })
+
+    if stencilMaskModel.drawCount ~= 1 then
+        error("reticle stencil mask model was not drawn")
+    end
+
+    if stencilMaskModel.draws[1].blend ~= 0 then
+        error("reticle stencil mask draw should suppress color output with zero blend")
+    end
+
+    if not stencilMaskModel.draws[1].material or stencilMaskModel.draws[1].material.name ~= "rtx_patcher_mwbase_stencil_mask" then
+        error("reticle stencil mask draw did not use the opaque stencil mask material")
+    end
+
+    if currentModelMaterialOverride ~= nil then
+        error("reticle stencil mask material override was not cleared")
+    end
+
+    if currentBlend ~= 1 then
+        error("reticle stencil mask blend was not restored")
+    end
+
+    if not fallbackCalled then
+        error("reticle stencil fallback path was not reached after mask draw")
+    end
 end)
 
 MW_ATTS = oldMW_ATTS
@@ -272,6 +370,12 @@ IsValid = oldIsValid
 CreateMaterial = oldCreateMaterial
 concommand = oldConcommand
 render = oldRender
+GetViewEntity = oldGetViewEntity
+CurTime = oldCurTime
+STENCIL_ALWAYS = oldStencilAlways
+STENCIL_REPLACE = oldStencilReplace
+STENCIL_KEEP = oldStencilKeep
+STENCIL_EQUAL = oldStencilEqual
 
 if not ok then
     error(err, 0)

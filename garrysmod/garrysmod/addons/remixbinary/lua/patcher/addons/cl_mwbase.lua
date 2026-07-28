@@ -3,6 +3,9 @@ if not RTXPatcher then return end
 
 local Patcher = RTXPatcher
 
+local projectedReticleOverlayBounds
+local submitExplicitReticleOverlay
+
 local function createClientConVar(name, default, help)
     if CreateClientConVar then
         local convar = CreateClientConVar(name, default, true, false, help)
@@ -27,6 +30,20 @@ local cvReticleAdsOnly = createClientConVar("rtx_patcher_mwbase_reticle_ads_only
 local cvReticleAdsThreshold = createClientConVar("rtx_patcher_mwbase_reticle_ads_threshold", "0.65", "ADS threshold for MWBase reticle fallback")
 local cvReticleDepth = createClientConVar("rtx_patcher_mwbase_reticle_depth", "100", "Forward offset for MWBase reticle quads")
 local cvReticleScale = createClientConVar("rtx_patcher_mwbase_reticle_scale", "1", "Scale multiplier for MWBase reticle quads")
+local cvReticleRasterOverlay = createClientConVar("rtx_patcher_mwbase_reticle_raster_overlay", "1", "Mark MWBase reticle textures as post-RTX raster overlays")
+local cvReticleRasterOverlayDebug = createClientConVar("rtx_patcher_mwbase_reticle_raster_overlay_debug", "0", "Print MWBase reticle raster overlay diagnostics")
+local cvReticleExplicitOverlay = createClientConVar("rtx_patcher_mwbase_reticle_explicit_overlay", "1", "Submit MWBase reticles as explicit post-RTX raster overlay quads")
+local cvReticleExplicitOverlayScale = createClientConVar("rtx_patcher_mwbase_reticle_explicit_overlay_scale", "1", "Screen-space scale for explicit MWBase reticle overlay quads")
+local cvReticleExplicitOverlayClip = createClientConVar("rtx_patcher_mwbase_reticle_explicit_overlay_clip", "1", "Clip explicit MWBase reticle overlay quads to an ellipse")
+local cvReticleExplicitOverlayClipScale = createClientConVar("rtx_patcher_mwbase_reticle_explicit_overlay_clip_scale", "1", "Ellipse clip scale for explicit MWBase reticle overlay quads")
+local cvReticleExplicitOverlayClipScaleX = createClientConVar("rtx_patcher_mwbase_reticle_explicit_overlay_clip_scale_x", "1", "Horizontal ellipse clip scale for explicit MWBase reticle overlay quads")
+local cvReticleExplicitOverlayClipScaleY = createClientConVar("rtx_patcher_mwbase_reticle_explicit_overlay_clip_scale_y", "1", "Vertical ellipse clip scale for explicit MWBase reticle overlay quads")
+local cvReticleExplicitOverlayClipOffsetX = createClientConVar("rtx_patcher_mwbase_reticle_explicit_overlay_clip_offset_x", "0", "Horizontal ellipse clip offset as a fraction of clip width")
+local cvReticleExplicitOverlayClipOffsetY = createClientConVar("rtx_patcher_mwbase_reticle_explicit_overlay_clip_offset_y", "0", "Vertical ellipse clip offset as a fraction of clip height")
+local cvReticleExplicitOverlayClipSource = createClientConVar("rtx_patcher_mwbase_reticle_explicit_overlay_clip_source", "reticle", "Clip source for explicit MWBase reticle overlays: reticle or model")
+local cvReticleExplicitOverlayStencil = createClientConVar("rtx_patcher_mwbase_reticle_explicit_overlay_stencil", "1", "Mask explicit MWBase reticle overlays with the active Source stencil")
+local cvReticleExplicitOverlayStencilClear = createClientConVar("rtx_patcher_mwbase_reticle_explicit_overlay_stencil_clear", "1", "Clear the active Source stencil after drawing stencil-masked explicit MWBase reticle overlays")
+local cvReticleExplicitOverlayStencilRefMode = createClientConVar("rtx_patcher_mwbase_reticle_explicit_overlay_stencil_ref_mode", "auto", "Explicit MWBase reticle overlay stencil reference mode: auto, reticle, or lens")
 local cvOptics = createClientConVar("rtx_patcher_mwbase_optics", "1", "Enable MWBase optic render patch")
 local cvOpticSimpleRender = createClientConVar("rtx_patcher_mwbase_optic_simple_render", "1", "Use a simplified Remix-friendly MWBase optic render path")
 local cvOpticAdsThreshold = createClientConVar("rtx_patcher_mwbase_optic_ads_threshold", "0.9", "ADS threshold for simplified MWBase optic rendering")
@@ -53,6 +70,7 @@ local cvCustomization = createClientConVar("rtx_patcher_mwbase_customization", "
 
 Patcher.MWBase = Patcher.MWBase or {}
 local MWBase = Patcher.MWBase
+local markReticleMaterialForRasterOverlay
 
 local function resolveStoredEntity(className)
     if not scripted_ents then return nil end
@@ -169,6 +187,56 @@ local function getTransparentLensMaterial()
     return transparentLensMaterial
 end
 
+local reticleStencilMaskMaterial
+local function getReticleStencilMaskMaterial()
+    if reticleStencilMaskMaterial then return reticleStencilMaskMaterial end
+    if not CreateMaterial then return nil end
+
+    reticleStencilMaskMaterial = CreateMaterial("rtx_patcher_mwbase_stencil_mask", "UnlitGeneric", {
+        ["$basetexture"] = "color/white",
+        ["$model"] = "1",
+        ["$translucent"] = "0",
+        ["$alpha"] = "1",
+    })
+
+    return reticleStencilMaskMaterial
+end
+
+local function drawReticleStencilMaskModel(model)
+    local stencilMaskMaterial = getReticleStencilMaskMaterial()
+    local canOverrideMaterial = render and type(render.ModelMaterialOverride) == "function" and stencilMaskMaterial ~= nil
+    local canDisableColorWrite = render and type(render.OverrideColorWriteEnable) == "function"
+    local canSuppressBlend = render and type(render.SetBlend) == "function"
+
+    if canOverrideMaterial then
+        render.ModelMaterialOverride(stencilMaskMaterial)
+    end
+
+    if canDisableColorWrite then
+        render.OverrideColorWriteEnable(true, false)
+    elseif canSuppressBlend then
+        render.SetBlend(0)
+    end
+
+    local ok, err = pcall(function()
+        model:DrawModel()
+    end)
+
+    if canDisableColorWrite then
+        render.OverrideColorWriteEnable(false, true)
+    elseif canSuppressBlend then
+        render.SetBlend(1)
+    end
+
+    if canOverrideMaterial then
+        render.ModelMaterialOverride(nil, nil)
+    end
+
+    if not ok then
+        error(err, 0)
+    end
+end
+
 local function normalizedMaterialName(name)
     local materialName = string.lower(tostring(name or ""))
     if string.Trim then
@@ -197,6 +265,17 @@ local function debugOpticLens(...)
         parts[#parts + 1] = tostring(select(i, ...))
     end
     print("[RTXPatcher][MWBase OpticLens] " .. table.concat(parts, " "))
+end
+
+local function debugReticleOverlay(...)
+    if not cvReticleRasterOverlayDebug:GetBool() then return end
+
+    local parts = {}
+    for i = 1, select("#", ...) do
+        parts[#parts + 1] = tostring(select(i, ...))
+    end
+
+    print("[RTXPatcher][MWBase ReticleOverlay] " .. table.concat(parts, " "))
 end
 
 local function modelCanListMaterials(model)
@@ -474,7 +553,17 @@ function MWBase.DrawOpticReticle(attachment, reticle, weapon)
         offset = offset + att.Ang:Up() * reticle.Offset.y
     end
 
-    render.DrawQuadEasy(att.Pos + offset, att.Ang:Forward():GetNegated(), quadSize, quadSize, color, -att.Ang.r + 180)
+    local worldPos = att.Pos + offset
+    local bounds = projectedReticleOverlayBounds(worldPos, att.Ang, quadSize)
+    if submitExplicitReticleOverlay(reticle.Material, bounds, color, "optic") then
+        return
+    end
+
+    if markReticleMaterialForRasterOverlay then
+        markReticleMaterialForRasterOverlay(reticle.Material)
+    end
+
+    render.DrawQuadEasy(worldPos, att.Ang:Forward():GetNegated(), quadSize, quadSize, color, -att.Ang.r + 180)
 end
 
 local function debugOpticViewSurface(...)
@@ -499,6 +588,19 @@ local function getOpticViewSurfaceCategory()
         return RemixCategoryManager.CATEGORY.RAYTRACED_RENDER_TARGET
     end
     return nil
+end
+
+local function getRasterOverlayCategory()
+    if type(RemixCategoryManager) == "table" then
+        if type(RemixCategoryManager.PRESET) == "table" and RemixCategoryManager.PRESET.RASTER_OVERLAY then
+            return RemixCategoryManager.PRESET.RASTER_OVERLAY
+        end
+        if type(RemixCategoryManager.CATEGORY) == "table" and RemixCategoryManager.CATEGORY.RASTER_OVERLAY then
+            return RemixCategoryManager.CATEGORY.RASTER_OVERLAY
+        end
+    end
+
+    return 0x4000000
 end
 
 local function combineCategoryFlags(existing, category)
@@ -529,14 +631,47 @@ local function getMaterialCandidates(materialName)
     local candidates = {}
     local seen = {}
     local rawName = tostring(materialName or "")
+    local normalized = normalizedMaterialName(rawName)
+    local stripped = string.gsub(normalized, "\\", "/")
+
+    if string.sub(stripped, 1, 10) == "materials/" then
+        stripped = string.sub(stripped, 11)
+    end
+
+    if string.sub(stripped, -4) == ".vmt" then
+        stripped = string.sub(stripped, 1, -5)
+    end
 
     addMaterialCandidate(candidates, seen, rawName)
-    addMaterialCandidate(candidates, seen, normalizedMaterialName(rawName))
+    addMaterialCandidate(candidates, seen, normalized)
+    addMaterialCandidate(candidates, seen, stripped)
 
     return candidates
 end
 
 local function mergeViewSurfaceHashCategory(hashStr, category)
+    if type(RemixMaterial) ~= "table" or type(RemixMaterial.SetHashCategory) ~= "function" then
+        return false
+    end
+
+    local existing = 0
+    if type(RemixMaterial.GetHashCategory) == "function" then
+        local ok, result = pcall(RemixMaterial.GetHashCategory, hashStr)
+        if ok then
+            existing = tonumber(result) or 0
+        end
+    end
+
+    local combined = combineCategoryFlags(existing, category)
+    if combined == existing and existing ~= 0 then
+        return true
+    end
+
+    local ok, result = pcall(RemixMaterial.SetHashCategory, hashStr, combined)
+    return ok and result ~= false
+end
+
+local function mergeRasterOverlayHashCategory(hashStr, category)
     if type(RemixMaterial) ~= "table" or type(RemixMaterial.SetHashCategory) ~= "function" then
         return false
     end
@@ -603,6 +738,463 @@ function MWBase.SetViewSurfaceCategoryForMaterial(materialName, state)
     end
 
     return touched or queued
+end
+
+function MWBase.SetRasterOverlayCategoryForMaterial(materialName, state)
+    local category = getRasterOverlayCategory()
+    if not category or type(RemixMaterial) ~= "table" then return false end
+
+    local touched = false
+    local queued = false
+    local candidates = getMaterialCandidates(materialName)
+
+    for _, candidate in ipairs(candidates) do
+        if type(RemixMaterial.GetAllTextureHashes) == "function" then
+            local ok, hashes = pcall(RemixMaterial.GetAllTextureHashes, candidate)
+            if ok and type(hashes) == "table" and #hashes > 0 then
+                for _, hashStr in ipairs(hashes) do
+                    if mergeRasterOverlayHashCategory(hashStr, category) then
+                        touched = true
+                        if state then
+                            state.immediate = (state.immediate or 0) + 1
+                        end
+                        debugReticleOverlay("hash", hashStr, "material", candidate)
+                    end
+                end
+            end
+        end
+
+        if type(RemixCategoryManager) == "table" and type(RemixCategoryManager.SetMaterialCategory) == "function" then
+            local callback = function(success, hashStr)
+                if success and hashStr then
+                    mergeRasterOverlayHashCategory(hashStr, category)
+                end
+            end
+            local ok = pcall(RemixCategoryManager.SetMaterialCategory, candidate, category, callback)
+            if ok then
+                queued = true
+            end
+        elseif type(RemixMaterial.TrackMaterial) == "function" then
+            local ok = pcall(RemixMaterial.TrackMaterial, candidate)
+            queued = queued or ok
+        end
+    end
+
+    if queued and not touched and state then
+        state.pending = (state.pending or 0) + 1
+    end
+
+    return touched or queued
+end
+
+local reticleOverlayMarked = {}
+local reticleOverlayLastTry = {}
+
+local function materialNameFromMaterial(material)
+    if type(material) == "string" then return material end
+    if not material then return nil end
+
+    if type(material.GetName) == "function" then
+        local ok, name = pcall(material.GetName, material)
+        if ok and name and tostring(name) ~= "" then
+            return tostring(name)
+        end
+    end
+
+    return nil
+end
+
+local function screenPointFromWorld(pos)
+    if not pos or type(pos.ToScreen) ~= "function" then return nil end
+
+    local screen = pos:ToScreen()
+    if type(screen) ~= "table" or screen.visible == false then return nil end
+
+    local x = tonumber(screen.x)
+    local y = tonumber(screen.y)
+    if not x or not y then return nil end
+
+    return x, y
+end
+
+local function distance2D(ax, ay, bx, by)
+    local dx = ax - bx
+    local dy = ay - by
+    return math.sqrt(dx * dx + dy * dy)
+end
+
+local function reticleExplicitOverlayClipSource()
+    local source = cvReticleExplicitOverlayClipSource:GetString() or "reticle"
+    source = string.lower(tostring(source):gsub("^%s+", ""):gsub("%s+$", ""))
+
+    if source == "model" or source == "entity" or source == "1" then
+        return "model"
+    end
+
+    return "reticle"
+end
+
+function MWBase.GetReticleOverlayStencilReference(attachment)
+    local baseRef = MWBASE_STENCIL_REFVALUE or 0
+    local mode = cvReticleExplicitOverlayStencilRefMode:GetString() or "auto"
+    mode = string.lower(tostring(mode):gsub("^%s+", ""):gsub("%s+$", ""))
+
+    if mode == "reticle" or mode == "shape" or mode == "1" then
+        return baseRef + 1
+    end
+
+    if mode == "lens" or mode == "optic" or mode == "2" then
+        return baseRef + 2
+    end
+
+    if type(attachment) == "table" and type(attachment.Optic) == "table" then
+        return baseRef + 2
+    end
+
+    return baseRef + 1
+end
+
+local function getEntityLocalBounds(ent)
+    if not ent then return nil end
+
+    local getters = {
+        { "GetRenderBounds" },
+        { "OBBMins", "OBBMaxs" },
+        { "GetModelBounds" }
+    }
+
+    for _, names in ipairs(getters) do
+        local first = ent[names[1]]
+        if type(first) == "function" then
+            if names[2] then
+                local second = ent[names[2]]
+                if type(second) == "function" then
+                    local okMin, mins = pcall(first, ent)
+                    local okMax, maxs = pcall(second, ent)
+                    if okMin and okMax and mins and maxs then
+                        return mins, maxs
+                    end
+                end
+            else
+                local ok, mins, maxs = pcall(first, ent)
+                if ok and mins and maxs then
+                    return mins, maxs
+                end
+            end
+        end
+    end
+
+    return nil
+end
+
+local function projectedEntityOverlayBounds(ent)
+    if not ent or type(ent.LocalToWorld) ~= "function" then return nil end
+
+    local mins, maxs = getEntityLocalBounds(ent)
+    if not mins or not maxs then return nil end
+
+    local minX, minY, maxX, maxY = nil, nil, nil, nil
+    local xs = { mins.x, maxs.x }
+    local ys = { mins.y, maxs.y }
+    local zs = { mins.z, maxs.z }
+
+    for _, x in ipairs(xs) do
+        for _, y in ipairs(ys) do
+            for _, z in ipairs(zs) do
+                local screenX, screenY = screenPointFromWorld(ent:LocalToWorld(Vector(x, y, z)))
+                if screenX and screenY then
+                    minX = minX and math.min(minX, screenX) or screenX
+                    minY = minY and math.min(minY, screenY) or screenY
+                    maxX = maxX and math.max(maxX, screenX) or screenX
+                    maxY = maxY and math.max(maxY, screenY) or screenY
+                end
+            end
+        end
+    end
+
+    if not minX or not minY or not maxX or not maxY then return nil end
+
+    local width = maxX - minX
+    local height = maxY - minY
+    if width <= 0 or height <= 0 then return nil end
+
+    return {
+        x = minX + width * 0.5,
+        y = minY + height * 0.5,
+        w = width,
+        h = height
+    }
+end
+
+projectedReticleOverlayBounds = function(worldPos, ang, worldSize)
+    local size = tonumber(worldSize) or 0
+    if size <= 0 or not worldPos or not ang then return nil end
+
+    local centerX, centerY = screenPointFromWorld(worldPos)
+    if not centerX then return nil end
+
+    local halfSize = size * 0.5
+    local right = ang:Right()
+    local up = ang:Up()
+
+    local rx0, ry0 = screenPointFromWorld(worldPos - right * halfSize)
+    local rx1, ry1 = screenPointFromWorld(worldPos + right * halfSize)
+    local ux0, uy0 = screenPointFromWorld(worldPos - up * halfSize)
+    local ux1, uy1 = screenPointFromWorld(worldPos + up * halfSize)
+    if not rx0 or not rx1 or not ux0 or not ux1 then return nil end
+
+    local width = distance2D(rx0, ry0, rx1, ry1)
+    local height = distance2D(ux0, uy0, ux1, uy1)
+    if width <= 0 or height <= 0 then return nil end
+
+    return {
+        x = centerX,
+        y = centerY,
+        w = width,
+        h = height
+    }
+end
+
+submitExplicitReticleOverlay = function(material, bounds, color, label)
+    if not cvReticleExplicitOverlay:GetBool() then return false end
+    if type(RemixRasterOverlay) ~= "table" or type(RemixRasterOverlay.DrawQuad) ~= "function" then return false end
+    if type(bounds) ~= "table" then return false end
+
+    local materialName = materialNameFromMaterial(material)
+    if not materialName or materialName == "" then return false end
+
+    local x = tonumber(bounds.x)
+    local y = tonumber(bounds.y)
+    local width = tonumber(bounds.w) or 0
+    local height = tonumber(bounds.h) or 0
+    if not x or not y or width <= 0 or height <= 0 then return false end
+
+    local scale = math.max(0.01, cvReticleExplicitOverlayScale:GetFloat())
+    width = math.max(1, width * scale)
+    height = math.max(1, height * scale)
+
+    local info = {
+        material = materialName,
+        x = x - width * 0.5,
+        y = y - height * 0.5,
+        w = width,
+        h = height,
+        color = color or color_white
+    }
+
+    local useStencilMask = bounds.stencil == true and cvReticleExplicitOverlayStencil:GetBool()
+    if cvReticleExplicitOverlayClip:GetBool() and not useStencilMask then
+        local clipSource = reticleExplicitOverlayClipSource()
+        local clipBounds = clipSource == "model" and type(bounds.clip) == "table" and bounds.clip or nil
+        local clipX = tonumber(clipBounds and clipBounds.x) or x
+        local clipY = tonumber(clipBounds and clipBounds.y) or y
+        local baseClipW = tonumber(clipBounds and clipBounds.w) or width
+        local baseClipH = tonumber(clipBounds and clipBounds.h) or height
+        local clipScale = math.max(0.01, cvReticleExplicitOverlayClipScale:GetFloat())
+        local clipScaleX = math.max(0.01, cvReticleExplicitOverlayClipScaleX:GetFloat())
+        local clipScaleY = math.max(0.01, cvReticleExplicitOverlayClipScaleY:GetFloat())
+        local clipW = math.max(1, baseClipW * clipScale * clipScaleX)
+        local clipH = math.max(1, baseClipH * clipScale * clipScaleY)
+        clipX = clipX + baseClipW * cvReticleExplicitOverlayClipOffsetX:GetFloat()
+        clipY = clipY + baseClipH * cvReticleExplicitOverlayClipOffsetY:GetFloat()
+        info.clip = {
+            mode = "ellipse",
+            x = clipX - clipW * 0.5,
+            y = clipY - clipH * 0.5,
+            w = clipW,
+            h = clipH
+        }
+        debugReticleOverlay("clip", tostring(label or ""), clipSource, "center", clipX, clipY, "size", clipW, clipH)
+    end
+
+    if useStencilMask then
+        local stencilReference = tonumber(bounds.stencilReference)
+        local stencilReadMask = tonumber(bounds.stencilReadMask) or 0xFF
+        info.stencil = {
+            current = true,
+            clear = cvReticleExplicitOverlayStencilClear:GetBool(),
+            readMask = stencilReadMask
+        }
+        if stencilReference then
+            info.stencil.reference = stencilReference
+        end
+        debugReticleOverlay("stencil", tostring(label or ""), "clear", info.stencil.clear, "ref", tostring(stencilReference), "mask", stencilReadMask)
+    end
+
+    local ok, submitted, reason = pcall(RemixRasterOverlay.DrawQuad, info)
+
+    if not ok then
+        debugReticleOverlay("explicit_error", tostring(label or ""), materialName, submitted)
+        return false
+    end
+
+    if submitted ~= true then
+        debugReticleOverlay("explicit_miss", tostring(label or ""), materialName, tostring(reason))
+        return false
+    end
+
+    debugReticleOverlay("explicit", tostring(label or ""), materialName, "size", width, height)
+    return true
+end
+
+markReticleMaterialForRasterOverlay = function(material, force)
+    if not cvReticleRasterOverlay:GetBool() then return false end
+
+    local materialName = materialNameFromMaterial(material)
+    if not materialName or materialName == "" then return false end
+
+    local key = normalizedMaterialName(materialName)
+    if key == "" then return false end
+
+    if reticleOverlayMarked[key] and not force then
+        return true
+    end
+
+    local now = RealTime and RealTime() or 0
+    if not force and reticleOverlayLastTry[key] and now - reticleOverlayLastTry[key] < 0.5 then
+        return false
+    end
+    reticleOverlayLastTry[key] = now
+
+    local state = Patcher.State.mwbaseReticleOverlay or {
+        materials = {},
+        marked = 0,
+        immediate = 0,
+        pending = 0,
+    }
+    Patcher.State.mwbaseReticleOverlay = state
+    state.enabled = true
+    state.category = getRasterOverlayCategory()
+    state.lastMaterial = materialName
+
+    if MWBase.SetRasterOverlayCategoryForMaterial(materialName, state) then
+        local isNewMaterial = not state.materials[key]
+        state.materials[key] = true
+        reticleOverlayMarked[key] = true
+        if isNewMaterial then
+            state.marked = (state.marked or 0) + 1
+        end
+        debugReticleOverlay("material", materialName)
+        return true
+    end
+
+    return false
+end
+
+local function formatCategoryFlags(flags)
+    flags = tonumber(flags) or 0
+    if flags == 0 then return "none" end
+
+    local names = {}
+    local categoryNames = {
+        { flag = 0x4, name = "SKY" },
+        { flag = 0x8, name = "IGNORE" },
+        { flag = 0x200, name = "HIDDEN" },
+        { flag = 0x400, name = "PARTICLE" },
+        { flag = 0x800, name = "BEAM" },
+        { flag = 0x1000, name = "DECAL_STATIC" },
+        { flag = 0x40000, name = "ANIMATED_WATER" },
+        { flag = 0x1000000, name = "LEGACY_EMISSIVE" },
+        { flag = 0x2000000, name = "VIEW_SURFACE" },
+        { flag = 0x4000000, name = "RASTER_OVERLAY" },
+    }
+
+    for _, entry in ipairs(categoryNames) do
+        if bit and type(bit.band) == "function" then
+            if bit.band(flags, entry.flag) ~= 0 then
+                names[#names + 1] = entry.name
+            end
+        elseif math.floor(flags / entry.flag) % 2 >= 1 then
+            names[#names + 1] = entry.name
+        end
+    end
+
+    if #names == 0 then return string.format("0x%X", flags) end
+    return table.concat(names, " | ")
+end
+
+local function printReticleOverlayMaterial(label, reticle, force)
+    if type(reticle) ~= "table" or not reticle.Material then return false end
+
+    if force and markReticleMaterialForRasterOverlay then
+        markReticleMaterialForRasterOverlay(reticle.Material, true)
+    end
+
+    local materialName = materialNameFromMaterial(reticle.Material)
+    print(string.format("[RTXPatcher][MWBase ReticleOverlay] %s material %s", label, tostring(materialName or reticle.Material)))
+
+    if not materialName or type(RemixMaterial) ~= "table" or type(RemixMaterial.GetAllTextureHashes) ~= "function" then
+        print("  no hashes available")
+        return true
+    end
+
+    local printedHash = false
+    for _, candidate in ipairs(getMaterialCandidates(materialName)) do
+        local ok, hashes = pcall(RemixMaterial.GetAllTextureHashes, candidate)
+        if ok and type(hashes) == "table" and #hashes > 0 then
+            for _, hashStr in ipairs(hashes) do
+                local category = nil
+                if type(RemixMaterial.GetHashCategory) == "function" then
+                    local okCategory, result = pcall(RemixMaterial.GetHashCategory, hashStr)
+                    if okCategory then category = result end
+                end
+                print(string.format("  %s -> %s category=%s", candidate, tostring(hashStr), formatCategoryFlags(category)))
+                printedHash = true
+            end
+        end
+    end
+
+    if not printedHash then
+        print("  no hashes found yet; render the reticle once, then dump again")
+    end
+
+    return true
+end
+
+function MWBase.PrintReticleOverlayState(attachment, force)
+    if type(attachment) ~= "table" then
+        print("[RTXPatcher][MWBase ReticleOverlay] no optic attachment to inspect")
+        return
+    end
+
+    local printed = false
+    printed = printReticleOverlayMaterial("Reticle", attachment.Reticle, force) or printed
+    printed = printReticleOverlayMaterial("ReticleHybrid", attachment.ReticleHybrid, force) or printed
+
+    if not printed then
+        print("[RTXPatcher][MWBase ReticleOverlay] active optic has no reticle materials")
+    end
+
+    local state = Patcher.State and Patcher.State.mwbaseReticleOverlay or nil
+    if state then
+        print(string.format(
+            "[RTXPatcher][MWBase ReticleOverlay] enabled=%s category=%s marked=%s immediate=%s pending=%s last=%s",
+            tostring(cvReticleRasterOverlay:GetBool()),
+            tostring(state.category),
+            tostring(state.marked or 0),
+            tostring(state.immediate or 0),
+            tostring(state.pending or 0),
+            tostring(state.lastMaterial or "")
+        ))
+    end
+end
+
+local RETICLE_OVERLAY_DUMP_COMMAND_VERSION = 1
+if concommand and concommand.Add and (not _G or _G.RTXPatcher_MWBaseReticleOverlayDumpCommandVersion ~= RETICLE_OVERLAY_DUMP_COMMAND_VERSION) then
+    concommand.Add("rtx_patcher_mwbase_dump_reticle_overlay", function(_, _, args)
+        local attachment, reason = MWBase.FindActiveOpticAttachment()
+        if not attachment then
+            print("[RTXPatcher][MWBase ReticleOverlay] " .. tostring(reason))
+            return
+        end
+
+        local force = args and (args[1] == "1" or args[1] == "force")
+        MWBase.PrintReticleOverlayState(attachment, force)
+    end)
+
+    if _G then
+        _G.RTXPatcher_MWBaseReticleOverlayDumpCommandVersion = RETICLE_OVERLAY_DUMP_COMMAND_VERSION
+    end
 end
 
 function MWBase.MarkOpticViewSurfaceMaterials(attachment, force)
@@ -963,6 +1555,7 @@ function MWBase.DrawReticleStencil(original, self, model, reticle, weapon)
         end
     end
 
+    local stencilReference = MWBase.GetReticleOverlayStencilReference(self)
     render.SetStencilWriteMask(0xFF)
     render.SetStencilTestMask(0xFF)
     render.SetStencilReferenceValue(0)
@@ -971,13 +1564,13 @@ function MWBase.DrawReticleStencil(original, self, model, reticle, weapon)
     render.SetStencilFailOperation(STENCIL_KEEP)
     render.SetStencilZFailOperation(STENCIL_KEEP)
     render.SetStencilEnable(true)
-    render.SetStencilReferenceValue((MWBASE_STENCIL_REFVALUE or 0) + 1)
+    render.SetStencilReferenceValue(stencilReference)
 
     if self.Reticle and self.Reticle.Squash ~= nil and type(weapon.GetAimDelta) == "function" then
         model:ManipulateBoneScale(0, Vector(Lerp(weapon:GetAimDelta(), 1, self.Reticle.Squash), 1, 1))
     end
 
-    model:DrawModel()
+    drawReticleStencilMaskModel(model)
     render.SetStencilCompareFunction(STENCIL_EQUAL)
 
     if not mw_utils or type(mw_utils.GetFastAttachment) ~= "function" or not self.m_Model then
@@ -998,15 +1591,41 @@ function MWBase.DrawReticleStencil(original, self, model, reticle, weapon)
     local size = reticle.Size * fovMult * cvReticleScale:GetFloat()
     local color = reticle.Color
 
-    render.SetMaterial(reticle.Material)
-
     local offset = att.Ang:Forward() * cvReticleDepth:GetFloat()
     if reticle.Offset ~= nil then
         offset = offset + att.Ang:Right() * reticle.Offset.x
         offset = offset + att.Ang:Up() * reticle.Offset.y
     end
 
-    render.DrawQuadEasy(att.Pos + offset, att.Ang:Forward():GetNegated(), size * 0.01, size * 0.01, color, -att.Ang.r + 180)
+    local worldPos = att.Pos + offset
+    local bounds = projectedReticleOverlayBounds(worldPos, att.Ang, size * 0.01)
+    if bounds and reticleExplicitOverlayClipSource() == "model" then
+        bounds.clip = projectedEntityOverlayBounds(model)
+    end
+    if bounds then
+        bounds.stencil = true
+        bounds.stencilReference = stencilReference
+        bounds.stencilReadMask = 0xFF
+    end
+    local submittedUsesDeferredStencilClear = bounds
+        and bounds.stencil == true
+        and cvReticleExplicitOverlayStencil:GetBool()
+        and cvReticleExplicitOverlayStencilClear:GetBool()
+
+    if submitExplicitReticleOverlay(reticle.Material, bounds, color, "stencil") then
+        render.SetStencilEnable(false)
+        if not submittedUsesDeferredStencilClear then
+            render.ClearStencil()
+        end
+        return
+    end
+
+    if markReticleMaterialForRasterOverlay then
+        markReticleMaterialForRasterOverlay(reticle.Material)
+    end
+
+    render.SetMaterial(reticle.Material)
+    render.DrawQuadEasy(worldPos, att.Ang:Forward():GetNegated(), size * 0.01, size * 0.01, color, -att.Ang.r + 180)
 
     render.SetStencilEnable(false)
     render.ClearStencil()
@@ -1070,6 +1689,20 @@ function MWBase.GetModeSummary()
         reticleAdsThreshold = cvReticleAdsThreshold:GetFloat(),
         reticleDepth = cvReticleDepth:GetFloat(),
         reticleScale = cvReticleScale:GetFloat(),
+        reticleRasterOverlay = cvReticleRasterOverlay:GetBool(),
+        reticleRasterOverlayDebug = cvReticleRasterOverlayDebug:GetBool(),
+        reticleExplicitOverlay = cvReticleExplicitOverlay:GetBool(),
+        reticleExplicitOverlayScale = cvReticleExplicitOverlayScale:GetFloat(),
+        reticleExplicitOverlayClip = cvReticleExplicitOverlayClip:GetBool(),
+        reticleExplicitOverlayClipScale = cvReticleExplicitOverlayClipScale:GetFloat(),
+        reticleExplicitOverlayClipScaleX = cvReticleExplicitOverlayClipScaleX:GetFloat(),
+        reticleExplicitOverlayClipScaleY = cvReticleExplicitOverlayClipScaleY:GetFloat(),
+        reticleExplicitOverlayClipOffsetX = cvReticleExplicitOverlayClipOffsetX:GetFloat(),
+        reticleExplicitOverlayClipOffsetY = cvReticleExplicitOverlayClipOffsetY:GetFloat(),
+        reticleExplicitOverlayClipSource = reticleExplicitOverlayClipSource(),
+        reticleExplicitOverlayStencil = cvReticleExplicitOverlayStencil:GetBool(),
+        reticleExplicitOverlayStencilClear = cvReticleExplicitOverlayStencilClear:GetBool(),
+        reticleExplicitOverlayStencilRefMode = cvReticleExplicitOverlayStencilRefMode:GetString(),
         optics = cvOptics:GetBool(),
         opticRenderMode = cvOpticSimpleRender:GetBool() and "simple" or "original",
         opticAdsThreshold = cvOpticAdsThreshold:GetFloat(),

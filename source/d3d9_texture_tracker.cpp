@@ -1142,6 +1142,12 @@ void D3D9TextureTracker::ApplyCategoryToHash(uint64_t hash, uint32_t categoryFla
             Msg("[D3D9] Categorized VIEW_SURFACE: '%s' -> %s\n", materialName, hashStr);
         }
     }
+    if (categoryFlags & RASTER_OVERLAY) {
+        g_remix->AddTextureHash("rtx.rasterOverlayTextures", hashStr);
+        if (m_enableDebugOutput) {
+            Msg("[D3D9] Categorized RASTER_OVERLAY: '%s' -> %s\n", materialName, hashStr);
+        }
+    }
     
     // Update local tracking.
     // When IGNORED is applied it wins over DECAL: clear any stale DECAL flags so

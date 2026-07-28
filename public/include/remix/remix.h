@@ -190,6 +190,7 @@ namespace remix {
     Result< void >                    DestroyMesh(remixapi_MeshHandle handle);
     Result< void >                    SetupCamera(const remixapi_CameraInfo& info);
     Result< void >                    SetCameraMediumMaterial(remixapi_MaterialHandle medium);
+    Result< void >                    DrawRasterOverlayQuad(const remixapi_RasterOverlayQuadInfo& info);
     Result< void >                    DrawInstance(const remixapi_InstanceInfo& info);
     Result< remixapi_LightHandle >    CreateLight(const remixapi_LightInfo& info);
     Result< remixapi_LightHandle >    CreateLightBatched(const remixapi_LightInfo& info);
@@ -247,7 +248,7 @@ namespace remix {
         return status;
       }
 
-  static_assert(sizeof(remixapi_Interface) == 264,
+  static_assert(sizeof(remixapi_Interface) == 272,
                     "Change version, update C++ wrapper when adding new functions");
 
       remix::Interface interfaceInCpp = {};
@@ -787,6 +788,14 @@ namespace remix {
     info.pNext = nullptr;
     info.medium = medium;
     return m_CInterface.SetCameraMediumMaterial(&info);
+  }
+
+  inline Result< void > Interface::DrawRasterOverlayQuad(const remixapi_RasterOverlayQuadInfo& info) {
+    if (!m_CInterface.DrawRasterOverlayQuad) {
+      return REMIXAPI_ERROR_CODE_NOT_INITIALIZED;
+    }
+
+    return m_CInterface.DrawRasterOverlayQuad(&info);
   }
 
 

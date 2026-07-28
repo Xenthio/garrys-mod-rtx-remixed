@@ -133,6 +133,9 @@ extern "C" {
     REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_GPU_INSTANCING_EXT     = 26,
     REMIXAPI_STRUCT_TYPE_TEXTURE_INFO                         = 27,
     REMIXAPI_STRUCT_TYPE_CAMERA_MEDIUM_INFO                   = 28,
+    REMIXAPI_STRUCT_TYPE_RASTER_OVERLAY_QUAD_INFO             = 29,
+    REMIXAPI_STRUCT_TYPE_RASTER_OVERLAY_CLIP_EXT              = 30,
+    REMIXAPI_STRUCT_TYPE_RASTER_OVERLAY_STENCIL_EXT           = 31,
     // NOTE: if adding a new struct, register it in 'rtx_remix_specialization.inl'
     //       and only extend this enum by appending, never adjust the order of these 
     //       as that will break backwards compatibility.
@@ -414,6 +417,46 @@ extern "C" {
 
   typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_SetCameraMediumMaterial)(
     const remixapi_CameraMediumInfo* info);
+
+  typedef struct remixapi_RasterOverlayVertex {
+    remixapi_Float2D position;
+    remixapi_Float2D texcoord;
+    remixapi_Float4D color;
+  } remixapi_RasterOverlayVertex;
+
+  typedef enum remixapi_RasterOverlayClipMode {
+    REMIXAPI_RASTER_OVERLAY_CLIP_MODE_NONE     = 0,
+    REMIXAPI_RASTER_OVERLAY_CLIP_MODE_RECT     = 1,
+    REMIXAPI_RASTER_OVERLAY_CLIP_MODE_ELLIPSE  = 2,
+  } remixapi_RasterOverlayClipMode;
+
+  typedef struct remixapi_RasterOverlayClipEXT {
+    remixapi_StructType sType;
+    void*               pNext;
+    uint32_t            clipMode;
+    remixapi_Float2D    clipMin;
+    remixapi_Float2D    clipMax;
+  } remixapi_RasterOverlayClipEXT;
+
+  typedef struct remixapi_RasterOverlayStencilEXT {
+    remixapi_StructType sType;
+    void*               pNext;
+    remixapi_Bool       useCurrentStencil;
+    remixapi_Bool       clearCurrentStencilAfterDraw;
+    remixapi_Bool       useStencilReference;
+    uint32_t            stencilReference;
+    uint32_t            stencilReadMask;
+  } remixapi_RasterOverlayStencilEXT;
+
+  typedef struct remixapi_RasterOverlayQuadInfo {
+    remixapi_StructType           sType;
+    void*                         pNext;
+    uint64_t                      textureHash;
+    remixapi_RasterOverlayVertex  vertices[4];
+  } remixapi_RasterOverlayQuadInfo;
+
+  typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_DrawRasterOverlayQuad)(
+    const remixapi_RasterOverlayQuadInfo* info);
 
 
 
@@ -892,6 +935,7 @@ remixapi_Bool                   isDynamic;
     remixapi_UIState                          (*GetUIState)(void);
     remixapi_ErrorCode                        (*SetUIState)(remixapi_UIState state);
     PFN_remixapi_SetCameraMediumMaterial SetCameraMediumMaterial;
+    PFN_remixapi_DrawRasterOverlayQuad   DrawRasterOverlayQuad;
   } remixapi_Interface;
 
   REMIXAPI remixapi_ErrorCode REMIXAPI_CALL remixapi_InitializeLibrary(

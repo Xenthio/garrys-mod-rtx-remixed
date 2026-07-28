@@ -738,6 +738,9 @@ void ApplyToHash(uint64_t hash, uint32_t flags, const std::string& materialName)
             }
         }
     }
+    if (flags & CategoryFlags::RASTER_OVERLAY) {
+        s_remix->AddTextureHash("rtx.rasterOverlayTextures", hashStr.c_str());
+    }
     
     if (s_config.debugOutput) {
         Msg("[AutoCategorisation] Applied flags 0x%X to hash 0x%llX (%s)\n", 
@@ -867,6 +870,9 @@ int RetryPendingCategories() {
             if (it->categoryFlags & CategoryFlags::EMISSIVE) {
                 s_remix->AddTextureHash("rtx.legacyEmissiveTextures", hashStr.c_str());
             }
+            if (it->categoryFlags & CategoryFlags::RASTER_OVERLAY) {
+                s_remix->AddTextureHash("rtx.rasterOverlayTextures", hashStr.c_str());
+            }
             
             if (s_config.debugOutput) {
                 Msg("[AutoCategorisation] Retry succeeded for '%s' -> hash 0x%llX, flags 0x%X\n", 
@@ -925,6 +931,9 @@ std::unordered_map<std::string, std::vector<uint64_t>> GetCategorizedHashes() {
         }
         if (flags & CategoryFlags::BEAM) {
             result["beamTextures"].push_back(hash);
+        }
+        if (flags & CategoryFlags::RASTER_OVERLAY) {
+            result["rasterOverlayTextures"].push_back(hash);
         }
     }
     

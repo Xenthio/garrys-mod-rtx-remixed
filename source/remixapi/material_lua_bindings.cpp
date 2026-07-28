@@ -7,6 +7,8 @@
 #include <materialsystem/itexture.h>
 #include <d3d9.h>
 #include <Windows.h>
+#include <cmath>
+#include <cstring>
 #include "../d3d9_texture_tracker.h"
 #include "../globalconvars.h"
 
@@ -17,6 +19,142 @@ extern IMaterialSystem* materials;
 extern remix::Interface* g_remix;
 
 namespace RemixAPI {
+
+static uint64_t ParseTextureHashFromLuaValue(ILuaBase* LUA, int index) {
+    if (LUA->IsType(index, Type::String)) {
+        const char* hashStr = LUA->GetString(index);
+        if (!hashStr) return 0;
+        return std::strtoull(hashStr, nullptr, 0);
+    }
+
+    if (LUA->IsType(index, Type::Number)) {
+        return static_cast<uint64_t>(LUA->GetNumber(index));
+    }
+
+    return 0;
+}
+
+static uint64_t GetFirstValidTextureHashForMaterial(const char* materialName) {
+    if (!g_remix || !materialName || materialName[0] == '\0') {
+        return 0;
+    }
+
+    const std::vector<IDirect3DTexture9*>* variants = D3D9TextureTracker::Instance().GetTextureVariantsForMaterial(materialName);
+    if (!variants || variants->empty()) {
+        return 0;
+    }
+
+    for (IDirect3DTexture9* d3dTexture : *variants) {
+        if (!d3dTexture) continue;
+
+        ULONG refCount = d3dTexture->AddRef();
+        if (refCount > 1) {
+            d3dTexture->Release();
+
+            auto result = g_remix->dxvk_GetTextureHash(d3dTexture);
+            if (result && result.value() != 0) {
+                return result.value();
+            }
+        } else {
+            d3dTexture->Release();
+        }
+    }
+
+    return 0;
+}
+
+static bool GetLuaNumberField(ILuaBase* LUA, int tableIndex, const char* fieldName, double& outValue) {
+    LUA->GetField(tableIndex, fieldName);
+    const bool hasValue = LUA->IsType(-1, Type::Number);
+    if (hasValue) {
+        outValue = LUA->GetNumber(-1);
+    }
+    LUA->Pop();
+    return hasValue;
+}
+
+static double GetLuaNumberFieldOrDefault(ILuaBase* LUA, int tableIndex, const char* fieldName, double defaultValue) {
+    double value = defaultValue;
+    GetLuaNumberField(LUA, tableIndex, fieldName, value);
+    return value;
+}
+
+static bool GetLuaBoolFieldOrDefault(ILuaBase* LUA, int tableIndex, const char* fieldName, bool defaultValue) {
+    bool value = defaultValue;
+    LUA->GetField(tableIndex, fieldName);
+    if (LUA->IsType(-1, Type::Bool)) {
+        value = LUA->GetBool(-1);
+    } else if (LUA->IsType(-1, Type::Number)) {
+        value = LUA->GetNumber(-1) != 0.0;
+    }
+    LUA->Pop();
+    return value;
+}
+
+static bool GetLuaUInt32Field(ILuaBase* LUA, int tableIndex, const char* fieldName, uint32_t& outValue) {
+    double value = 0.0;
+    if (!GetLuaNumberField(LUA, tableIndex, fieldName, value)) {
+        return false;
+    }
+
+    if (!std::isfinite(value) || value < 0.0 || value > 4294967295.0) {
+        return false;
+    }
+
+    outValue = static_cast<uint32_t>(value);
+    return true;
+}
+
+static uint32_t GetLuaUInt32FieldOrDefault(ILuaBase* LUA, int tableIndex, const char* fieldName, uint32_t defaultValue) {
+    uint32_t value = defaultValue;
+    GetLuaUInt32Field(LUA, tableIndex, fieldName, value);
+    return value;
+}
+
+static float NormalizeLuaColorChannel(double value) {
+    if (value > 1.0) {
+        value /= 255.0;
+    }
+    if (value < 0.0) return 0.0f;
+    if (value > 1.0) return 1.0f;
+    return static_cast<float>(value);
+}
+
+static remixapi_Float4D GetLuaColorFieldOrWhite(ILuaBase* LUA, int tableIndex) {
+    remixapi_Float4D color { 1.0f, 1.0f, 1.0f, 1.0f };
+
+    LUA->GetField(tableIndex, "color");
+    if (LUA->IsType(-1, Type::Table)) {
+        color.x = NormalizeLuaColorChannel(GetLuaNumberFieldOrDefault(LUA, -1, "r", 255.0));
+        color.y = NormalizeLuaColorChannel(GetLuaNumberFieldOrDefault(LUA, -1, "g", 255.0));
+        color.z = NormalizeLuaColorChannel(GetLuaNumberFieldOrDefault(LUA, -1, "b", 255.0));
+        color.w = NormalizeLuaColorChannel(GetLuaNumberFieldOrDefault(LUA, -1, "a", 255.0));
+    }
+    LUA->Pop();
+
+    return color;
+}
+
+static uint32_t GetRasterOverlayClipMode(ILuaBase* LUA, int tableIndex) {
+    uint32_t mode = REMIXAPI_RASTER_OVERLAY_CLIP_MODE_ELLIPSE;
+
+    LUA->GetField(tableIndex, "mode");
+    if (LUA->IsType(-1, Type::Number)) {
+        mode = static_cast<uint32_t>(LUA->GetNumber(-1));
+    } else if (LUA->IsType(-1, Type::String)) {
+        const char* modeString = LUA->GetString(-1);
+        if (modeString && std::strcmp(modeString, "none") == 0) {
+            mode = REMIXAPI_RASTER_OVERLAY_CLIP_MODE_NONE;
+        } else if (modeString && std::strcmp(modeString, "rect") == 0) {
+            mode = REMIXAPI_RASTER_OVERLAY_CLIP_MODE_RECT;
+        } else if (modeString && std::strcmp(modeString, "ellipse") == 0) {
+            mode = REMIXAPI_RASTER_OVERLAY_CLIP_MODE_ELLIPSE;
+        }
+    }
+    LUA->Pop();
+
+    return mode;
+}
 
 // Helper function to extract MaterialInfo from Lua table
 static remix::MaterialInfo LuaToMaterialInfo(ILuaBase* LUA, int index) {
@@ -488,6 +626,138 @@ LUA_FUNCTION(RemixMaterial_TrackMaterial) {
     return 1;
 }
 
+// Lua function: RemixRasterOverlay.DrawQuad(info)
+// info = { material = "path/name" or textureHash = "0x...", x = 0, y = 0, w = 64, h = 64, color = Color(...), u0 = 0, v0 = 0, u1 = 1, v1 = 1, clip = { mode = "ellipse", x = 0, y = 0, w = 64, h = 64 }, stencil = { current = true, clear = true } }
+LUA_FUNCTION(RemixRasterOverlay_DrawQuad) {
+    if (!g_remix) {
+        LUA->PushBool(false);
+        LUA->PushString("Remix API not initialized");
+        return 2;
+    }
+
+    if (!LUA->IsType(1, Type::Table)) {
+        LUA->PushBool(false);
+        LUA->PushString("expected table");
+        return 2;
+    }
+
+    uint64_t textureHash = 0;
+    LUA->GetField(1, "textureHash");
+    textureHash = ParseTextureHashFromLuaValue(LUA, -1);
+    LUA->Pop();
+
+    if (textureHash == 0) {
+        LUA->GetField(1, "material");
+        if (LUA->IsType(-1, Type::String)) {
+            const char* materialName = LUA->GetString(-1);
+            textureHash = GetFirstValidTextureHashForMaterial(materialName);
+        }
+        LUA->Pop();
+    }
+
+    if (textureHash == 0) {
+        LUA->PushBool(false);
+        LUA->PushString("texture hash unavailable");
+        return 2;
+    }
+
+    const double x = GetLuaNumberFieldOrDefault(LUA, 1, "x", 0.0);
+    const double y = GetLuaNumberFieldOrDefault(LUA, 1, "y", 0.0);
+    const double w = GetLuaNumberFieldOrDefault(LUA, 1, "w", 0.0);
+    const double h = GetLuaNumberFieldOrDefault(LUA, 1, "h", 0.0);
+    if (!std::isfinite(x) || !std::isfinite(y) ||
+        !std::isfinite(w) || !std::isfinite(h) ||
+        w <= 0.0 || h <= 0.0) {
+        LUA->PushBool(false);
+        LUA->PushString("invalid quad bounds");
+        return 2;
+    }
+
+    const float u0 = static_cast<float>(GetLuaNumberFieldOrDefault(LUA, 1, "u0", 0.0));
+    const float v0 = static_cast<float>(GetLuaNumberFieldOrDefault(LUA, 1, "v0", 0.0));
+    const float u1 = static_cast<float>(GetLuaNumberFieldOrDefault(LUA, 1, "u1", 1.0));
+    const float v1 = static_cast<float>(GetLuaNumberFieldOrDefault(LUA, 1, "v1", 1.0));
+    const remixapi_Float4D color = GetLuaColorFieldOrWhite(LUA, 1);
+
+    remixapi_RasterOverlayClipEXT clipInfo = {};
+    remixapi_RasterOverlayStencilEXT stencilInfo = {};
+    remixapi_RasterOverlayQuadInfo info = {};
+    info.sType = REMIXAPI_STRUCT_TYPE_RASTER_OVERLAY_QUAD_INFO;
+    info.pNext = nullptr;
+    info.textureHash = textureHash;
+    info.vertices[0] = { { static_cast<float>(x),     static_cast<float>(y)     }, { u0, v0 }, color };
+    info.vertices[1] = { { static_cast<float>(x + w), static_cast<float>(y)     }, { u1, v0 }, color };
+    info.vertices[2] = { { static_cast<float>(x + w), static_cast<float>(y + h) }, { u1, v1 }, color };
+    info.vertices[3] = { { static_cast<float>(x),     static_cast<float>(y + h) }, { u0, v1 }, color };
+
+    LUA->GetField(1, "clip");
+    if (LUA->IsType(-1, Type::Table)) {
+        const double clipX = GetLuaNumberFieldOrDefault(LUA, -1, "x", 0.0);
+        const double clipY = GetLuaNumberFieldOrDefault(LUA, -1, "y", 0.0);
+        const double clipW = GetLuaNumberFieldOrDefault(LUA, -1, "w", 0.0);
+        const double clipH = GetLuaNumberFieldOrDefault(LUA, -1, "h", 0.0);
+        const uint32_t clipMode = GetRasterOverlayClipMode(LUA, -1);
+
+        if (!std::isfinite(clipX) || !std::isfinite(clipY) ||
+            !std::isfinite(clipW) || !std::isfinite(clipH) ||
+            clipW <= 0.0 || clipH <= 0.0 ||
+            (clipMode != REMIXAPI_RASTER_OVERLAY_CLIP_MODE_NONE &&
+             clipMode != REMIXAPI_RASTER_OVERLAY_CLIP_MODE_RECT &&
+             clipMode != REMIXAPI_RASTER_OVERLAY_CLIP_MODE_ELLIPSE)) {
+            LUA->Pop();
+            LUA->PushBool(false);
+            LUA->PushString("invalid clip bounds");
+            return 2;
+        }
+
+        if (clipMode != REMIXAPI_RASTER_OVERLAY_CLIP_MODE_NONE) {
+            clipInfo.sType = REMIXAPI_STRUCT_TYPE_RASTER_OVERLAY_CLIP_EXT;
+            clipInfo.pNext = info.pNext;
+            clipInfo.clipMode = clipMode;
+            clipInfo.clipMin = { static_cast<float>(clipX), static_cast<float>(clipY) };
+            clipInfo.clipMax = { static_cast<float>(clipX + clipW), static_cast<float>(clipY + clipH) };
+            info.pNext = &clipInfo;
+        }
+    }
+    LUA->Pop();
+
+    LUA->GetField(1, "stencil");
+    if (LUA->IsType(-1, Type::Table)) {
+        const bool current = GetLuaBoolFieldOrDefault(LUA, -1, "current", false);
+        if (current) {
+            stencilInfo.sType = REMIXAPI_STRUCT_TYPE_RASTER_OVERLAY_STENCIL_EXT;
+            stencilInfo.pNext = info.pNext;
+            stencilInfo.useCurrentStencil = true;
+            stencilInfo.clearCurrentStencilAfterDraw = GetLuaBoolFieldOrDefault(LUA, -1, "clear", false);
+            stencilInfo.stencilReadMask = GetLuaUInt32FieldOrDefault(LUA, -1, "readMask", 0xFFFFFFFFu);
+            uint32_t stencilReference = 0;
+            if (GetLuaUInt32Field(LUA, -1, "reference", stencilReference) ||
+                GetLuaUInt32Field(LUA, -1, "ref", stencilReference)) {
+                stencilInfo.useStencilReference = true;
+                stencilInfo.stencilReference = stencilReference;
+            }
+            info.pNext = &stencilInfo;
+        }
+    } else if (LUA->IsType(-1, Type::Bool) && LUA->GetBool(-1)) {
+        stencilInfo.sType = REMIXAPI_STRUCT_TYPE_RASTER_OVERLAY_STENCIL_EXT;
+        stencilInfo.pNext = info.pNext;
+        stencilInfo.useCurrentStencil = true;
+        stencilInfo.clearCurrentStencilAfterDraw = false;
+        info.pNext = &stencilInfo;
+    }
+    LUA->Pop();
+
+    auto result = g_remix->DrawRasterOverlayQuad(info);
+    if (!result) {
+        LUA->PushBool(false);
+        LUA->PushNumber(static_cast<double>(result.status()));
+        return 2;
+    }
+
+    LUA->PushBool(true);
+    return 1;
+}
+
 // Lua function: RemixMaterial.GetTextureHash(materialName)
 // Returns the Remix texture hash for a Source Engine material's base texture
 LUA_FUNCTION(RemixMaterial_GetTextureHash) {
@@ -766,6 +1036,7 @@ static std::vector<const char*> GetRemixCategoryOptions(uint32_t categoryFlags) 
     if (categoryFlags & (1 << 19)) options.push_back("rtx.playerModelTextures");  // THIRD_PERSON_PLAYER_MODEL
     if (categoryFlags & (1 << 24)) options.push_back("rtx.legacyEmissiveTextures");  // LEGACY_EMISSIVE
     if (categoryFlags & (1 << 25)) options.push_back("rtx.viewSurfaceTextures");  // VIEW_SURFACE
+    if (categoryFlags & (1 << 26)) options.push_back("rtx.rasterOverlayTextures");  // RASTER_OVERLAY
     
     return options;
 }
@@ -1381,6 +1652,11 @@ void MaterialManager::InitializeLuaBindings() {
     
     // Set the table as the global "RemixMaterial"
     m_lua->SetField(-2, "RemixMaterial");
+
+    m_lua->CreateTable();
+    m_lua->PushCFunction(RemixRasterOverlay_DrawQuad);
+    m_lua->SetField(-2, "DrawQuad");
+    m_lua->SetField(-2, "RemixRasterOverlay");
     
     // Pop global table
     m_lua->Pop();
