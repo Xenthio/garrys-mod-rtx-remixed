@@ -104,6 +104,114 @@ local pendingCategorizations = {}
 -- Map token to guard against stale timers firing after map change
 local currentMapToken = game.GetMap() or ""
 
+-- $no_fullbright is stored in Source's material flags as bit 1
+-- (MATERIAL_VAR_NO_DEBUG_OVERRIDE). Prefer the raw VMT so an explicit opt-out
+-- remains visible even if the compiled material does not expose the key.
+local NO_FULLBRIGHT_FLAG = 0x2
+local VERTEXCOLOR_FLAG = 0x10
+local VERTEXALPHA_FLAG = 0x20
+
+local function ReadRawVMT(materialName)
+    local vmtPath = "materials/" .. materialName
+    if not string.EndsWith(vmtPath, ".vmt") then
+        vmtPath = vmtPath .. ".vmt"
+    end
+    return file.Read(vmtPath, "GAME"), vmtPath
+end
+
+local function HasNoFullbrightOptOut(materialName, mat, rawContent)
+    local content = rawContent
+    if content == nil then
+        content = ReadRawVMT(materialName)
+    end
+
+    if content then
+        for line in content:gmatch("[^\r\n]+") do
+            local commentStart = line:find("//", 1, true)
+            if commentStart then
+                line = line:sub(1, commentStart - 1)
+            end
+
+            -- Removing quotes produces two ordinary tokens for both
+            -- "$no_fullbright" 1 and "$no_fullbright" "1".
+            local normalized = line:lower():gsub("[\"']", " ")
+            local key, value = normalized:match("^%s*(%S+)%s+(%S+)")
+            if key == "$no_fullbright" and tonumber(value) == 1 then
+                return true
+            end
+        end
+    end
+
+    if not mat or mat:IsError() then return false end
+
+    local keyValues = mat:GetKeyValues()
+    if keyValues then
+        for key, value in pairs(keyValues) do
+            if type(key) == "string" and
+               key:lower() == "$no_fullbright" and
+               tonumber(value) == 1 then
+                return true
+            end
+        end
+    end
+
+    if mat:GetInt("$no_fullbright") == 1 then
+        return true
+    end
+
+    local flags = mat:GetInt("$flags") or 0
+    return bit.band(flags, NO_FULLBRIGHT_FLAG) ~= 0
+end
+
+local function HasVertexColorOrAlphaOptOut(materialName, mat, rawContent)
+    local content = rawContent
+    if content == nil then
+        content = ReadRawVMT(materialName)
+    end
+
+    if content then
+        for line in content:gmatch("[^\r\n]+") do
+            local commentStart = line:find("//", 1, true)
+            if commentStart then
+                line = line:sub(1, commentStart - 1)
+            end
+
+            local normalized = line:lower():gsub("[\"']", " ")
+            local key, value = normalized:match("^%s*(%S+)%s+(%S+)")
+            if (key == "$vertexalpha" or key == "$vertexcolor") and
+               tonumber(value) == 1 then
+                return true
+            end
+        end
+    end
+
+    if not mat or mat:IsError() then return false end
+
+    local keyValues = mat:GetKeyValues()
+    if keyValues then
+        for key, value in pairs(keyValues) do
+            local lowerKey = type(key) == "string" and key:lower() or ""
+            if (lowerKey == "$vertexalpha" or lowerKey == "$vertexcolor") and
+               tonumber(value) == 1 then
+                return true
+            end
+        end
+    end
+
+    if mat:GetInt("$vertexalpha") == 1 or
+       mat:GetInt("$vertexcolor") == 1 then
+        return true
+    end
+
+    local flags = mat:GetInt("$flags") or 0
+    return bit.band(flags, bit.bor(VERTEXALPHA_FLAG, VERTEXCOLOR_FLAG)) ~= 0
+end
+
+local function HasUnlitEmissionOptOut(materialName, mat, rawContent)
+    return HasNoFullbrightOptOut(materialName, mat, rawContent) or
+           HasVertexColorOrAlphaOptOut(materialName, mat, rawContent)
+end
+
 --[[
     Check if a material is self-illuminated (emissive) with proper validation
     @param materialName string - The material name
@@ -115,15 +223,18 @@ function RemixCategoryManager.IsMaterialEmissive(materialName)
         return false
     end
 
+    local content, vmtPath = ReadRawVMT(materialName)
+
     -- Source's unlit shaders render their full albedo without receiving scene
     -- lighting. Treat every variant (including DX-suffixed shader names) as
-    -- emissive regardless of $selfillum or alpha-mask parameters.
+    -- emissive unless the VMT explicitly opts out with $no_fullbright,
+    -- $vertexalpha, or $vertexcolor.
     local shader = mat:GetShader()
     if shader then
         local lowerShader = shader:lower()
         if lowerShader:find("^unlitgeneric") or
            lowerShader:find("^unlittwotexture") then
-            return true
+            return not HasUnlitEmissionOptOut(materialName, mat, content)
         end
     end
     
@@ -132,13 +243,7 @@ function RemixCategoryManager.IsMaterialEmissive(materialName)
     local hasMask = false
     
     -- Raw VMT File Parse
-    local vmtPath = "materials/" .. materialName
-    if not string.EndsWith(vmtPath, ".vmt") then
-        vmtPath = vmtPath .. ".vmt"
-    end
-    
     local vmtParsedSuccessfully = false
-    local content = file.Read(vmtPath, "GAME")
     if content then
         vmtParsedSuccessfully = true
         local lines = string.Explode("\n", content)
@@ -491,8 +596,10 @@ function RemixCategoryManager.IsUnlitShaderEmissive(materialName)
     if not shader then return false end
 
     local lowerShader = shader:lower()
-    return lowerShader:find("^unlitgeneric") ~= nil or
-           lowerShader:find("^unlittwotexture") ~= nil
+    local isUnlit = lowerShader:find("^unlitgeneric") ~= nil or
+                    lowerShader:find("^unlittwotexture") ~= nil
+    return isUnlit and
+           not HasUnlitEmissionOptOut(materialName, mat)
 end
 
 --[[
@@ -565,7 +672,7 @@ end
     Returns true when an emissive material needs force-albedo mode because Remix
     would otherwise suppress emission or interpret alpha as an emissive mask.
     Source treats the full albedo of UnlitGeneric and UnlitTwoTexture as unlit,
-    so both shaders always use force-albedo emission.
+    so both shaders use force-albedo emission unless a supported VMT flag opts out.
     @param materialName string
     @return boolean
 ]]--
@@ -2078,8 +2185,25 @@ concommand.Add("rtx_debug_emissive", function(ply, cmd, args)
     -- Check Shader
     local shader = mat:GetShader()
     MsgC(Color(200, 200, 200), string.format("  Shader: %s\n", tostring(shader)))
-    if shader and shader:lower() == "unlitgeneric" then
-        table.insert(reasons, "UnlitGeneric shader")
+    local lowerShader = shader and shader:lower() or ""
+    local isUnlit = lowerShader:find("^unlitgeneric") ~= nil or
+                    lowerShader:find("^unlittwotexture") ~= nil
+    local hasNoFullbright = HasNoFullbrightOptOut(materialName, mat)
+    local hasVertexOptOut = HasVertexColorOrAlphaOptOut(materialName, mat)
+    MsgC(Color(200, 200, 200), string.format(
+        "  $no_fullbright opt-out: %s\n", tostring(hasNoFullbright)))
+    MsgC(Color(200, 200, 200), string.format(
+        "  $vertexalpha/$vertexcolor opt-out: %s\n", tostring(hasVertexOptOut)))
+    if isUnlit and (hasNoFullbright or hasVertexOptOut) then
+        if hasNoFullbright then
+            table.insert(reasons, "$no_fullbright 1 suppresses unlit emission")
+        end
+        if hasVertexOptOut then
+            table.insert(reasons,
+                "$vertexalpha 1 or $vertexcolor 1 suppresses unlit emission")
+        end
+    elseif isUnlit then
+        table.insert(reasons, "Unlit shader")
     end
     
     -- Check GetInt

@@ -180,6 +180,64 @@ bool CheckVMTForSelfillum(const std::string& materialName, bool debug) {
     return false;
 }
 
+// Check for an active unlit-emission opt-out. This is the raw-VMT fallback
+// for materials whose compiled flag state is unavailable or incomplete.
+static bool CheckVMTForUnlitEmissionOptOut(const std::string& materialName, bool debug) {
+    IFileSystem* fs = GetFileSystem();
+    if (!fs) return false;
+
+    std::string vmtPath = "materials/" + materialName + ".vmt";
+    FileHandle_t file = fs->Open(vmtPath.c_str(), "rb", "GAME");
+    if (!file) {
+        vmtPath = "materials/" + materialName;
+        file = fs->Open(vmtPath.c_str(), "rb", "GAME");
+        if (!file) return false;
+    }
+
+    const auto fileSize = fs->Size(file);
+    if (fileSize == 0 || fileSize > 65536) {
+        fs->Close(file);
+        return false;
+    }
+
+    std::string content(static_cast<size_t>(fileSize), '\0');
+    const int bytesRead =
+        fs->Read(&content[0], static_cast<int>(fileSize), file);
+    fs->Close(file);
+    if (bytesRead <= 0) return false;
+    content.resize(bytesRead);
+
+    std::istringstream lines(content);
+    std::string line;
+    while (std::getline(lines, line)) {
+        const size_t commentPos = line.find("//");
+        if (commentPos != std::string::npos) {
+            line.resize(commentPos);
+        }
+
+        std::transform(line.begin(), line.end(), line.begin(), SafeToLower);
+        std::replace(line.begin(), line.end(), '"', ' ');
+        std::replace(line.begin(), line.end(), '\'', ' ');
+
+        std::istringstream tokens(line);
+        std::string key;
+        std::string value;
+        if (tokens >> key >> value &&
+            (key == "$no_fullbright" ||
+             key == "$vertexalpha" ||
+             key == "$vertexcolor") &&
+            value == "1") {
+            if (debug) {
+                Msg("[AutoCategorisation] CheckVMT: Found active unlit emission opt-out '%s 1'\n",
+                    key.c_str());
+            }
+            return true;
+        }
+    }
+
+    return false;
+}
+
 std::string GetShaderName(IMaterial* material) {
     if (!material) return "";
     const char* shaderName = material->GetShaderName();
@@ -354,6 +412,28 @@ uint32_t DetectCategory(const std::string& materialName, IMaterial* material) {
         shaderName.find("unlittwotexture") == 0;
     const bool isUnlitShader =
         isUnlitGeneric || isUnlitTwoTexture;
+    bool hasUnlitEmissionOptOut = false;
+    if (isUnlitShader) {
+        // MATERIAL_VAR_NO_DEBUG_OVERRIDE is Source's compiled representation
+        // of $no_fullbright. Vertex color/alpha are independent opt-outs:
+        // either one is enough to suppress forced emission.
+        hasUnlitEmissionOptOut =
+            (material &&
+             (material->GetMaterialVarFlag(MATERIAL_VAR_NO_DEBUG_OVERRIDE) ||
+              material->GetMaterialVarFlag(MATERIAL_VAR_VERTEXALPHA) ||
+              material->GetMaterialVarFlag(MATERIAL_VAR_VERTEXCOLOR))) ||
+            CheckVMTForUnlitEmissionOptOut(materialName, s_config.debugOutput);
+    }
+    const bool isUnlitEmissive =
+        isUnlitShader && !hasUnlitEmissionOptOut;
+
+    if (hasUnlitEmissionOptOut) {
+        s_forceAlbedoEmissiveMaterials.erase(materialName);
+        if (s_config.debugOutput) {
+            Msg("[AutoCategorisation] Suppressing unlit emission for '%s': VMT opt-out flag\n",
+                materialName.c_str());
+        }
+    }
     
     uint32_t flags = 0;
     
@@ -414,7 +494,7 @@ uint32_t DetectCategory(const std::string& materialName, IMaterial* material) {
             // Preserve the established particle priority for ordinary shaders,
             // but an unlit particle is still inherently emissive and must carry
             // both category bits.
-            if (!isUnlitShader || !s_config.emissiveEnabled) {
+            if (!isUnlitEmissive || !s_config.emissiveEnabled) {
                 s_stats.materialsScanned++;
                 return flags;
             }
@@ -474,12 +554,12 @@ uint32_t DetectCategory(const std::string& materialName, IMaterial* material) {
     }
     
     // === EMISSIVE CHECK (can combine with other categories) ===
-    if (s_config.emissiveEnabled) {
+    if (s_config.emissiveEnabled && !hasUnlitEmissionOptOut) {
         bool isDecal = ((flags & CategoryFlags::DECAL_STATIC) != 0);
         // Source's unlit shaders do not receive scene lighting. Their complete
-        // albedo is therefore emission regardless of $selfillum or alpha data.
-        bool isEmissive = isUnlitShader;
-        if (isUnlitShader) {
+        // albedo is emission unless an explicit VMT flag opts out.
+        bool isEmissive = isUnlitEmissive;
+        if (isUnlitEmissive) {
             s_forceAlbedoEmissiveMaterials.insert(materialName);
         }
         
