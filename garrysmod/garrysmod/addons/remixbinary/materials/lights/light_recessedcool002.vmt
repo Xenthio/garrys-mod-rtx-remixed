@@ -1,0 +1,8 @@
+"UnlitGeneric"
+{
+	// Original shader: BaseTimesLightmapSelfIllum
+	"$basetexture" "lights/light_recessedcool002"
+	"$selfillum" 1
+	"$surfaceprop" "glass"
+	"%keywords" "portal"
+}
