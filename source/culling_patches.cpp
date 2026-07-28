@@ -119,11 +119,51 @@ static void RegisterCullingPatches() {
 
 	{
 		// Shader_DrawChains - skip world surface polygon drawing so overlays/decals still render.
-		// Signature starts at 'sub rsp, 60h' (2 bytes into the function); offset -2 targets
-		// the actual entry point ('push rbx') with a ret instruction.
-		static const char sig[] = "48 83 EC 60 48 89 6C 24 70 41 0F B6 E8";
-		pm.RegisterPatch("rtx_patch_skip_world_draw", "engine.dll",
-			sig, sizeof(sig) - 1, -2, {0xC3}); // ret
+		// Garry's Mod changed the third argument from an 8-bit bool to a 32-bit
+		// value in 2026, changing movzx ebp,r8b into mov ebp,r8d. Keep exact
+		// signatures for both layouts, then fall back to a stable body signature.
+		// The body fallback searches backwards for the validated function prologue
+		// so another small argument/prologue change fails safely or still resolves.
+		static const char currentSig[] =
+			"48 83 EC 60 48 89 6C 24 70 41 8B E8";
+		static const char legacySig[] =
+			"48 83 EC 60 48 89 6C 24 70 41 0F B6 E8";
+		static const char stableBodySig[] =
+			"4C 89 64 24 58 4D 8B E1 4C 89 6C 24 50 "
+			"4C 89 74 24 48 4C 8B F1";
+		const std::vector<uint8_t> expectedEntry = {
+			0x40, 0x53,                   // push rbx
+			0x48, 0x83, 0xEC, 0x60       // sub rsp, 60h
+		};
+		const std::vector<PatchLocator> locators = {
+			{
+				"current 32-bit draw-mode parameter",
+				std::string(currentSig, sizeof(currentSig) - 1),
+				-2,
+				0,
+				expectedEntry
+			},
+			{
+				"legacy 8-bit draw-mode parameter",
+				std::string(legacySig, sizeof(legacySig) - 1),
+				-2,
+				0,
+				expectedEntry
+			},
+			{
+				"stable Shader_DrawChains body",
+				std::string(stableBodySig, sizeof(stableBodySig) - 1),
+				-15,
+				8,
+				expectedEntry
+			}
+		};
+
+		pm.RegisterPatchWithFallbacks(
+			"rtx_patch_skip_world_draw",
+			"engine.dll",
+			locators,
+			{0xC3}); // ret
 	}
 
 	// client.dll patches (from applypatch.py patches64)
