@@ -187,6 +187,10 @@ namespace remix {
     Result< remixapi_MaterialHandle > CreateMaterial(const remixapi_MaterialInfo& info);
     Result< void >                    DestroyMaterial(remixapi_MaterialHandle handle);
     Result< remixapi_MeshHandle >     CreateMesh(const remixapi_MeshInfo& info);
+    // Batched variant: buffers the mesh data and materializes it on the render
+    // thread at the next DrawInstance / Present / AutoInstancePersistentLights
+    // flush. Useful for callers submitting meshes outside a frame boundary.
+    Result< remixapi_MeshHandle >     CreateMeshBatched(const remixapi_MeshInfo& info);
     Result< void >                    DestroyMesh(remixapi_MeshHandle handle);
     Result< void >                    SetupCamera(const remixapi_CameraInfo& info);
     Result< void >                    SetCameraMediumMaterial(remixapi_MaterialHandle medium);
@@ -197,13 +201,9 @@ namespace remix {
     Result< void >                    DrawLightInstance(remixapi_LightHandle handle);
     // Deferred update of an analytical light definition. Applied on render thread.
     Result< void >                    UpdateLightDefinition(remixapi_LightHandle handle, const remixapi_LightInfo& info);
-    // Optional frame-boundary callbacks (present starting in v0.5.1+)
-    Result< void >                    RegisterCallbacks(PFN_remixapi_BridgeCallback beginSceneCallback,
-                                                        PFN_remixapi_BridgeCallback endSceneCallback,
-                                                        PFN_remixapi_BridgeCallback presentCallback);
-    // Internal helper to auto-instance persistent external API lights once per frame
-    Result< void >                    AutoInstancePersistentLights();
     Result< void >                    SetConfigVariable(const char* key, const char* value);
+    Result< void >                    SetGameValue(const char* key, const char* value);
+    remixapi_ErrorCode                GetGameValue(const char* key, char* out_buffer, uint32_t in_buffer_size, uint32_t* out_actual_size);
     Result< void >                    AddTextureHash(const char* textureCategory, const char* textureHash);
     Result< void >                    RemoveTextureHash(const char* textureCategory, const char* textureHash);
     Result< remixapi_TextureHandle >  CreateTexture(const remixapi_TextureInfo& info);
@@ -217,7 +217,7 @@ namespace remix {
     Result< void >                           dxvk_CopyRenderingOutput(IDirect3DSurface9* destination,
                                                                       remixapi_dxvk_CopyRenderingOutputType type);
     Result< void >                           dxvk_SetDefaultOutput(remixapi_dxvk_CopyRenderingOutputType type,
-                                                                  const remixapi_Float4D& color);
+                                                                   const remixapi_Float4D& color);
     Result< uint64_t >                       dxvk_GetTextureHash(IDirect3DTexture9* texture);
     // Object picking utils
     template< typename CallbackLambda > // void( remix::Span<uint32_t> objectPickingValues )
@@ -225,6 +225,10 @@ namespace remix {
     Result< void >                           pick_HighlightObjects(const uint32_t* objectPickingValues_values,
                                                                    uint32_t objectPickingValues_count,
                                                                    uint8_t colorR, uint8_t colorG, uint8_t colorB);
+    // TODO Sub-feature 4: real impls. Match fork's C++ wrapper shape so the
+    // binary layout is stable; the C-interface slots are currently nullptr
+    // and calling these will guard on the nullptr pointer and return
+    // REMIXAPI_ERROR_CODE_NOT_INITIALIZED.
     Result<UIState> GetUIState();
     Result<void> SetUIState(UIState state);
   };
@@ -247,7 +251,7 @@ namespace remix {
         return status;
       }
 
-  static_assert(sizeof(remixapi_Interface) == 264,
+      static_assert(sizeof(remixapi_Interface) == 328,
                     "Change version, update C++ wrapper when adding new functions");
 
       remix::Interface interfaceInCpp = {};
@@ -291,6 +295,22 @@ namespace remix {
     return m_CInterface.SetConfigVariable(key, value);
   }
 
+  inline Result< void > Interface::SetGameValue(const char* key, const char* value) {
+    if (!m_CInterface.SetGameValue) {
+      return REMIXAPI_ERROR_CODE_NOT_INITIALIZED;
+    }
+    return m_CInterface.SetGameValue(key, value);
+  }
+
+  inline remixapi_ErrorCode Interface::GetGameValue(const char* key, char* out_buffer,
+                                                    uint32_t in_buffer_size,
+                                                    uint32_t* out_actual_size) {
+    if (!m_CInterface.GetGameValue) {
+      return REMIXAPI_ERROR_CODE_NOT_INITIALIZED;
+    }
+    return m_CInterface.GetGameValue(key, out_buffer, in_buffer_size, out_actual_size);
+  }
+
   inline Result< void > Interface::AddTextureHash(const char* textureCategory, const char* textureHash) {
     if (!m_CInterface.AddTextureHash) {
       return REMIXAPI_ERROR_CODE_NOT_INITIALIZED;
@@ -309,8 +329,9 @@ namespace remix {
     if (!m_CInterface.CreateTexture) {
       return REMIXAPI_ERROR_CODE_NOT_INITIALIZED;
     }
+
     remixapi_TextureHandle handle = nullptr;
-    remixapi_ErrorCode status = m_CInterface.CreateTexture(&info, &handle);
+    const remixapi_ErrorCode status = m_CInterface.CreateTexture(&info, &handle);
     if (status != REMIXAPI_ERROR_CODE_SUCCESS) {
       return status;
     }
@@ -335,7 +356,7 @@ namespace remix {
     if (!m_CInterface.GetUIState) {
         return REMIXAPI_ERROR_CODE_NOT_INITIALIZED;
     }
-    
+
     remixapi_UIState state = m_CInterface.GetUIState();
     return static_cast<UIState>(state);
   }
@@ -344,7 +365,7 @@ namespace remix {
       if (!m_CInterface.SetUIState) {
           return REMIXAPI_ERROR_CODE_NOT_INITIALIZED;
       }
-      
+
       return m_CInterface.SetUIState(static_cast<remixapi_UIState>(state));
   }
 
@@ -736,6 +757,15 @@ namespace remix {
     return handle;
   }
 
+  inline Result< remixapi_MeshHandle > Interface::CreateMeshBatched(const remixapi_MeshInfo& info) {
+    remixapi_MeshHandle handle = nullptr;
+    remixapi_ErrorCode status = m_CInterface.CreateMeshBatched(&info, &handle);
+    if (status != REMIXAPI_ERROR_CODE_SUCCESS) {
+      return status;
+    }
+    return handle;
+  }
+
   inline Result< void > Interface::DestroyMesh(remixapi_MeshHandle handle) {
     return m_CInterface.DestroyMesh(handle);
   }
@@ -1070,29 +1100,29 @@ namespace remix {
       pNext = nullptr;
       hash = 0;
       radiance = { 1.0f, 1.0f, 1.0f };
-      ignoreViewModel = false;
       isDynamic = false;  // Default to static for temporal accumulation
-      static_assert(sizeof remixapi_LightInfo == 48);
+      ignoreViewModel = false;  // Default to affecting all geometry including view models
+      STATIC_ASSERT_SIZEOF(remixapi_LightInfo, 48);
     }
   };
 
-     inline Result< remixapi_LightHandle > Interface::CreateLight(const remixapi_LightInfo& info) {
-     remixapi_LightHandle handle = nullptr;
-     remixapi_ErrorCode status = m_CInterface.CreateLight(&info, &handle);
-     if (status != REMIXAPI_ERROR_CODE_SUCCESS) {
-       return status;
-     }
-     return handle;
-   }
+  inline Result< remixapi_LightHandle > Interface::CreateLight(const remixapi_LightInfo& info) {
+    remixapi_LightHandle handle = nullptr;
+    remixapi_ErrorCode status = m_CInterface.CreateLight(&info, &handle);
+    if (status != REMIXAPI_ERROR_CODE_SUCCESS) {
+      return status;
+    }
+    return handle;
+  }
 
-   inline Result< remixapi_LightHandle > Interface::CreateLightBatched(const remixapi_LightInfo& info) {
-     remixapi_LightHandle handle = nullptr;
-     remixapi_ErrorCode status = m_CInterface.CreateLightBatched(&info, &handle);
-     if (status != REMIXAPI_ERROR_CODE_SUCCESS) {
-       return status;
-     }
-     return handle;
-   }
+  inline Result< remixapi_LightHandle > Interface::CreateLightBatched(const remixapi_LightInfo& info) {
+    remixapi_LightHandle handle = nullptr;
+    remixapi_ErrorCode status = m_CInterface.CreateLightBatched(&info, &handle);
+    if (status != REMIXAPI_ERROR_CODE_SUCCESS) {
+      return status;
+    }
+    return handle;
+  }
 
   inline Result< void > Interface::DestroyLight(remixapi_LightHandle handle) {
     return m_CInterface.DestroyLight(handle);
@@ -1105,22 +1135,6 @@ namespace remix {
   inline Result< void > Interface::UpdateLightDefinition(remixapi_LightHandle handle, const remixapi_LightInfo& info) {
     if (m_CInterface.UpdateLightDefinition) {
       return m_CInterface.UpdateLightDefinition(handle, &info);
-    }
-    return REMIXAPI_ERROR_CODE_GET_PROC_ADDRESS_FAILURE;
-  }
-
-  inline Result< void > Interface::RegisterCallbacks(PFN_remixapi_BridgeCallback beginSceneCallback,
-                                                     PFN_remixapi_BridgeCallback endSceneCallback,
-                                                     PFN_remixapi_BridgeCallback presentCallback) {
-    if (m_CInterface.RegisterCallbacks) {
-      return m_CInterface.RegisterCallbacks(beginSceneCallback, endSceneCallback, presentCallback);
-    }
-    return REMIXAPI_ERROR_CODE_GET_PROC_ADDRESS_FAILURE;
-  }
-
-  inline Result< void > Interface::AutoInstancePersistentLights() {
-    if (m_CInterface.AutoInstancePersistentLights) {
-      return m_CInterface.AutoInstancePersistentLights();
     }
     return REMIXAPI_ERROR_CODE_GET_PROC_ADDRESS_FAILURE;
   }

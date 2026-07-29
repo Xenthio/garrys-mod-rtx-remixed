@@ -182,7 +182,14 @@ bool CheckVMTForSelfillum(const std::string& materialName, bool debug) {
 
 // Check for an active unlit-emission opt-out. This is the raw-VMT fallback
 // for materials whose compiled flag state is unavailable or incomplete.
-static bool CheckVMTForUnlitEmissionOptOut(const std::string& materialName, bool debug) {
+static bool CheckVMTForUnlitEmissionOptOut(
+    const std::string& materialName,
+    bool debug,
+    bool* hasVertexColor = nullptr) {
+    if (hasVertexColor) {
+        *hasVertexColor = false;
+    }
+
     IFileSystem* fs = GetFileSystem();
     if (!fs) return false;
 
@@ -209,6 +216,7 @@ static bool CheckVMTForUnlitEmissionOptOut(const std::string& materialName, bool
 
     std::istringstream lines(content);
     std::string line;
+    bool foundOptOut = false;
     while (std::getline(lines, line)) {
         const size_t commentPos = line.find("//");
         if (commentPos != std::string::npos) {
@@ -227,15 +235,18 @@ static bool CheckVMTForUnlitEmissionOptOut(const std::string& materialName, bool
              key == "$vertexalpha" ||
              key == "$vertexcolor") &&
             value == "1") {
+            foundOptOut = true;
+            if (hasVertexColor && key == "$vertexcolor") {
+                *hasVertexColor = true;
+            }
             if (debug) {
                 Msg("[AutoCategorisation] CheckVMT: Found active unlit emission opt-out '%s 1'\n",
                     key.c_str());
             }
-            return true;
         }
     }
 
-    return false;
+    return foundOptOut;
 }
 
 std::string GetShaderName(IMaterial* material) {
@@ -413,17 +424,28 @@ uint32_t DetectCategory(const std::string& materialName, IMaterial* material) {
     const bool isUnlitShader =
         isUnlitGeneric || isUnlitTwoTexture;
     bool hasUnlitEmissionOptOut = false;
+    bool hasRawUnlitVertexColor = false;
     if (isUnlitShader) {
         // MATERIAL_VAR_NO_DEBUG_OVERRIDE is Source's compiled representation
         // of $no_fullbright. Vertex color/alpha are independent opt-outs:
         // either one is enough to suppress forced emission.
+        const bool hasRawUnlitEmissionOptOut =
+            CheckVMTForUnlitEmissionOptOut(
+                materialName,
+                s_config.debugOutput,
+                &hasRawUnlitVertexColor);
         hasUnlitEmissionOptOut =
             (material &&
              (material->GetMaterialVarFlag(MATERIAL_VAR_NO_DEBUG_OVERRIDE) ||
               material->GetMaterialVarFlag(MATERIAL_VAR_VERTEXALPHA) ||
               material->GetMaterialVarFlag(MATERIAL_VAR_VERTEXCOLOR))) ||
-            CheckVMTForUnlitEmissionOptOut(materialName, s_config.debugOutput);
+            hasRawUnlitEmissionOptOut;
     }
+    const bool hasUnlitVertexColor =
+        isUnlitGeneric &&
+        (hasRawUnlitVertexColor ||
+         (material &&
+          material->GetMaterialVarFlag(MATERIAL_VAR_VERTEXCOLOR)));
     const bool isUnlitEmissive =
         isUnlitShader && !hasUnlitEmissionOptOut;
 
@@ -451,6 +473,11 @@ uint32_t DetectCategory(const std::string& materialName, IMaterial* material) {
             isParticle = true;
         }
         
+        // A raw VMT can still identify this case when no IMaterial is available.
+        if (!isParticle && isUnlitGeneric && hasUnlitVertexColor) {
+            isParticle = true;
+        }
+
         // Shader-based particle detection
         if (!isParticle && material) {
             // Check for particle shaders
@@ -464,24 +491,13 @@ uint32_t DetectCategory(const std::string& materialName, IMaterial* material) {
                 isParticle = true;
             }
             
-            // UnlitGeneric with $vertexalpha + $vertexcolor = particle
+            // $vertexcolor alone identifies a vertex-colored UnlitGeneric
+            // particle; $vertexalpha is optional.
             if (!isParticle && isUnlitGeneric) {
-                bool hasVertexAlpha = false;
-                bool hasVertexColor = false;
-                
-                bool foundVA = false;
-                IMaterialVar* pVA = material->FindVar("$vertexalpha", &foundVA, false);
-                if (foundVA && pVA && pVA->GetIntValue() == 1) {
-                    hasVertexAlpha = true;
-                }
-                
                 bool foundVC = false;
                 IMaterialVar* pVC = material->FindVar("$vertexcolor", &foundVC, false);
-                if (foundVC && pVC && pVC->GetIntValue() == 1) {
-                    hasVertexColor = true;
-                }
-                
-                if (hasVertexAlpha && hasVertexColor) {
+                if (hasUnlitVertexColor ||
+                    (foundVC && pVC && pVC->GetIntValue() == 1)) {
                     isParticle = true;
                 }
             }

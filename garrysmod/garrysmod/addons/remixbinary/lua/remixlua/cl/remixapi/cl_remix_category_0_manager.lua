@@ -163,14 +163,9 @@ local function HasNoFullbrightOptOut(materialName, mat, rawContent)
     return bit.band(flags, NO_FULLBRIGHT_FLAG) ~= 0
 end
 
-local function HasVertexColorOrAlphaOptOut(materialName, mat, rawContent)
-    local content = rawContent
-    if content == nil then
-        content = ReadRawVMT(materialName)
-    end
-
-    if content then
-        for line in content:gmatch("[^\r\n]+") do
+local function HasEnabledMaterialFlag(mat, rawContent, flagName, flagMask)
+    if rawContent then
+        for line in rawContent:gmatch("[^\r\n]+") do
             local commentStart = line:find("//", 1, true)
             if commentStart then
                 line = line:sub(1, commentStart - 1)
@@ -178,8 +173,7 @@ local function HasVertexColorOrAlphaOptOut(materialName, mat, rawContent)
 
             local normalized = line:lower():gsub("[\"']", " ")
             local key, value = normalized:match("^%s*(%S+)%s+(%S+)")
-            if (key == "$vertexalpha" or key == "$vertexcolor") and
-               tonumber(value) == 1 then
+            if key == flagName and tonumber(value) == 1 then
                 return true
             end
         end
@@ -191,20 +185,30 @@ local function HasVertexColorOrAlphaOptOut(materialName, mat, rawContent)
     if keyValues then
         for key, value in pairs(keyValues) do
             local lowerKey = type(key) == "string" and key:lower() or ""
-            if (lowerKey == "$vertexalpha" or lowerKey == "$vertexcolor") and
-               tonumber(value) == 1 then
+            if lowerKey == flagName and tonumber(value) == 1 then
                 return true
             end
         end
     end
 
-    if mat:GetInt("$vertexalpha") == 1 or
-       mat:GetInt("$vertexcolor") == 1 then
+    if mat:GetInt(flagName) == 1 then
         return true
     end
 
     local flags = mat:GetInt("$flags") or 0
-    return bit.band(flags, bit.bor(VERTEXALPHA_FLAG, VERTEXCOLOR_FLAG)) ~= 0
+    return bit.band(flags, flagMask) ~= 0
+end
+
+local function HasVertexColorOrAlphaOptOut(materialName, mat, rawContent)
+    local content = rawContent
+    if content == nil then
+        content = ReadRawVMT(materialName)
+    end
+
+    return HasEnabledMaterialFlag(
+               mat, content, "$vertexalpha", VERTEXALPHA_FLAG) or
+           HasEnabledMaterialFlag(
+               mat, content, "$vertexcolor", VERTEXCOLOR_FLAG)
 end
 
 local function HasUnlitEmissionOptOut(materialName, mat, rawContent)
@@ -336,11 +340,11 @@ function RemixCategoryManager.IsMaterialEmissive(materialName)
         return true
     end
     
-    -- Method 6: Check for $illumposition (volumetric lights/sprites - doesn't need mask)
-    if mat:GetVector("$illumposition") then
-        return true
-    end
-    
+    -- $illumposition is deliberately not an emissive signal. It controls the
+    -- origin used to light a model, and shaders may expose a default vector even
+    -- when the VMT does not define it. Treating its presence as emission made
+    -- ordinary VertexLitGeneric and DecalModulate materials glow.
+
     -- If $selfillum is found on any other shader, check if mask is required
     if hasSelfillum then
         if requireMask then
@@ -569,11 +573,12 @@ function RemixCategoryManager.IsMaterialParticle(materialName)
             return true
         end
         
-        -- UnlitGeneric with $vertexalpha + $vertexcolor = particle
+        -- Vertex-colored UnlitGeneric materials are particle materials. Do not
+        -- require $vertexalpha; many opaque/additive particles only modulate RGB.
         if s:find("^unlitgeneric") then
-            local vertexAlpha = mat:GetInt("$vertexalpha")
-            local vertexColor = mat:GetInt("$vertexcolor")
-            if vertexAlpha == 1 and vertexColor == 1 then
+            local content = ReadRawVMT(materialName)
+            if HasEnabledMaterialFlag(
+                mat, content, "$vertexcolor", VERTEXCOLOR_FLAG) then
                 return true
             end
         end
