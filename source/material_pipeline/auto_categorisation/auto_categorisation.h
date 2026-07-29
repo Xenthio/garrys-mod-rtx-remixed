@@ -145,6 +145,14 @@ bool ApplyKnownCategoryToTexture(const std::string& materialName, IDirect3DTextu
 // @return Detected category flags
 uint32_t DetectCategory(const std::string& materialName, IMaterial* material);
 
+// Returns true when the material itself identifies as a decal, independently
+// of the BSP world-texture list and current auto-categorisation settings.
+// Used by hash-collision handling so multiple decal materials may safely share
+// an atlas without being mistaken for decal/non-decal collisions.
+bool IsIntrinsicDecalMaterial(
+    const std::string& materialName,
+    IMaterial* material);
+
 // Apply category flags to a texture hash
 // @param hash - Texture hash from Remix
 // @param flags - Category flags to apply

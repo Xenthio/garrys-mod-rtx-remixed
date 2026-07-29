@@ -76,6 +76,22 @@ static bool IsInternalEngineMaterial(const std::string& normalizedName) {
     return normalizedName.rfind("engine/", 0) == 0;
 }
 
+static bool IsMaterialPageAlias(
+    IMaterial* boundMaterial,
+    const std::string& queriedName)
+{
+    if (!boundMaterial || !boundMaterial->InMaterialPage()) {
+        return false;
+    }
+
+    IMaterial* materialPage = boundMaterial->GetMaterialPage();
+    if (!materialPage) {
+        return false;
+    }
+
+    return NormalizeTextureName(materialPage->GetName()) == queriedName;
+}
+
 static bool GetMaterialTexture(
     IMaterial* material,
     const char* variableName,
@@ -299,6 +315,7 @@ void D3D9TextureTracker::Shutdown() {
         m_hashToMaterials.clear();
         m_hashToCategoryFlags.clear();
         m_bspWorldMaterials.clear();
+        m_intrinsicDecalMaterials.clear();
         m_contestedDecalHashes.clear();
         m_worldTextureNames.clear();
         
@@ -456,9 +473,20 @@ bool D3D9TextureTracker::ValidateTextureAssociation(
         return false;
     }
 
+    // Material-page subrects render from their parent atlas. Validate Stage 0
+    // against that atlas while retaining the subrect's material name for
+    // categorization (notably decals/concrete/shot*_subrect).
+    IMaterial* textureMaterial = material;
+    if (stage == 0 && material->InMaterialPage()) {
+        IMaterial* materialPage = material->GetMaterialPage();
+        if (materialPage) {
+            textureMaterial = materialPage;
+        }
+    }
+
     const char* variableName = stage == 0 ? "$basetexture" : "$basetexture2";
     ITexture* expectedTexture = nullptr;
-    if (!GetMaterialTexture(material, variableName, &expectedTexture)) {
+    if (!GetMaterialTexture(textureMaterial, variableName, &expectedTexture)) {
         if (m_enableDebugOutput) {
             Msg("[D3D9TextureTracker] Rejected Stage %lu texture 0x%p for '%s': no valid %s\n",
                 stage, texture, materialName.c_str(), variableName);
@@ -592,6 +620,7 @@ void D3D9TextureTracker::ClearCache() {
     m_detailTextureCache.clear();
     m_hashToMaterials.clear();
     m_bspWorldMaterials.clear();
+    m_intrinsicDecalMaterials.clear();
     m_contestedDecalHashes.clear();
     InvalidateThreadMaterialStates();
     
@@ -628,10 +657,15 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
     bool materialIdentityConflict = false;
     uint64_t hashToReconcile = 0;
 
-    // Cross-check the Bind hook against GetCurrentMaterial on Stage 0. A disagreement
-    // means the queued and immediate material contexts are out of phase, so rejecting
-    // this observation is safer than permanently assigning the texture to either name.
-    // The next draw will normally provide another, consistent observation.
+    // Cross-check the Bind hook against GetCurrentMaterial on Stage 0. Most
+    // disagreements mean the queued and immediate material contexts are out of
+    // phase, so rejecting the observation is safer than permanently assigning
+    // the texture to either name.
+    //
+    // Material-page subrects are the intentional exception. Source binds the
+    // logical subrect material (for example, a bullet-hole material) while
+    // GetCurrentMaterial returns its shared atlas page. Keep the more specific
+    // bound identity when Source confirms that exact parent relationship.
     if (Stage == 0 && pTexture && materials) {
         IMatRenderContext* ctx = materials->GetRenderContext();
         if (ctx) {
@@ -640,9 +674,17 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                 const char* name = pCurMat->GetName();
                 if (name && name[0]) {
                     const std::string queriedName = NormalizeTextureName(name);
-                    if (drawState.bindPending &&
+                    const bool namesDisagree =
                         !drawState.materialName.empty() &&
-                        drawState.materialName != queriedName) {
+                        drawState.materialName != queriedName;
+                    const bool materialPageAlias =
+                        drawState.bindPending &&
+                        namesDisagree &&
+                        IsMaterialPageAlias(drawState.material, queriedName);
+
+                    if (drawState.bindPending &&
+                        namesDisagree &&
+                        !materialPageAlias) {
                         materialIdentityConflict = true;
                         if (tracker.m_enableDebugOutput) {
                             Msg("[D3D9TextureTracker] Rejected Stage 0 identity disagreement: "
@@ -650,9 +692,9 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                                 drawState.materialName.c_str(), queriedName.c_str(), pTexture);
                         }
                     }
-                    if (drawState.materialName != queriedName) {
+                    if (namesDisagree && !materialPageAlias) {
                         tracker.SetCurrentMaterial(pCurMat);
-                    } else {
+                    } else if (!namesDisagree) {
                         // GetCurrentMaterial is queried for every Stage 0 pass.
                         // Do not reset the per-draw detail state when it merely
                         // confirms the material already supplied by Hook_Bind.
@@ -820,6 +862,25 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                                 textures.size(), p2DTexture, drawState.materialName.c_str(),
                                 Stage == 1 ? " [STAGE1]" : "", hash);
                         }
+
+                        // Record intrinsic decal identity before hash resolution.
+                        // This preserves $decal/shader-based materials whose first
+                        // Remix hash is zero and gets resolved asynchronously.
+                        std::string lowerMatName;
+                        bool isIntrinsicDecal = false;
+                        if (Stage == 0) {
+                            lowerMatName = drawState.materialName;
+                            std::transform(
+                                lowerMatName.begin(), lowerMatName.end(),
+                                lowerMatName.begin(),
+                                [](unsigned char c){ return std::tolower(c); });
+                            isIntrinsicDecal =
+                                MaterialPipeline::AutoCategorisation::IsIntrinsicDecalMaterial(
+                                    drawState.materialName, drawState.material);
+                            if (isIntrinsicDecal) {
+                                tracker.m_intrinsicDecalMaterials.insert(lowerMatName);
+                            }
+                        }
                             
                         // Reverse map: record hash → materialName for collision detection.
                         // Also handle stale category tags caused by hash collisions between
@@ -827,10 +888,6 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                         if (Stage == 0 && hash != 0) {
                             tracker.m_hashToMaterials[hash].insert(drawState.materialName);
                             hashToReconcile = hash;
-
-                            std::string lowerMatName = drawState.materialName;
-                            std::transform(lowerMatName.begin(), lowerMatName.end(),
-                                lowerMatName.begin(), [](unsigned char c){ return std::tolower(c); });
 
                             using namespace MaterialPipeline::AutoCategorisation::CategoryFlags;
 
@@ -861,13 +918,12 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                                 }
                             }
 
-                            // Separate from the PARTICLE check: if this material is not in the
-                            // world-texture DECAL_STATIC list (either a non-BSP model texture or a
-                            // BSP brush intentionally excluded, e.g. translucent/nodecal surfaces),
-                            // and the hash already carries DECAL_STATIC from a colliding world brush,
-                            // mark it as permanently contested and remove the tag.  The contested
-                            // state prevents RecheckWorldTextures from silently re-applying it.
-                            if (!tracker.IsWorldTexture(drawState.materialName)) {
+                            // Separate from the PARTICLE check: if this material is neither an
+                            // intrinsic decal nor in the world-texture DECAL_STATIC list, and the
+                            // hash already carries DECAL_STATIC, mark it permanently contested.
+                            // Multiple intrinsic decal materials are allowed to share an atlas.
+                            if (!isIntrinsicDecal &&
+                                !tracker.IsWorldTexture(drawState.materialName)) {
                                 if (allExistingFlags & DECAL_STATIC) {
                                     char hashStr[32];
                                     sprintf_s(hashStr, "0x%llX", hash);
@@ -1507,6 +1563,13 @@ int D3D9TextureTracker::RetryPendingHashResolution() {
         std::string lowerMatName = pending.materialName;
         std::transform(lowerMatName.begin(), lowerMatName.end(),
             lowerMatName.begin(), [](unsigned char c){ return std::tolower(c); });
+        const bool isIntrinsicDecal =
+            m_intrinsicDecalMaterials.count(lowerMatName) != 0 ||
+            MaterialPipeline::AutoCategorisation::IsIntrinsicDecalMaterial(
+                pending.materialName, nullptr);
+        if (isIntrinsicDecal) {
+            m_intrinsicDecalMaterials.insert(lowerMatName);
+        }
 
         uint32_t existingFlags = 0;
         GetHashCategoryFlags(hash, &existingFlags);
@@ -1529,7 +1592,7 @@ int D3D9TextureTracker::RetryPendingHashResolution() {
             }
         }
 
-        if (!IsWorldTexture(pending.materialName)) {
+        if (!isIntrinsicDecal && !IsWorldTexture(pending.materialName)) {
             if (allExistingFlags & DECAL_STATIC) {
                 char hashStr[32];
                 sprintf_s(hashStr, "0x%llX", hash);
@@ -2039,7 +2102,12 @@ bool D3D9TextureTracker::HasMaterialNotInWorldListForHash(uint64_t hash) const {
             lower = lower.substr(0, lower.size() - 4);
         if (lower.size() > 7 && lower.substr(lower.size() - 7) == "_stage1")
             lower = lower.substr(0, lower.size() - 7);
-        if (m_worldTextureNames.find(lower) == m_worldTextureNames.end()) return true;
+        const bool isWorldDecal =
+            m_worldTextureNames.find(lower) != m_worldTextureNames.end();
+        const bool isIntrinsicDecal =
+            m_intrinsicDecalMaterials.find(lower) !=
+            m_intrinsicDecalMaterials.end();
+        if (!isWorldDecal && !isIntrinsicDecal) return true;
     }
     return false;
 }

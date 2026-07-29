@@ -157,10 +157,10 @@ public:
     // (it would incorrectly tag non-world materials such as model textures).
     bool HasNonBSPWorldMaterialForHash(uint64_t hash) const;
 
-    // Returns true if any material known to share this hash is NOT in the world
-    // texture DECAL_STATIC list.  This is the accurate pre-emptive guard: it covers
-    // both non-BSP model textures and BSP brushes intentionally excluded from the
-    // decal list (e.g. translucent or $nodecal surfaces).
+    // Returns true if any material known to share this hash is neither an
+    // intrinsic decal nor in the world texture DECAL_STATIC list. This covers
+    // non-BSP model textures and BSP brushes intentionally excluded from the
+    // decal list while allowing multiple decal subrects to share an atlas.
     bool HasMaterialNotInWorldListForHash(uint64_t hash) const;
 
     // Mark a hash as "contested" for DECAL_STATIC: it is shared between a BSP world
@@ -281,8 +281,14 @@ private:
     // regardless of whether they were assigned a Remix category.
     std::unordered_set<std::string> m_bspWorldMaterials;
 
+    // Materials identified as decals by their own Source definition ($decal,
+    // decal shader, or established decal path), independently of the BSP list.
+    // This lets multiple logical decals safely share one material-page atlas.
+    std::unordered_set<std::string> m_intrinsicDecalMaterials;
+
     // Hashes permanently blocked from DECAL_STATIC because they are shared between
-    // BSP world geometry and at least one non-world material (e.g. a model texture).
+    // a decal and at least one material that is neither an intrinsic decal nor a
+    // qualifying BSP world surface (e.g. a model texture).
     // Cleared on map change alongside m_bspWorldMaterials.
     std::unordered_set<uint64_t> m_contestedDecalHashes;
     

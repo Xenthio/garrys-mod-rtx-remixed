@@ -320,6 +320,54 @@ std::string ReadVMTShaderName(const std::string& materialName) {
     return "";
 }
 
+bool IsIntrinsicDecalMaterial(
+    const std::string& materialName,
+    IMaterial* material)
+{
+    std::string lowerName = materialName;
+    std::transform(
+        lowerName.begin(), lowerName.end(), lowerName.begin(), SafeToLower);
+
+    // Method 1: explicit $decal material parameter.
+    if (material && !material->IsErrorMaterial()) {
+        bool found = false;
+        IMaterialVar* decalVar = material->FindVar("$decal", &found, false);
+        if (found && decalVar && decalVar->GetIntValue() == 1) {
+            return true;
+        }
+    }
+
+    // Method 2: Decal/DecalModulate shader, including DX-level suffixes.
+    std::string shaderName = GetShaderName(material);
+    std::transform(
+        shaderName.begin(), shaderName.end(), shaderName.begin(), SafeToLower);
+    if (shaderName.empty()) {
+        shaderName = ReadVMTShaderName(materialName);
+    }
+    if (shaderName.find("decalmodulate") == 0 ||
+        (shaderName.find("decal") == 0 &&
+         shaderName.find("modulate") == std::string::npos)) {
+        return true;
+    }
+
+    // Method 3: established decal path/name conventions. Exclude light
+    // materials whose names happen to contain one of these tokens.
+    const bool hasDecalName =
+        lowerName.find("decals/") == 0 ||
+        lowerName.find("/decals/") != std::string::npos ||
+        lowerName.find("overlay") != std::string::npos ||
+        lowerName.find("bulleth") != std::string::npos ||
+        lowerName.find("_blood") != std::string::npos ||
+        lowerName.find("blood_") != std::string::npos ||
+        lowerName.find("/blood") != std::string::npos ||
+        lowerName.find("scorch") != std::string::npos;
+    const bool isLightMaterial =
+        lowerName.find("light") != std::string::npos ||
+        lowerName.find("/lights/") != std::string::npos ||
+        lowerName.find("lights/") == 0;
+    return hasDecalName && !isLightMaterial;
+}
+
 // =========================================================================
 // Main Interface Implementation
 // =========================================================================
@@ -556,46 +604,9 @@ uint32_t DetectCategory(const std::string& materialName, IMaterial* material) {
     
     // === PRIORITY 2: DECALS ===
     if (s_config.decalEnabled && !(flags & CategoryFlags::PARTICLE)) {
-        bool isDecal = false;
+        bool isDecal = IsIntrinsicDecalMaterial(materialName, material);
         
-        // Method 1: Check $decal VMT parameter
-        if (material && !material->IsErrorMaterial()) {
-            bool found = false;
-            IMaterialVar* pDecalVar = material->FindVar("$decal", &found, false);
-            if (found && pDecalVar && pDecalVar->GetIntValue() == 1) {
-                isDecal = true;
-            }
-        }
-        
-        // Method 2: Shader-based detection (Decal, DecalModulate shaders)
-        // Note: Runtime shaders have DX version suffixes (e.g., DecalModulate_dx6)
-        if (!isDecal && material) {
-            // Check for decal shaders using prefix match to handle DX suffixes
-            // - DecalModulate, DecalModulate_dx6, etc.
-            // - Decal, Decal_dx6, etc. (but not DecalModulate which starts with "decal" too)
-            if (shaderName.find("decalmodulate") == 0 ||
-                (shaderName.find("decal") == 0 && shaderName.find("modulate") == std::string::npos)) {
-                isDecal = true;
-            }
-        }
-        
-        // Method 3: Path-based detection (exclude light materials)
-        if (!isDecal &&
-            ((lowerName.find("decals/") == 0 ||
-              lowerName.find("/decals/") != std::string::npos ||
-              lowerName.find("overlay") != std::string::npos ||
-              lowerName.find("bulleth") != std::string::npos ||
-              lowerName.find("_blood") != std::string::npos ||
-              lowerName.find("blood_") != std::string::npos ||
-              lowerName.find("/blood") != std::string::npos ||
-              lowerName.find("scorch") != std::string::npos) &&
-             lowerName.find("light") == std::string::npos &&
-             lowerName.find("/lights/") == std::string::npos &&
-             lowerName.find("lights/") != 0)) {
-            isDecal = true;
-        }
-        
-        // Method 4: Check if in world texture list from BSP
+        // BSP world surfaces are the other DECAL_STATIC source.
         if (!isDecal && IsWorldTexture(materialName)) {
             isDecal = true;
         }
@@ -816,12 +827,10 @@ void ApplyToHash(uint64_t hash, uint32_t flags, const std::string& materialName)
             }
         }
 
-        // DECAL_STATIC must not be applied when any material sharing this hash is not
-        // in the world-texture decal list.  This covers:
-        //   • non-BSP model textures (HasNonBSPWorldMaterialForHash)
-        //   • BSP brushes excluded from DECAL_STATIC, e.g. translucent/nodecal surfaces
-        //     (HasMaterialNotInWorldListForHash, which checks the world texture list directly)
-        //   • hashes already resolved as contested retroactively (IsHashContested)
+        // DECAL_STATIC must not be applied when any material sharing this hash is
+        // neither an intrinsic decal nor in the world-texture decal list. This
+        // still blocks model/world hash collisions while allowing material-page
+        // decals to share their parent atlas.
         if ((flags & CategoryFlags::DECAL_STATIC) && blockDecal) {
             flags &= ~CategoryFlags::DECAL_STATIC;
             if (s_config.debugOutput) {
