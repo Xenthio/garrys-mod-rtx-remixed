@@ -72,6 +72,10 @@ static std::string NormalizeTextureName(const char* name) {
     return normalized;
 }
 
+static bool IsInternalEngineMaterial(const std::string& normalizedName) {
+    return normalizedName.rfind("engine/", 0) == 0;
+}
+
 static bool GetMaterialTexture(
     IMaterial* material,
     const char* variableName,
@@ -693,7 +697,8 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
         // $basetexture2. For ordinary materials it is a lightmap, bump/detail
         // texture, or another shader input and must never inherit Stage 0's category.
         const bool shouldTrackMaterialTexture =
-            Stage == 0 || (Stage == 1 && drawState.hasBaseTexture2);
+            !IsInternalEngineMaterial(drawState.materialName) &&
+            (Stage == 0 || (Stage == 1 && drawState.hasBaseTexture2));
 
         // Remember every Stage 0 pointer, including rejected auxiliary passes.
         // A following Stage 1 bind of the same pointer is the signal used to

@@ -419,12 +419,19 @@ uint32_t DetectCategory(const std::string& materialName, IMaterial* material) {
     std::lock_guard<std::recursive_mutex> lock(s_mutex);
     if (!s_config.enabled) return 0;
     if (materialName.empty()) return 0;
-    
-    // Skip internal/engine materials
-    if (materialName.find("__") == 0) return 0;
-    
+
     std::string lowerName = materialName;
     std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), SafeToLower);
+
+    // Engine placeholders are not stable material identities. In particular,
+    // engine/preloadtexture can be bound while Source uploads many unrelated
+    // textures on the first launch after an addon install. Categorizing that
+    // UnlitGeneric placeholder would incorrectly mark every uploaded hash as
+    // emissive.
+    if (lowerName.rfind("__", 0) == 0 ||
+        lowerName.rfind("engine/", 0) == 0) {
+        return 0;
+    }
 
     std::string shaderName = GetShaderName(material);
     std::transform(shaderName.begin(), shaderName.end(), shaderName.begin(), SafeToLower);
