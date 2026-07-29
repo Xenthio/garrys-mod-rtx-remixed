@@ -309,7 +309,9 @@ private:
     bool m_enableAutoCategorization = true;     // Master switch
     bool m_enableParticleCategorization = true;
     bool m_enableDecalCategorization = true;
-    bool m_enableEmissiveCategorization = true;
+    // Lua exposes emissive auto-categorization as opt-in. Default to disabled
+    // here as well so early material binds cannot race Lua initialization.
+    bool m_enableEmissiveCategorization = false;
     
     // Debug output flag
     bool m_enableDebugOutput = false;

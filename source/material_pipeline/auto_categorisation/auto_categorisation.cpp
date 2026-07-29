@@ -185,9 +185,17 @@ bool CheckVMTForSelfillum(const std::string& materialName, bool debug) {
 static bool CheckVMTForUnlitEmissionOptOut(
     const std::string& materialName,
     bool debug,
-    bool* hasVertexColor = nullptr) {
+    bool* hasVertexColor = nullptr,
+    bool* hasTranslucent = nullptr,
+    bool* hasAdditive = nullptr) {
     if (hasVertexColor) {
         *hasVertexColor = false;
+    }
+    if (hasTranslucent) {
+        *hasTranslucent = false;
+    }
+    if (hasAdditive) {
+        *hasAdditive = false;
     }
 
     IFileSystem* fs = GetFileSystem();
@@ -230,18 +238,24 @@ static bool CheckVMTForUnlitEmissionOptOut(
         std::istringstream tokens(line);
         std::string key;
         std::string value;
-        if (tokens >> key >> value &&
-            (key == "$no_fullbright" ||
-             key == "$vertexalpha" ||
-             key == "$vertexcolor") &&
-            value == "1") {
-            foundOptOut = true;
-            if (hasVertexColor && key == "$vertexcolor") {
-                *hasVertexColor = true;
+        if (tokens >> key >> value && value == "1") {
+            if (key == "$translucent" && hasTranslucent) {
+                *hasTranslucent = true;
+            } else if (key == "$additive" && hasAdditive) {
+                *hasAdditive = true;
             }
-            if (debug) {
-                Msg("[AutoCategorisation] CheckVMT: Found active unlit emission opt-out '%s 1'\n",
-                    key.c_str());
+
+            if (key == "$no_fullbright" ||
+                key == "$vertexalpha" ||
+                key == "$vertexcolor") {
+                foundOptOut = true;
+                if (hasVertexColor && key == "$vertexcolor") {
+                    *hasVertexColor = true;
+                }
+                if (debug) {
+                    Msg("[AutoCategorisation] CheckVMT: Found active unlit emission opt-out '%s 1'\n",
+                        key.c_str());
+                }
             }
         }
     }
@@ -428,18 +442,34 @@ uint32_t DetectCategory(const std::string& materialName, IMaterial* material) {
     if (isUnlitShader) {
         // MATERIAL_VAR_NO_DEBUG_OVERRIDE is Source's compiled representation
         // of $no_fullbright. Vertex color/alpha are independent opt-outs:
-        // either one is enough to suppress forced emission.
+        // either one is enough to suppress forced emission. Non-additive
+        // translucency also identifies alpha-blended foliage and similar
+        // materials that must not receive forced albedo emission.
+        bool hasRawUnlitTranslucency = false;
+        bool hasRawUnlitAdditive = false;
         const bool hasRawUnlitEmissionOptOut =
             CheckVMTForUnlitEmissionOptOut(
                 materialName,
                 s_config.debugOutput,
-                &hasRawUnlitVertexColor);
+                &hasRawUnlitVertexColor,
+                &hasRawUnlitTranslucency,
+                &hasRawUnlitAdditive);
+        const bool hasMaterialTranslucency =
+            material &&
+            material->GetMaterialVarFlag(MATERIAL_VAR_TRANSLUCENT);
+        const bool hasMaterialAdditive =
+            material &&
+            material->GetMaterialVarFlag(MATERIAL_VAR_ADDITIVE);
+        const bool hasNonAdditiveTranslucency =
+            (hasRawUnlitTranslucency || hasMaterialTranslucency) &&
+            !(hasRawUnlitAdditive || hasMaterialAdditive);
         hasUnlitEmissionOptOut =
             (material &&
              (material->GetMaterialVarFlag(MATERIAL_VAR_NO_DEBUG_OVERRIDE) ||
               material->GetMaterialVarFlag(MATERIAL_VAR_VERTEXALPHA) ||
               material->GetMaterialVarFlag(MATERIAL_VAR_VERTEXCOLOR))) ||
-            hasRawUnlitEmissionOptOut;
+            hasRawUnlitEmissionOptOut ||
+            hasNonAdditiveTranslucency;
     }
     const bool hasUnlitVertexColor =
         isUnlitGeneric &&

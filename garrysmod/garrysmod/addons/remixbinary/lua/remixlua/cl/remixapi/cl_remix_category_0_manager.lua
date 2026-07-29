@@ -22,7 +22,7 @@ CreateClientConVar("rtx_auto_categorize_delay", "3", true, false, "Delay in seco
 CreateClientConVar("rtx_auto_categorize_world", "1", true, false, "Auto-categorize world geometry from BSP as decals (1 = enabled, 0 = disabled)")
 CreateClientConVar("rtx_auto_categorize_particles", "1", true, false, "Auto-categorize particle effects (1 = enabled, 0 = disabled)")
 CreateClientConVar("rtx_auto_categorize_decals", "1", true, false, "Auto-categorize overlay decals with $decal parameter (1 = enabled, 0 = disabled)")
-CreateClientConVar("rtx_auto_categorize_emissive", "0", true, false, "Auto-categorize legacy emissive materials (1 = enabled, 0 = disabled)")
+CreateClientConVar("rtx_auto_categorize_emissive", "1", true, false, "Auto-categorize legacy emissive materials (1 = enabled, 0 = disabled)")
 CreateClientConVar("rtx_require_emissive_mask", "1", true, false, "Require $selfillummask or alpha channel for emissive materials (1 = strict, 0 = allow any $selfillum)")
 CreateClientConVar("rtx_debug_categorization", "0", true, false, "Show debug messages for auto-categorization (1 = enabled, 0 = disabled)")
 
@@ -110,6 +110,8 @@ local currentMapToken = game.GetMap() or ""
 local NO_FULLBRIGHT_FLAG = 0x2
 local VERTEXCOLOR_FLAG = 0x10
 local VERTEXALPHA_FLAG = 0x20
+local ADDITIVE_FLAG = 0x80
+local TRANSLUCENT_FLAG = 0x200000
 
 local function ReadRawVMT(materialName)
     local vmtPath = "materials/" .. materialName
@@ -212,8 +214,24 @@ local function HasVertexColorOrAlphaOptOut(materialName, mat, rawContent)
 end
 
 local function HasUnlitEmissionOptOut(materialName, mat, rawContent)
-    return HasNoFullbrightOptOut(materialName, mat, rawContent) or
-           HasVertexColorOrAlphaOptOut(materialName, mat, rawContent)
+    local content = rawContent
+    if content == nil then
+        content = ReadRawVMT(materialName)
+    end
+
+    if HasNoFullbrightOptOut(materialName, mat, content) or
+       HasVertexColorOrAlphaOptOut(materialName, mat, content) then
+        return true
+    end
+
+    -- Alpha-blended foliage and similar materials often use UnlitGeneric only
+    -- as a BaseTextureAlphaBlend replacement. They still need scene lighting.
+    -- Preserve additive unlit glows, which intentionally use translucency.
+    local translucent = HasEnabledMaterialFlag(
+        mat, content, "$translucent", TRANSLUCENT_FLAG)
+    local additive = HasEnabledMaterialFlag(
+        mat, content, "$additive", ADDITIVE_FLAG)
+    return translucent and not additive
 end
 
 --[[
@@ -232,7 +250,7 @@ function RemixCategoryManager.IsMaterialEmissive(materialName)
     -- Source's unlit shaders render their full albedo without receiving scene
     -- lighting. Treat every variant (including DX-suffixed shader names) as
     -- emissive unless the VMT explicitly opts out with $no_fullbright,
-    -- $vertexalpha, or $vertexcolor.
+    -- $vertexalpha, $vertexcolor, or non-additive translucency.
     local shader = mat:GetShader()
     if shader then
         local lowerShader = shader:lower()
@@ -1664,7 +1682,8 @@ function RemixCategoryManager.SmartMarkWorldTextures()
                 
                 -- Emissive/Self-illuminated materials (check first for priority)
                 -- This is more reliable than keyword matching
-                if RemixCategoryManager.IsMaterialEmissive(materialName) then
+                if cvar_auto_categorize_emissive:GetBool() and
+                   RemixCategoryManager.IsMaterialEmissive(materialName) then
                     category = RemixCategoryManager.PRESET.EMISSIVE
                     stats.emissive = stats.emissive + 1
                 

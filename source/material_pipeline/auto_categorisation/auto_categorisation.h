@@ -68,7 +68,10 @@ struct Config {
     bool enabled = true;              // Master enable switch
     bool particleEnabled = true;      // Auto-categorize particles
     bool decalEnabled = true;         // Auto-categorize decals
-    bool emissiveEnabled = true;      // Auto-categorize emissive materials
+    // Keep this aligned with rtx_auto_categorize_emissive's default. Starting
+    // enabled lets materials loaded before Lua initializes retain stale
+    // emissive hashes even when the user-facing ConVar is disabled.
+    bool emissiveEnabled = false;     // Auto-categorize emissive materials
     bool debugOutput = false;         // Enable debug logging
 };
 

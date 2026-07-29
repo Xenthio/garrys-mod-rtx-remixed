@@ -1107,6 +1107,7 @@ LUA_FUNCTION(RemixMaterial_SetParticleCategorization) {
     
     bool enabled = LUA->GetBool(1);
     D3D9TextureTracker::Instance().SetParticleCategorization(enabled);
+    MaterialPipeline::AutoCategorisation::SetParticleCategorisation(enabled);
     
     LUA->PushBool(true);
     return 1;
@@ -1122,6 +1123,7 @@ LUA_FUNCTION(RemixMaterial_SetDecalCategorization) {
     
     bool enabled = LUA->GetBool(1);
     D3D9TextureTracker::Instance().SetDecalCategorization(enabled);
+    MaterialPipeline::AutoCategorisation::SetDecalCategorisation(enabled);
     
     LUA->PushBool(true);
     return 1;
@@ -1137,6 +1139,7 @@ LUA_FUNCTION(RemixMaterial_SetEmissiveCategorization) {
     
     bool enabled = LUA->GetBool(1);
     D3D9TextureTracker::Instance().SetEmissiveCategorization(enabled);
+    MaterialPipeline::AutoCategorisation::SetEmissiveCategorisation(enabled);
     
     LUA->PushBool(true);
     return 1;
@@ -1152,6 +1155,7 @@ LUA_FUNCTION(RemixMaterial_SetAutoCategorization) {
     
     bool enabled = LUA->GetBool(1);
     D3D9TextureTracker::Instance().SetAutoCategorization(enabled);
+    MaterialPipeline::AutoCategorisation::SetEnabled(enabled);
     
     LUA->PushBool(true);
     return 1;
@@ -1167,6 +1171,7 @@ LUA_FUNCTION(RemixMaterial_SetDebugOutput) {
     
     bool enabled = LUA->GetBool(1);
     D3D9TextureTracker::Instance().SetDebugOutput(enabled);
+    MaterialPipeline::AutoCategorisation::SetDebugOutput(enabled);
     
     LUA->PushBool(true);
     return 1;

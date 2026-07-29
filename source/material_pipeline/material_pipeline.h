@@ -83,7 +83,9 @@ struct PipelineConfig {
     // Categorization options
     bool particleCategorization = true;     // Auto-categorize particles
     bool decalCategorization = true;        // Auto-categorize decals
-    bool emissiveCategorization = true;     // Auto-categorize emissive materials
+    // Must match the Lua rtx_auto_categorize_emissive default so material
+    // preloading cannot create emissive assignments before Lua synchronizes.
+    bool emissiveCategorization = false;    // Auto-categorize emissive materials
     
     // Output paths
     std::string outputDirectory;            // Where to write DDS files

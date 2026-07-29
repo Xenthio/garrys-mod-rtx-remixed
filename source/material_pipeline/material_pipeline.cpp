@@ -264,15 +264,28 @@ void Pipeline::SetConfig(const PipelineConfig& config) {
 void Pipeline::ApplyConfig() {
     auto& tracker = D3D9TextureTracker::Instance();
     auto& processor = ToPBR::TextureProcessor::Instance();
+    const bool autoCategorizationEnabled =
+        m_config.particleCategorization ||
+        m_config.decalCategorization ||
+        m_config.emissiveCategorization;
     
     // Apply to tracker
-    tracker.SetAutoCategorization(m_config.particleCategorization || 
-                                   m_config.decalCategorization || 
-                                   m_config.emissiveCategorization);
+    tracker.SetAutoCategorization(autoCategorizationEnabled);
     tracker.SetParticleCategorization(m_config.particleCategorization);
     tracker.SetDecalCategorization(m_config.decalCategorization);
     tracker.SetEmissiveCategorization(m_config.emissiveCategorization);
     tracker.SetDebugOutput(m_config.debugOutput);
+
+    // AutoCategorisation performs the actual detection and can apply hashes
+    // directly, so keeping only the tracker flags synchronized is insufficient.
+    AutoCategorisation::SetEnabled(autoCategorizationEnabled);
+    AutoCategorisation::SetParticleCategorisation(
+        m_config.particleCategorization);
+    AutoCategorisation::SetDecalCategorisation(
+        m_config.decalCategorization);
+    AutoCategorisation::SetEmissiveCategorisation(
+        m_config.emissiveCategorization);
+    AutoCategorisation::SetDebugOutput(m_config.debugOutput);
     
     // Apply to processor
     processor.SetAutoProcessing(m_config.autoProcessing);
