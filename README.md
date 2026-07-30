@@ -17,7 +17,7 @@
 ## Installation
 - Switch to the `x86-64` branch of Garry's Mod on Steam (x32 works but not recommended)
 - Ensure you've ran the vanilla game at least once, especially if you switched branches.
-- Download [RTXLauncher](https://github.com/Xenthio/RTXLauncher/releases/latest).
+- Download [RTXLauncher](https://github.com/Xenthio/RTXLauncher/releases) (Use the newer nightly if available).
 - **Windows**
    - Run the launcher (**as an Administrator**)
 - **Linux**
