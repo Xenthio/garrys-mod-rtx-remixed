@@ -6,8 +6,12 @@ local cv_enabled = CreateClientConVar("rtx_dynamiclight_wrapper_enabled", "1", t
 local cv_debug = CreateClientConVar("rtx_dynamiclight_wrapper_debug", "0", true, false, "Debug logging for dynamic light wrapper")
 local cv_brightness_scale = CreateClientConVar("rtx_dynamiclight_wrapper_brightness_scale", "50", true, false, "Brightness scaling for dynamic lights")
 local cv_radius_scale = CreateClientConVar("rtx_dynamiclight_wrapper_radius_scale", "0.01", true, false, "Radius scaling for dynamic lights")
+local cv_decay_scale = CreateClientConVar("rtx_dynamiclight_wrapper_decay_scale", "2", true, false, "Perceptual decay multiplier for dynamic lights")
 
--- Tracking: lightId -> { rtxLightId, lastUpdate, expiresAt, props }
+-- Tracking: lightId -> {
+--   rtxLightId, lastUpdate, expiresAt, decayStartedAt, fade,
+--   firstRenderPending, props
+-- }
 local wrappedDynamicLights = {}
 
 local function DebugPrint(...)
@@ -56,8 +60,66 @@ local function DestroyAllWrappedDynamicLights(reason)
     end
 end
 
--- Store original DynamicLight function
-local OriginalDynamicLight = DynamicLight
+-- Preserve the engine function across Lua auto-refresh. Older versions of
+-- this file captured the already-wrapped global each time they reloaded,
+-- building a proxy chain that could submit duplicate lights with the same ID.
+local function ResolveOriginalDynamicLight()
+    local stored = rawget(_G, "RTXOriginalDynamicLight")
+    if isfunction(stored) then return stored end
+
+    local candidate = DynamicLight
+    local visited = {}
+
+    -- Unwrap any copies of this wrapper already stacked in the current Lua
+    -- state. The engine function is a C closure and has no Lua upvalues.
+    while isfunction(candidate) and not visited[candidate] do
+        visited[candidate] = true
+        local wrappedOriginal = nil
+
+        if debug and debug.getupvalue then
+            for index = 1, 32 do
+                local name, value = debug.getupvalue(candidate, index)
+                if not name then break end
+                if name == "OriginalDynamicLight" and isfunction(value) then
+                    wrappedOriginal = value
+                    break
+                end
+            end
+        end
+
+        if not wrappedOriginal then break end
+        candidate = wrappedOriginal
+    end
+
+    _G.RTXOriginalDynamicLight = candidate
+    return candidate
+end
+
+local OriginalDynamicLight = ResolveOriginalDynamicLight()
+
+-- DynamicLight IDs are commonly reused for successive muzzle flashes. Treat
+-- tightly grouped submissions as updates to one flash, but restart the fade
+-- when a later submission extends the lifetime and begins another pulse.
+local function IsNewDecayPulse(data, currentTime, expiresAt, size, decay)
+    if not data or decay <= 0 or size <= 0 then return false, 0, 0 end
+
+    local previousExpiresAt = data.expiresAt or expiresAt
+    local lifetimeExtension = expiresAt - previousExpiresAt
+    if lifetimeExtension <= 0.001 then return false, 0, lifetimeExtension end
+
+    local previousUpdate = data.lastUpdate or currentTime
+    local submissionGap = math.max(0, currentTime - previousUpdate)
+    local decayDuration = size / decay
+    local pulseGap = math.Clamp(decayDuration * 0.4, 0.025, 0.05)
+    local decayStartedAt = data.decayStartedAt or previousUpdate
+    local phaseElapsed = math.max(0, currentTime - decayStartedAt)
+    local fadedOut = (data.fade or 1) <= 0.005 or phaseElapsed >= decayDuration
+
+    return fadedOut or
+        (submissionGap >= pulseGap and phaseElapsed >= pulseGap),
+        submissionGap,
+        lifetimeExtension
+end
 
 -- Create or update RTX light from dynamic light properties
 local function UpdateRTXFromDynamicLight(lightId, dlight)
@@ -84,17 +146,33 @@ local function UpdateRTXFromDynamicLight(lightId, dlight)
     local b = dlight.b or 255
     local brightness = dlight.brightness or 1
     local size = dlight.Size or 256
+    local decay = tonumber(dlight.Decay) or 0
     local currentTime = CurTime()
     -- DynamicLight.DieTime is an absolute CurTime value. Keep the old timeout
     -- only as a defensive fallback for malformed third-party light tables.
     local expiresAt = tonumber(dlight.DieTime) or (currentTime + 0.5)
+
+    -- Read the existing light before constructing radiance. Repeated Source
+    -- submissions refresh properties and DieTime, but do not restart the
+    -- radius decay that began when this wrapped light was created.
+    local data = wrappedDynamicLights[lightId]
+    local restartDecay, submissionGap, lifetimeExtension =
+        IsNewDecayPulse(data, currentTime, expiresAt, size, decay)
+
+    if restartDecay then
+        data.decayStartedAt = currentTime
+        data.fade = 1
+        data.firstRenderPending = true
+    end
     
     -- Apply scaling
     local brightnessScale = cv_brightness_scale:GetFloat()
     local radiusScale = cv_radius_scale:GetFloat()
     
-    -- Calculate radiance
-    local scale = (brightness * brightnessScale) / 100.0
+    -- Calculate radiance. Property refreshes must retain the fade already
+    -- applied by UpdateDecayingLights instead of restoring full brightness.
+    local appliedFade = data and (data.fade or 1) or 1
+    local scale = ((brightness * brightnessScale) / 100.0) * appliedFade
     local base = {
         hash = tonumber(util.CRC(string.format("dynamic_light_%d", lightId))) or (lightId + 100000),
         radiance = vec3(
@@ -112,8 +190,6 @@ local function UpdateRTXFromDynamicLight(lightId, dlight)
     }
     
     -- Check if we need to create or update
-    local data = wrappedDynamicLights[lightId]
-    
     if not data or not data.rtxLightId or data.rtxLightId == 0 then
         -- Create new RTX light
         local rtxLightId = nil
@@ -126,33 +202,137 @@ local function UpdateRTXFromDynamicLight(lightId, dlight)
                 rtxLightId = rtxLightId,
                 lastUpdate = currentTime,
                 expiresAt = expiresAt,
-                props = { pos = pos, r = r, g = g, b = b, brightness = brightness, size = size }
+                decayStartedAt = currentTime,
+                fade = 1,
+                firstRenderPending = true,
+                props = {
+                    pos = pos,
+                    r = r,
+                    g = g,
+                    b = b,
+                    brightness = brightness,
+                    size = size,
+                    decay = decay,
+                }
             }
-            DebugPrint("Created RTX light", rtxLightId, "for DynamicLight", lightId)
+            DebugPrint(
+                "Created RTX light",
+                rtxLightId,
+                "for DynamicLight",
+                lightId,
+                "brightness:", brightness,
+                "size:", size,
+                "decay:", decay,
+                "expires:", expiresAt)
+        else
+            DebugPrint(
+                "CreateSphere failed for DynamicLight",
+                lightId,
+                "result:", tostring(rtxLightId),
+                "API available:", RemixLight.CreateSphere ~= nil)
         end
     else
         -- Update existing RTX light
         local oldProps = data.props
         
         -- Only update if properties changed significantly
-        local changed = false
+        local changed = restartDecay
         if oldProps.pos:DistToSqr(pos) > 1 then changed = true end
         if oldProps.r ~= r or oldProps.g ~= g or oldProps.b ~= b then changed = true end
         if math.abs(oldProps.brightness - brightness) > 0.01 then changed = true end
         if math.abs(oldProps.size - size) > 1 then changed = true end
+        if math.abs((oldProps.decay or 0) - decay) > 0.01 then changed = true end
         
         if changed then
             if RemixLight.UpdateSphere then
                 RemixLight.UpdateSphere(base, sphere, data.rtxLightId)
             end
             
-            data.props = { pos = pos, r = r, g = g, b = b, brightness = brightness, size = size }
             DebugPrint("Updated RTX light", data.rtxLightId, "for DynamicLight", lightId)
         end
+
+        if restartDecay then
+            DebugPrint(
+                "Restarted RTX light pulse",
+                data.rtxLightId,
+                "for DynamicLight",
+                lightId,
+                "submission gap:", string.format("%.4f", submissionGap),
+                "lifetime extension:", string.format("%.4f", lifetimeExtension))
+        end
         
-        -- Refresh lifetime even when the visual properties did not change.
+        -- Refresh properties and lifetime without restarting the decay phase.
+        -- A fresh light gets a new phase naturally after the old one expires
+        -- and is removed from wrappedDynamicLights.
+        data.props = {
+            pos = pos,
+            r = r,
+            g = g,
+            b = b,
+            brightness = brightness,
+            size = size,
+            decay = decay,
+        }
         data.lastUpdate = currentTime
         data.expiresAt = expiresAt
+    end
+end
+
+-- Apply Source's radius decay as a radiance fade. Remix sphere radius is a
+-- physical emitter size rather than Source's illumination range, so shrinking
+-- the Remix sphere does not reproduce the intended muzzle-flash fade.
+local function UpdateDecayingLights()
+    if not IsWrapperActive() then return end
+    if not istable(RemixLight) or not RemixLight.UpdateSphere then return end
+
+    local currentTime = CurTime()
+    local brightnessScale = cv_brightness_scale:GetFloat()
+    local radiusScale = cv_radius_scale:GetFloat()
+    local decayScale = math.max(0, cv_decay_scale:GetFloat())
+
+    for lightId, data in pairs(wrappedDynamicLights) do
+        local props = data.props
+        local decay = props and math.max(0, props.decay or 0) or 0
+        local size = props and math.max(0, props.size or 0) or 0
+
+        if not data.firstRenderPending and decay > 0 and size > 0 then
+            local decayStartedAt = data.decayStartedAt or data.lastUpdate or currentTime
+            local elapsed = math.max(0, currentTime - decayStartedAt)
+            -- Source reduces the light's illumination range, which goes dark
+            -- perceptually faster than a linear Remix radiance reduction.
+            -- Accelerate the radiance fade so short burst intervals contain a
+            -- real zero-light gap.
+            local remainingSize = math.max(0, size - elapsed * decay * decayScale)
+            local fade = math.Clamp(remainingSize / size, 0, 1)
+
+            if math.abs((data.fade or 1) - fade) > 0.005 then
+                local scale = (props.brightness * brightnessScale / 100.0) * fade
+                local base = {
+                    hash = tonumber(util.CRC(string.format("dynamic_light_%d", lightId))) or (lightId + 100000),
+                    radiance = vec3(
+                        props.r * scale,
+                        props.g * scale,
+                        props.b * scale
+                    ),
+                    isDynamic = true,
+                }
+                local sphere = {
+                    position = vec3(props.pos.x, props.pos.y, props.pos.z),
+                    radius = size * radiusScale,
+                    volumetricRadianceScale = 1.0,
+                }
+
+                RemixLight.UpdateSphere(base, sphere, data.rtxLightId)
+                data.fade = fade
+                DebugPrint(
+                    "Faded RTX light",
+                    data.rtxLightId,
+                    "for DynamicLight",
+                    lightId,
+                    "fade:", string.format("%.3f", fade),
+                    "elapsed:", string.format("%.4f", elapsed))
+            end
+        end
     end
 end
 
@@ -170,7 +350,7 @@ local function CleanupExpiredLights()
     -- inactivity window.
     for lightId, data in pairs(wrappedDynamicLights) do
         local expiresAt = data.expiresAt or ((data.lastUpdate or currentTime) + 0.5)
-        if currentTime >= expiresAt then
+        if not data.firstRenderPending and currentTime >= expiresAt then
             table.insert(expired, lightId)
         end
     end
@@ -178,6 +358,12 @@ local function CleanupExpiredLights()
     -- Remove expired lights
     for _, lightId in ipairs(expired) do
         DestroyWrappedDynamicLight(lightId, "expired")
+    end
+end
+
+local function MarkSubmittedLightsRendered()
+    for _, data in pairs(wrappedDynamicLights) do
+        data.firstRenderPending = false
     end
 end
 
@@ -226,7 +412,9 @@ end
 -- every rendered frame after entity Think calls have refreshed their lights.
 timer.Remove("RTXDynamicLightCleanup")
 hook.Add("PreRender", "RTXDynamicLightCleanup", function()
+    UpdateDecayingLights()
     CleanupExpiredLights()
+    MarkSubmittedLightsRendered()
 end)
 
 -- Cleanup on map change
@@ -256,6 +444,20 @@ concommand.Add("rtx_dynamiclight_clear", function()
     DestroyAllWrappedDynamicLights("console clear")
     print("[RTX DynamicLight] Cleared " .. count .. " dynamic lights")
 end, nil, "Clear all wrapped dynamic lights")
+
+concommand.Add("rtx_dynamiclight_status", function()
+    local lightUpdater = GetConVar("rtx_lightupdater")
+    print(string.format(
+        "[RTX DynamicLight] enabled=%s lightupdater=%s wrapperActive=%s remixApi=%s createSphere=%s updateSphere=%s decayScale=%.2f wrapped=%d",
+        tostring(cv_enabled:GetBool()),
+        tostring(lightUpdater and lightUpdater:GetBool() or false),
+        tostring(IsWrapperActive()),
+        tostring(istable(RemixLight)),
+        tostring(istable(RemixLight) and RemixLight.CreateSphere ~= nil),
+        tostring(istable(RemixLight) and RemixLight.UpdateSphere ~= nil),
+        cv_decay_scale:GetFloat(),
+        table.Count(wrappedDynamicLights)))
+end, nil, "Print DynamicLight wrapper and Remix API status")
 
 -- Public API
 local RTXDynamicLightWrapper = {}
