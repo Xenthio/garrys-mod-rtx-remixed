@@ -19,7 +19,7 @@
 - Ensure you've ran the vanilla game at least once, especially if you switched branches.
 - Download [RTXLauncher](https://github.com/Xenthio/RTXLauncher/releases/latest).
 - **Windows**
-   - Run the launcher
+   - Run the launcher (**as an Administrator**)
 - **Linux**
    - Ensure Steam Play is forced for Garry's Mod with either Proton Experimental or another recent Proton build.
    - Run [GModPatchTool](https://github.com/solsticegamestudios/GModPatchTool)
