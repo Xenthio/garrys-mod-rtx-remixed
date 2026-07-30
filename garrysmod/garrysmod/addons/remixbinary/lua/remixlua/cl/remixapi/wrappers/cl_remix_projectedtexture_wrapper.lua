@@ -24,13 +24,17 @@ local function vec3(x, y, z)
     return { x = x, y = y, z = z }
 end
 
+local function IsWrapperActive()
+    local lightUpdater = GetConVar("rtx_lightupdater")
+    return cv_enabled:GetBool() and not (lightUpdater and lightUpdater:GetBool())
+end
+
 -- Store original ProjectedTexture function
 local OriginalProjectedTexture = ProjectedTexture
 
 -- Create or update RTX light from projected texture properties
 local function UpdateRTXFromProjectedTexture(projTex, textureId)
-    if not cv_enabled:GetBool() then return end
-    if GetConVar("rtx_lightupdater"):GetBool() then return end
+    if not IsWrapperActive() then return end
     if not istable(RemixLight) then return end
     if not projTex then return end
     
@@ -144,8 +148,9 @@ local function UpdateRTXFromProjectedTexture(projTex, textureId)
     end
 end
 
--- Remove RTX light for a projected texture
-local function RemoveRTXForProjectedTexture(projTex)
+-- Destroy the Remix light while optionally retaining the source object so an
+-- existing ProjectedTexture can be wrapped again when the wrapper is enabled.
+local function DestroyRTXForProjectedTexture(projTex, forgetSource)
     local data = wrappedProjectedTextures[projTex]
     if not data then return end
     
@@ -155,8 +160,18 @@ local function RemoveRTXForProjectedTexture(projTex)
         end
         DebugPrint("Destroyed RTX spotlight", data.rtxLightId, "for ProjectedTexture", data.textureId)
     end
-    
-    wrappedProjectedTextures[projTex] = nil
+
+    if forgetSource then
+        wrappedProjectedTextures[projTex] = nil
+    else
+        data.rtxLightId = nil
+        data.props = {}
+    end
+end
+
+-- Remove all tracking for a projected texture that no longer exists.
+local function RemoveRTXForProjectedTexture(projTex)
+    DestroyRTXForProjectedTexture(projTex, true)
 end
 
 -- Hook into ProjectedTexture function
@@ -183,9 +198,7 @@ end
 
 -- Hook-based update for instant response
 hook.Add("Think", "RTXProjectedTexture_Update", function()
-    if not cv_enabled:GetBool() then return end
-    if not istable(RemixLight) then return end
-    
+    local wrapperActive = IsWrapperActive()
     local toRemove = {}
     
     for projTex, data in pairs(wrappedProjectedTextures) do
@@ -193,6 +206,10 @@ hook.Add("Think", "RTXProjectedTexture_Update", function()
         if not IsValid(projTex) then
             table.insert(toRemove, projTex)
             DebugPrint("Detected removed ProjectedTexture", data.textureId)
+        elseif not wrapperActive then
+            -- Stop submitting the Remix copy immediately, but retain the
+            -- ProjectedTexture reference so it can be recreated on re-enable.
+            DestroyRTXForProjectedTexture(projTex, false)
         else
             -- Still valid - update position/angles every frame (vehicles move)
             UpdateRTXFromProjectedTexture(projTex, data.textureId)

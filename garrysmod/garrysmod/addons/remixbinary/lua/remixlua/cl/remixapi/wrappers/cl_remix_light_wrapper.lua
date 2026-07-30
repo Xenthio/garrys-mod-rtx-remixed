@@ -380,6 +380,16 @@ local function DestroyRTXLight(lightId)
     DebugPrint("Destroyed RTX light", lightId)
 end
 
+local function DestroyLinkedDynamicLight(entityIndex)
+    if not entityIndex then return end
+    if not istable(_G.RTXDynamicLightWrapper) then return end
+    if not _G.RTXDynamicLightWrapper.RemoveWrappedLight then return end
+
+    if _G.RTXDynamicLightWrapper.RemoveWrappedLight(entityIndex) then
+        DebugPrint("Destroyed linked DynamicLight wrapper for entity", entityIndex)
+    end
+end
+
 -- Wrap an entity with RTX light
 local function WrapEntity(ent)
     if not cv_enabled:GetBool() then return end
@@ -388,11 +398,18 @@ local function WrapEntity(ent)
     
     local lightId, props = CreateRTXLightFromEntity(ent)
     if lightId then
+        local entityIndex = ent:EntIndex()
         wrappedLights[ent] = {
             lightId = lightId,
+            entityIndex = entityIndex,
             lastUpdate = CurTime(),
             cachedProps = props,
         }
+
+        -- gmod_light may have already produced a wrapped DynamicLight during
+        -- the short OnEntityCreated initialization delay. The persistent
+        -- entity light supersedes that duplicate.
+        DestroyLinkedDynamicLight(entityIndex)
     end
 end
 
@@ -400,10 +417,13 @@ end
 local function UnwrapEntity(ent)
     local data = wrappedLights[ent]
     if not data then return end
-    
-    DestroyRTXLight(data.lightId)
+
+    -- Remove the tracking entry first so EntityRemoved and the PreRender
+    -- fallback cannot destroy the same light twice in one frame.
     wrappedLights[ent] = nil
-    DebugPrint("Unwrapped entity", IsValid(ent) and ent:EntIndex() or "invalid")
+    DestroyLinkedDynamicLight(data.entityIndex)
+    DestroyRTXLight(data.lightId)
+    DebugPrint("Unwrapped entity", data.entityIndex or "unknown")
 end
 
 -- Scan for wrappable entities
@@ -461,6 +481,19 @@ hook.Add("OnEntityCreated", "RTXLightWrapper_EntityCreated", function(ent)
             WrapEntity(ent)
         end
     end)
+end)
+
+-- Hook: Entity removed
+-- PreRender polling is retained as a fallback, but this event removes the
+-- corresponding Remix light immediately when the client deletes the entity.
+-- Full updates can fire this hook for entities that are about to reappear, so
+-- leave those to the existing validity scan.
+hook.Add("EntityRemoved", "RTXLightWrapper_EntityRemoved", function(ent, fullUpdate)
+    if fullUpdate then return end
+
+    if wrappedLights[ent] then
+        UnwrapEntity(ent)
+    end
 end)
 
 -- Hook: Think - Update lights periodically

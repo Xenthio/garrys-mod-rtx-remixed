@@ -7,7 +7,7 @@ local cv_debug = CreateClientConVar("rtx_dynamiclight_wrapper_debug", "0", true,
 local cv_brightness_scale = CreateClientConVar("rtx_dynamiclight_wrapper_brightness_scale", "50", true, false, "Brightness scaling for dynamic lights")
 local cv_radius_scale = CreateClientConVar("rtx_dynamiclight_wrapper_radius_scale", "0.01", true, false, "Radius scaling for dynamic lights")
 
--- Tracking: lightId -> { rtxLightId, lastUpdate, props }
+-- Tracking: lightId -> { rtxLightId, lastUpdate, expiresAt, props }
 local wrappedDynamicLights = {}
 
 local function DebugPrint(...)
@@ -20,15 +20,62 @@ local function vec3(x, y, z)
     return { x = x, y = y, z = z }
 end
 
+local function IsWrapperActive()
+    local lightUpdater = GetConVar("rtx_lightupdater")
+    return cv_enabled:GetBool() and not (lightUpdater and lightUpdater:GetBool())
+end
+
+local function DestroyWrappedDynamicLight(lightId, reason)
+    local data = wrappedDynamicLights[lightId]
+    if not data then return false end
+
+    -- Remove tracking first so cleanup timers and entity-wrapper ownership
+    -- changes cannot destroy the same Remix light twice.
+    wrappedDynamicLights[lightId] = nil
+    if data.rtxLightId and istable(RemixLight) and RemixLight.DestroyLight then
+        RemixLight.DestroyLight(data.rtxLightId)
+    end
+
+    DebugPrint(
+        "Destroyed RTX light",
+        data.rtxLightId or 0,
+        "for DynamicLight",
+        lightId,
+        reason or "")
+    return true
+end
+
+local function DestroyAllWrappedDynamicLights(reason)
+    local lightIds = {}
+    for lightId in pairs(wrappedDynamicLights) do
+        table.insert(lightIds, lightId)
+    end
+
+    for _, lightId in ipairs(lightIds) do
+        DestroyWrappedDynamicLight(lightId, reason)
+    end
+end
+
 -- Store original DynamicLight function
 local OriginalDynamicLight = DynamicLight
 
 -- Create or update RTX light from dynamic light properties
 local function UpdateRTXFromDynamicLight(lightId, dlight)
-    if not cv_enabled:GetBool() then return end
-    if GetConVar("rtx_lightupdater"):GetBool() then return end
+    if not IsWrapperActive() then return end
     if not istable(RemixLight) then return end
     if not dlight then return end
+
+    -- gmod_light drives a Source DynamicLight using its EntIndex, but the
+    -- dedicated entity wrapper already owns a persistent Remix light for it.
+    -- Keep the Source DynamicLight intact while suppressing the duplicate
+    -- Remix light (and remove one created during the wrapper's startup delay).
+    local sourceEntity = Entity(lightId)
+    if istable(_G.RTXLightWrapper) and
+       IsValid(sourceEntity) and
+       _G.RTXLightWrapper.IsWrapped(sourceEntity) then
+        DestroyWrappedDynamicLight(lightId, "owned by RTXLightWrapper")
+        return
+    end
     
     -- Extract properties
     local pos = dlight.Pos or Vector(0, 0, 0)
@@ -37,6 +84,10 @@ local function UpdateRTXFromDynamicLight(lightId, dlight)
     local b = dlight.b or 255
     local brightness = dlight.brightness or 1
     local size = dlight.Size or 256
+    local currentTime = CurTime()
+    -- DynamicLight.DieTime is an absolute CurTime value. Keep the old timeout
+    -- only as a defensive fallback for malformed third-party light tables.
+    local expiresAt = tonumber(dlight.DieTime) or (currentTime + 0.5)
     
     -- Apply scaling
     local brightnessScale = cv_brightness_scale:GetFloat()
@@ -73,7 +124,8 @@ local function UpdateRTXFromDynamicLight(lightId, dlight)
         if rtxLightId and rtxLightId ~= 0 then
             wrappedDynamicLights[lightId] = {
                 rtxLightId = rtxLightId,
-                lastUpdate = CurTime(),
+                lastUpdate = currentTime,
+                expiresAt = expiresAt,
                 props = { pos = pos, r = r, g = g, b = b, brightness = brightness, size = size }
             }
             DebugPrint("Created RTX light", rtxLightId, "for DynamicLight", lightId)
@@ -95,39 +147,37 @@ local function UpdateRTXFromDynamicLight(lightId, dlight)
             end
             
             data.props = { pos = pos, r = r, g = g, b = b, brightness = brightness, size = size }
-            data.lastUpdate = CurTime()
             DebugPrint("Updated RTX light", data.rtxLightId, "for DynamicLight", lightId)
         end
         
-        -- Update timestamp
-        data.lastUpdate = CurTime()
+        -- Refresh lifetime even when the visual properties did not change.
+        data.lastUpdate = currentTime
+        data.expiresAt = expiresAt
     end
 end
 
 -- Cleanup expired dynamic lights
 local function CleanupExpiredLights()
-    if not cv_enabled:GetBool() then return end
+    if not IsWrapperActive() then
+        DestroyAllWrappedDynamicLights("wrapper inactive")
+        return
+    end
     
     local currentTime = CurTime()
     local expired = {}
     
-    -- Find lights that haven't been updated in a while (probably expired)
+    -- Match Source's absolute DynamicLight.DieTime instead of using a fixed
+    -- inactivity window.
     for lightId, data in pairs(wrappedDynamicLights) do
-        if currentTime - data.lastUpdate > 0.5 then -- 0.5 second timeout
+        local expiresAt = data.expiresAt or ((data.lastUpdate or currentTime) + 0.5)
+        if currentTime >= expiresAt then
             table.insert(expired, lightId)
         end
     end
     
     -- Remove expired lights
     for _, lightId in ipairs(expired) do
-        local data = wrappedDynamicLights[lightId]
-        if data and data.rtxLightId then
-            if istable(RemixLight) and RemixLight.DestroyLight then
-                RemixLight.DestroyLight(data.rtxLightId)
-            end
-            DebugPrint("Destroyed expired RTX light", data.rtxLightId, "for DynamicLight", lightId)
-        end
-        wrappedDynamicLights[lightId] = nil
+        DestroyWrappedDynamicLight(lightId, "expired")
     end
 end
 
@@ -172,32 +222,20 @@ function DynamicLight(index, fallbackIndex)
     return wrappedDlight
 end
 
--- Periodic cleanup of expired lights
-timer.Create("RTXDynamicLightCleanup", 0.5, 0, function()
+-- Remove the old periodic timer during Lua auto-refresh, then check lifetime
+-- every rendered frame after entity Think calls have refreshed their lights.
+timer.Remove("RTXDynamicLightCleanup")
+hook.Add("PreRender", "RTXDynamicLightCleanup", function()
     CleanupExpiredLights()
 end)
 
 -- Cleanup on map change
 hook.Add("OnReloaded", "RTXDynamicLight_Cleanup", function()
-    for lightId, data in pairs(wrappedDynamicLights) do
-        if data.rtxLightId then
-            if istable(RemixLight) and RemixLight.DestroyLight then
-                RemixLight.DestroyLight(data.rtxLightId)
-            end
-        end
-    end
-    wrappedDynamicLights = {}
+    DestroyAllWrappedDynamicLights("Lua reloaded")
 end)
 
 hook.Add("ShutDown", "RTXDynamicLight_Cleanup", function()
-    for lightId, data in pairs(wrappedDynamicLights) do
-        if data.rtxLightId then
-            if istable(RemixLight) and RemixLight.DestroyLight then
-                RemixLight.DestroyLight(data.rtxLightId)
-            end
-        end
-    end
-    wrappedDynamicLights = {}
+    DestroyAllWrappedDynamicLights("shutdown")
 end)
 
 -- Console commands
@@ -215,14 +253,7 @@ end, nil, "List all wrapped dynamic lights")
 
 concommand.Add("rtx_dynamiclight_clear", function()
     local count = table.Count(wrappedDynamicLights)
-    for lightId, data in pairs(wrappedDynamicLights) do
-        if data.rtxLightId then
-            if istable(RemixLight) and RemixLight.DestroyLight then
-                RemixLight.DestroyLight(data.rtxLightId)
-            end
-        end
-    end
-    wrappedDynamicLights = {}
+    DestroyAllWrappedDynamicLights("console clear")
     print("[RTX DynamicLight] Cleared " .. count .. " dynamic lights")
 end, nil, "Clear all wrapped dynamic lights")
 
@@ -236,6 +267,10 @@ end
 function RTXDynamicLightWrapper.GetWrappedLight(lightId)
     local data = wrappedDynamicLights[lightId]
     return data and data.rtxLightId or nil
+end
+
+function RTXDynamicLightWrapper.RemoveWrappedLight(lightId)
+    return DestroyWrappedDynamicLight(lightId, "removed by owner")
 end
 
 _G.RTXDynamicLightWrapper = RTXDynamicLightWrapper
