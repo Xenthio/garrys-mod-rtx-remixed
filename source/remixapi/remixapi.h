@@ -17,6 +17,11 @@
 #include <unordered_set>
 
 namespace RemixAPI {
+    // Queries the loaded runtime's fork-specific portal limits. Returns false
+    // for stock/older runtimes and leaves the outputs at the stock pair limit.
+    bool GetRayPortalCapabilities(uint32_t& maxActivePortalSurfaces,
+                                  uint32_t& maxDedicatedPortalVolumes);
+
     // Forward declarations
     class MaterialManager;
     class MeshManager;

@@ -12,3 +12,6 @@
 [submodule "garrysmod/garrysmod/addons/niknaks"]
 	path = garrysmod/garrysmod/addons/niknaks
 	url = https://github.com/Nak2/NikNaks.git
+[submodule "garrysmod/garrysmod/addons/GMod-Seamless-Portals-Remix"]
+	path = garrysmod/garrysmod/addons/GMod-Seamless-Portals-Remix
+	url = https://github.com/sambow23/GMod-Seamless-Portals-Remix.git

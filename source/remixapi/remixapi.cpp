@@ -23,6 +23,7 @@ using namespace GarrysMod::Lua;
 namespace RemixAPI {
 // Resolve optional Remix C API extension at runtime to avoid compile-time dependency on wrapper additions
 static PFN_remixapi_AutoInstancePersistentLights s_pfnAutoInstancePersistentLights = nullptr;
+static PFN_remixapi_GetRayPortalCapabilities s_pfnGetRayPortalCapabilities = nullptr;
 static PFN_remixapi_CreatePersistentInstance s_pfnCreatePersistentInstance = nullptr;
 static PFN_remixapi_UpdatePersistentInstance s_pfnUpdatePersistentInstance = nullptr;
 static PFN_remixapi_DestroyPersistentInstance s_pfnDestroyPersistentInstance = nullptr;
@@ -36,6 +37,8 @@ static void EnsureRemixCApiResolved() {
     if (hRemix) {
         s_pfnAutoInstancePersistentLights = reinterpret_cast<PFN_remixapi_AutoInstancePersistentLights>(
             GetProcAddress(hRemix, "remixapi_AutoInstancePersistentLights"));
+        s_pfnGetRayPortalCapabilities = reinterpret_cast<PFN_remixapi_GetRayPortalCapabilities>(
+            GetProcAddress(hRemix, "remixapi_GetRayPortalCapabilities"));
         s_pfnCreatePersistentInstance = reinterpret_cast<PFN_remixapi_CreatePersistentInstance>(
             GetProcAddress(hRemix, "remixapi_CreatePersistentInstance"));
         s_pfnUpdatePersistentInstance = reinterpret_cast<PFN_remixapi_UpdatePersistentInstance>(
@@ -44,6 +47,30 @@ static void EnsureRemixCApiResolved() {
             GetProcAddress(hRemix, "remixapi_DestroyPersistentInstance"));
         resolved = true;
     }
+}
+
+bool GetRayPortalCapabilities(uint32_t& maxActivePortalSurfaces,
+                              uint32_t& maxDedicatedPortalVolumes) {
+    maxActivePortalSurfaces = 2;
+    maxDedicatedPortalVolumes = 2;
+    EnsureRemixCApiResolved();
+    if (!s_pfnGetRayPortalCapabilities) {
+        return false;
+    }
+
+    uint32_t runtimeMaxSurfaces = 0;
+    uint32_t runtimeMaxVolumes = 0;
+    const remixapi_ErrorCode status = s_pfnGetRayPortalCapabilities(
+        &runtimeMaxSurfaces, &runtimeMaxVolumes);
+    if (status != REMIXAPI_ERROR_CODE_SUCCESS || runtimeMaxSurfaces < 2) {
+        return false;
+    }
+
+    maxActivePortalSurfaces = runtimeMaxSurfaces;
+    maxDedicatedPortalVolumes = runtimeMaxVolumes < runtimeMaxSurfaces
+        ? runtimeMaxVolumes
+        : runtimeMaxSurfaces;
+    return true;
 }
 
 //=============================================================================

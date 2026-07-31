@@ -408,8 +408,8 @@ LUA_FUNCTION(RemixMaterial_CreateOpaqueMaterial) {
 }
 
 // Lua function: RemixMaterial.CreatePortalMaterial(name, materialInfo, portalInfo)
-// Uses the stock Remix API portal material extension. The stock renderer supports
-// exactly one reciprocal pair, assigned to indices 0 and 1.
+// Uses the stock Remix API portal material extension plus the active runtime's
+// queried portal-surface limit.
 LUA_FUNCTION(RemixMaterial_CreatePortalMaterial) {
     if (!LUA->IsType(1, Type::String) || !LUA->IsType(2, Type::Table) || !LUA->IsType(3, Type::Table)) {
         LUA->ThrowError("CreatePortalMaterial expects name, materialInfo table, and portalInfo table");
@@ -424,8 +424,11 @@ LUA_FUNCTION(RemixMaterial_CreatePortalMaterial) {
         LUA->ThrowError("CreatePortalMaterial requires a non-zero material hash");
         return 0;
     }
-    if (portalInfo.rayPortalIndex >= 2) {
-        LUA->ThrowError("CreatePortalMaterial rayPortalIndex must be 0 or 1");
+    uint32_t maxActivePortalSurfaces = 2;
+    uint32_t maxDedicatedPortalVolumes = 2;
+    GetRayPortalCapabilities(maxActivePortalSurfaces, maxDedicatedPortalVolumes);
+    if (portalInfo.rayPortalIndex >= maxActivePortalSurfaces) {
+        LUA->ThrowError("CreatePortalMaterial rayPortalIndex exceeds the active runtime limit");
         return 0;
     }
 
@@ -438,6 +441,10 @@ LUA_FUNCTION(RemixMaterial_CreatePortalMaterial) {
 LUA_FUNCTION(RemixMaterial_GetPortalCapabilities) {
     const bool supportsPersistentInstances =
         RemixAPI::Instance().GetInstanceManager().SupportsPersistentInstances();
+    uint32_t maxActivePortalSurfaces = 2;
+    uint32_t maxDedicatedPortalVolumes = 2;
+    const bool supportsRuntimeCapabilityQuery =
+        GetRayPortalCapabilities(maxActivePortalSurfaces, maxDedicatedPortalVolumes);
     LUA->CreateTable();
     LUA->PushBool(g_remix != nullptr);
     LUA->SetField(-2, "available");
@@ -445,10 +452,12 @@ LUA_FUNCTION(RemixMaterial_GetPortalCapabilities) {
     LUA->SetField(-2, "apiVersionMajor");
     LUA->PushNumber(REMIXAPI_VERSION_MINOR);
     LUA->SetField(-2, "apiVersionMinor");
-    LUA->PushNumber(2);
+    LUA->PushNumber(maxActivePortalSurfaces);
     LUA->SetField(-2, "maxActivePortalSurfaces");
-    LUA->PushNumber(2);
+    LUA->PushNumber(maxDedicatedPortalVolumes);
     LUA->SetField(-2, "maxDedicatedPortalVolumes");
+    LUA->PushBool(supportsRuntimeCapabilityQuery);
+    LUA->SetField(-2, "supportsRuntimeCapabilityQuery");
     LUA->PushBool(false);
     LUA->SetField(-2, "supportsMirrors");
     LUA->PushBool(false);

@@ -805,6 +805,16 @@ extern "C" {
   typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_AutoInstancePersistentLights)(void);
   REMIXAPI remixapi_ErrorCode REMIXAPI_CALL remixapi_AutoInstancePersistentLights(void);
 
+  // Fork extension for querying the active runtime's ray-portal limits. Older
+  // runtimes do not export this function and should be treated as supporting
+  // only the stock pair.
+  typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_GetRayPortalCapabilities)(
+    uint32_t* out_maxActivePortalSurfaces,
+    uint32_t* out_maxDedicatedPortalVolumes);
+  REMIXAPI remixapi_ErrorCode REMIXAPI_CALL remixapi_GetRayPortalCapabilities(
+    uint32_t* out_maxActivePortalSurfaces,
+    uint32_t* out_maxDedicatedPortalVolumes);
+
   // Fork extension for runtime-owned mesh-instance persistence. Persistent
   // instances currently accept only the base InstanceInfo (pNext must be NULL).
   // The runtime re-submits them immediately before RTX scene preparation, so
