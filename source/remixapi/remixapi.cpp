@@ -23,6 +23,9 @@ using namespace GarrysMod::Lua;
 namespace RemixAPI {
 // Resolve optional Remix C API extension at runtime to avoid compile-time dependency on wrapper additions
 static PFN_remixapi_AutoInstancePersistentLights s_pfnAutoInstancePersistentLights = nullptr;
+static PFN_remixapi_CreatePersistentInstance s_pfnCreatePersistentInstance = nullptr;
+static PFN_remixapi_UpdatePersistentInstance s_pfnUpdatePersistentInstance = nullptr;
+static PFN_remixapi_DestroyPersistentInstance s_pfnDestroyPersistentInstance = nullptr;
 
 static void EnsureRemixCApiResolved() {
     static bool resolved = false;
@@ -33,6 +36,12 @@ static void EnsureRemixCApiResolved() {
     if (hRemix) {
         s_pfnAutoInstancePersistentLights = reinterpret_cast<PFN_remixapi_AutoInstancePersistentLights>(
             GetProcAddress(hRemix, "remixapi_AutoInstancePersistentLights"));
+        s_pfnCreatePersistentInstance = reinterpret_cast<PFN_remixapi_CreatePersistentInstance>(
+            GetProcAddress(hRemix, "remixapi_CreatePersistentInstance"));
+        s_pfnUpdatePersistentInstance = reinterpret_cast<PFN_remixapi_UpdatePersistentInstance>(
+            GetProcAddress(hRemix, "remixapi_UpdatePersistentInstance"));
+        s_pfnDestroyPersistentInstance = reinterpret_cast<PFN_remixapi_DestroyPersistentInstance>(
+            GetProcAddress(hRemix, "remixapi_DestroyPersistentInstance"));
         resolved = true;
     }
 }
@@ -745,6 +754,16 @@ uint64_t MaterialManager::CreateTranslucentMaterial(const std::string& name, con
     return CreateMaterial(name, materialInfo);
 }
 
+uint64_t MaterialManager::CreatePortalMaterial(const std::string& name, const remix::MaterialInfo& info,
+                                               const remix::MaterialInfoPortalEXT& portalInfo) {
+    if (!m_remixInterface) return 0;
+
+    remix::MaterialInfo materialInfo = info;
+    materialInfo.pNext = const_cast<remix::MaterialInfoPortalEXT*>(&portalInfo);
+
+    return CreateMaterial(name, materialInfo);
+}
+
 bool MaterialManager::UpdateMaterial(uint64_t materialId, const remix::MaterialInfo& info) {
     auto it = m_materials.find(materialId);
     if (it == m_materials.end()) {
@@ -964,6 +983,52 @@ bool InstanceManager::DrawInstanceWithBones(const remix::InstanceInfo& info, con
     instanceInfo.pNext = const_cast<remix::InstanceInfoBoneTransformsEXT*>(&boneInfo);
 
     return DrawInstance(instanceInfo);
+}
+
+bool InstanceManager::SupportsPersistentInstances() {
+    EnsureRemixCApiResolved();
+    return s_pfnCreatePersistentInstance &&
+           s_pfnUpdatePersistentInstance &&
+           s_pfnDestroyPersistentInstance;
+}
+
+bool InstanceManager::CreatePersistentInstance(
+    const remix::InstanceInfo& info,
+    remixapi_PersistentInstanceHandle& outHandle) {
+    outHandle = 0;
+    if (!m_remixInterface || !SupportsPersistentInstances()) return false;
+
+    const remixapi_ErrorCode status = s_pfnCreatePersistentInstance(&info, &outHandle);
+    if (status != REMIXAPI_ERROR_CODE_SUCCESS) {
+        Warning("[InstanceManager] Failed to create persistent instance: %d\n", status);
+        outHandle = 0;
+        return false;
+    }
+    return true;
+}
+
+bool InstanceManager::UpdatePersistentInstance(
+    remixapi_PersistentInstanceHandle handle,
+    const remix::InstanceInfo& info) {
+    if (!m_remixInterface || !SupportsPersistentInstances() || handle == 0) return false;
+
+    const remixapi_ErrorCode status = s_pfnUpdatePersistentInstance(handle, &info);
+    if (status != REMIXAPI_ERROR_CODE_SUCCESS) {
+        Warning("[InstanceManager] Failed to update persistent instance: %d\n", status);
+        return false;
+    }
+    return true;
+}
+
+bool InstanceManager::DestroyPersistentInstance(remixapi_PersistentInstanceHandle handle) {
+    if (!m_remixInterface || !SupportsPersistentInstances() || handle == 0) return false;
+
+    const remixapi_ErrorCode status = s_pfnDestroyPersistentInstance(handle);
+    if (status != REMIXAPI_ERROR_CODE_SUCCESS) {
+        Warning("[InstanceManager] Failed to destroy persistent instance: %d\n", status);
+        return false;
+    }
+    return true;
 }
 
 //=============================================================================

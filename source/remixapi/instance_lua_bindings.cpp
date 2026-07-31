@@ -37,16 +37,11 @@ static void LuaToTransform(ILuaBase* LUA, int index, float outMatrix[3][4]) {
     }
 }
 
-LUA_FUNCTION(RemixInstance_DrawInstance) {
-    if (!LUA->IsType(1, Type::Table)) {
-        LUA->ThrowError("Expected table for instance info");
-        return 0;
-    }
+static bool LuaToInstanceInfo(ILuaBase* LUA, int index, remix::InstanceInfo& info) {
+    if (!LUA->IsType(index, Type::Table)) return false;
 
-    remix::InstanceInfo info;
-    
     // Mesh ID -> Handle
-    LUA->GetField(1, "meshId");
+    LUA->GetField(index, "meshId");
     if (LUA->IsType(-1, Type::Number)) {
         uint64_t meshId = (uint64_t)LUA->GetNumber(-1);
         info.mesh = RemixAPI::Instance().GetMeshManager().GetMeshHandle(meshId);
@@ -54,31 +49,90 @@ LUA_FUNCTION(RemixInstance_DrawInstance) {
     LUA->Pop();
 
     if (!info.mesh) {
-        // If no valid mesh, don't draw
-        LUA->PushBool(false);
-        return 1;
+        return false;
     }
 
     // Transform
-    LUA->GetField(1, "transform");
+    LUA->GetField(index, "transform");
     LuaToTransform(LUA, -1, info.transform.matrix);
     LUA->Pop();
 
     // Category Flags
-    LUA->GetField(1, "categoryFlags");
+    LUA->GetField(index, "categoryFlags");
     if (LUA->IsType(-1, Type::Number)) {
         info.categoryFlags = (uint32_t)LUA->GetNumber(-1);
     }
     LUA->Pop();
 
     // Double Sided
-    LUA->GetField(1, "doubleSided");
+    LUA->GetField(index, "doubleSided");
     if (LUA->IsType(-1, Type::Bool)) {
         info.doubleSided = LUA->GetBool(-1);
     }
     LUA->Pop();
 
+    return true;
+}
+
+LUA_FUNCTION(RemixInstance_DrawInstance) {
+    if (!LUA->IsType(1, Type::Table)) {
+        LUA->ThrowError("Expected table for instance info");
+        return 0;
+    }
+
+    remix::InstanceInfo info;
+    if (!LuaToInstanceInfo(LUA, 1, info)) {
+        LUA->PushBool(false);
+        return 1;
+    }
+
     bool result = RemixAPI::Instance().GetInstanceManager().DrawInstance(info);
+    LUA->PushBool(result);
+    return 1;
+}
+
+LUA_FUNCTION(RemixInstance_CreatePersistentInstance) {
+    if (!LUA->IsType(1, Type::Table)) {
+        LUA->ThrowError("Expected table for persistent instance info");
+        return 0;
+    }
+
+    remix::InstanceInfo info;
+    if (!LuaToInstanceInfo(LUA, 1, info)) {
+        LUA->PushNumber(0);
+        return 1;
+    }
+
+    remixapi_PersistentInstanceHandle handle = 0;
+    RemixAPI::Instance().GetInstanceManager().CreatePersistentInstance(info, handle);
+    LUA->PushNumber(static_cast<double>(handle));
+    return 1;
+}
+
+LUA_FUNCTION(RemixInstance_UpdatePersistentInstance) {
+    if (!LUA->IsType(1, Type::Number) || !LUA->IsType(2, Type::Table)) {
+        LUA->ThrowError("Expected persistent instance handle and instance info table");
+        return 0;
+    }
+
+    const remixapi_PersistentInstanceHandle handle =
+        static_cast<remixapi_PersistentInstanceHandle>(LUA->GetNumber(1));
+    remix::InstanceInfo info;
+    const bool result = LuaToInstanceInfo(LUA, 2, info) &&
+        RemixAPI::Instance().GetInstanceManager().UpdatePersistentInstance(handle, info);
+    LUA->PushBool(result);
+    return 1;
+}
+
+LUA_FUNCTION(RemixInstance_DestroyPersistentInstance) {
+    if (!LUA->IsType(1, Type::Number)) {
+        LUA->ThrowError("Expected persistent instance handle");
+        return 0;
+    }
+
+    const remixapi_PersistentInstanceHandle handle =
+        static_cast<remixapi_PersistentInstanceHandle>(LUA->GetNumber(1));
+    const bool result = RemixAPI::Instance().GetInstanceManager().DestroyPersistentInstance(handle);
     LUA->PushBool(result);
     return 1;
 }
@@ -91,6 +145,15 @@ void InstanceManager::InitializeLuaBindings() {
 
     m_lua->PushCFunction(RemixInstance_DrawInstance);
     m_lua->SetField(-2, "DrawInstance");
+
+    m_lua->PushCFunction(RemixInstance_CreatePersistentInstance);
+    m_lua->SetField(-2, "CreatePersistentInstance");
+
+    m_lua->PushCFunction(RemixInstance_UpdatePersistentInstance);
+    m_lua->SetField(-2, "UpdatePersistentInstance");
+
+    m_lua->PushCFunction(RemixInstance_DestroyPersistentInstance);
+    m_lua->SetField(-2, "DestroyPersistentInstance");
 
     m_lua->SetField(-2, "RemixInstance");
     m_lua->Pop();
