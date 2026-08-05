@@ -69,10 +69,18 @@ concommand.Add("rtx_mark_emissive", function(ply, cmd, args)
     MsgC(Color(100, 200, 255), string.format("[RTX Hash Lookup] Marking '%s' as LEGACY_EMISSIVE (0x%X)...\n", 
         materialName, categoryFlags))
     
+    -- Same force-albedo wiring as the automatic BSP/tracked-material scans:
+    -- without this, UnlitGeneric materials without an alpha channel stay dark
+    -- since Remix has nothing to mask emission with.
+    local forceAlbedoCallback = RemixCategoryManager.MakeForceAlbedoCallback(materialName, categoryFlags)
+    
     RemixCategoryManager.SetMaterialCategory(materialName, categoryFlags, function(success, hash)
         if success then
             MsgC(Color(100, 255, 100), string.format("[RTX Hash Lookup] ✓ Successfully marked '%s' (hash %s) as emissive!\n", 
                 materialName, hash or "unknown"))
+            if forceAlbedoCallback then
+                forceAlbedoCallback(success, hash)
+            end
         else
             MsgC(Color(255, 100, 100), string.format("[RTX Hash Lookup] ✗ Failed to mark '%s' as emissive\n", materialName))
         end
@@ -106,10 +114,18 @@ concommand.Add("rtx_mark_category", function(ply, cmd, args)
     MsgC(Color(100, 200, 255), string.format("[RTX Hash Lookup] Marking '%s' with category 0x%X...\n", 
         materialName, categoryFlags))
     
+    -- Same force-albedo wiring as the automatic BSP/tracked-material scans - only
+    -- takes effect when categoryFlags includes LEGACY_EMISSIVE on a qualifying
+    -- unlit-shader material.
+    local forceAlbedoCallback = RemixCategoryManager.MakeForceAlbedoCallback(materialName, categoryFlags)
+    
     RemixCategoryManager.SetMaterialCategory(materialName, categoryFlags, function(success, hash)
         if success then
             MsgC(Color(100, 255, 100), string.format("[RTX Hash Lookup] ✓ Successfully marked '%s' (hash %s) with category 0x%X!\n", 
                 materialName, hash or "unknown", categoryFlags))
+            if forceAlbedoCallback then
+                forceAlbedoCallback(success, hash)
+            end
         else
             MsgC(Color(255, 100, 100), string.format("[RTX Hash Lookup] ✗ Failed to mark '%s'\n", materialName))
         end

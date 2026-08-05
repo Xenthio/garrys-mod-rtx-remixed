@@ -115,6 +115,14 @@ static bool GetMaterialTexture(
         return false;
     }
 
+    // Shaders auto-fill an unset $basetexture with the shared built-in error
+    // texture. That pointer is a valid, successfully-loaded resource, so
+    // IsError() reports false for it - name comparison is the only signal.
+    const char* textureName = texture->GetName();
+    if (textureName && _stricmp(textureName, "error") == 0) {
+        return false;
+    }
+
     if (outTexture) {
         *outTexture = texture;
     }
@@ -463,6 +471,19 @@ size_t D3D9TextureTracker::GetCacheSize() const {
     return m_textureCache.size();
 }
 
+size_t D3D9TextureTracker::GetTextureVariantCount(const char* materialName) const {
+    if (!materialName || !materialName[0]) {
+        return 0;
+    }
+    std::string lowerName = materialName;
+    std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), 
+        [](unsigned char c){ return std::tolower(c); });
+    
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    auto it = m_textureCache.find(lowerName);
+    return it != m_textureCache.end() ? it->second.size() : 0;
+}
+
 bool D3D9TextureTracker::ValidateTextureAssociation(
     IMaterial* material,
     DWORD stage,
@@ -487,11 +508,19 @@ bool D3D9TextureTracker::ValidateTextureAssociation(
     const char* variableName = stage == 0 ? "$basetexture" : "$basetexture2";
     ITexture* expectedTexture = nullptr;
     if (!GetMaterialTexture(textureMaterial, variableName, &expectedTexture)) {
-        if (m_enableDebugOutput) {
-            Msg("[D3D9TextureTracker] Rejected Stage %lu texture 0x%p for '%s': no valid %s\n",
-                stage, texture, materialName.c_str(), variableName);
+        // Envmap-only chrome materials ($envmapsphere overlays) have no
+        // $basetexture - their Stage 0 bind is the 2D spheremap itself.
+        const bool envmapFallback =
+            stage == 0 &&
+            GetMaterialTexture(textureMaterial, "$envmap", &expectedTexture);
+        if (!envmapFallback) {
+            if (m_enableDebugOutput) {
+                Msg("[D3D9TextureTracker] Rejected Stage %lu texture 0x%p for '%s': no valid %s\n",
+                    stage, texture, materialName.c_str(), variableName);
+            }
+            return false;
         }
-        return false;
+        variableName = "$envmap";
     }
 
     D3DSURFACE_DESC description = {};
@@ -1262,7 +1291,15 @@ void D3D9TextureTracker::Hook_Bind(IMatRenderContext* pContext, IMaterial* pMate
 // Hash-to-Category mapping implementation
 void D3D9TextureTracker::SetHashCategoryFlags(uint64_t textureHash, uint32_t categoryFlags) {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
-    m_hashToCategoryFlags[textureHash] = categoryFlags;
+    // Merge rather than overwrite: category producers are independent (the
+    // world smart-mark must not erase a water/particle bit detected by
+    // Stage 3). RemoveHashCategoryFlags exists for explicit clearing.
+    auto it = m_hashToCategoryFlags.find(textureHash);
+    if (it != m_hashToCategoryFlags.end()) {
+        it->second |= categoryFlags;
+    } else {
+        m_hashToCategoryFlags[textureHash] = categoryFlags;
+    }
     if (m_enableDebugOutput) {
         Msg("[D3D9TextureTracker] Set category flags 0x%X for hash 0x%llX\n", categoryFlags, textureHash);
     }
@@ -1459,6 +1496,26 @@ void D3D9TextureTracker::ApplyCategoryToHash(uint64_t hash, uint32_t categoryFla
     char hashStr[32];
     sprintf_s(hashStr, "0x%llX", hash);
     
+    // Water is never a decal: the world smart-mark applies DECAL_STATIC to
+    // every world face including water planes, and decal handling breaks the
+    // translucent water surface. ANIMATED_WATER wins regardless of which
+    // flag arrives first.
+    {
+        uint32_t trackedFlags = 0;
+        GetHashCategoryFlags(hash, &trackedFlags);
+        if ((categoryFlags | trackedFlags) & ANIMATED_WATER) {
+            if (categoryFlags & DECAL_STATIC) {
+                categoryFlags &= ~DECAL_STATIC;
+                if (m_enableDebugOutput) {
+                    Msg("[D3D9] Skipping DECAL_STATIC for water hash %s ('%s')\n", hashStr, materialName);
+                }
+            }
+            if (categoryFlags & ANIMATED_WATER) {
+                g_remix->RemoveTextureHash("rtx.decalTextures", hashStr);
+            }
+        }
+    }
+    
     // Map category flags to Remix API texture lists
     // NOTE: WORLD_UI is intentionally omitted - we don't use it
     if (categoryFlags & SKY) {
@@ -1519,6 +1576,11 @@ void D3D9TextureTracker::ApplyCategoryToHash(uint64_t hash, uint32_t categoryFla
     }
     if (categoryFlags & EMISSIVE) {
         g_remix->AddTextureHash("rtx.legacyEmissiveTextures", hashStr);
+        // Model/prop textures commonly resolve their hash late (through this
+        // deferred pending-category path), so force-albedo must be applied
+        // here too - not just in AutoCategorisation::ApplyToHash's immediate
+        // path - or unlit materials without a real alpha mask stay dark.
+        MaterialPipeline::AutoCategorisation::ApplyForceAlbedoIfNeeded(hash, materialName);
         if (m_enableDebugOutput) {
             Msg("[D3D9] Categorized EMISSIVE: '%s' -> %s\n", materialName, hashStr);
         }
@@ -1527,11 +1589,15 @@ void D3D9TextureTracker::ApplyCategoryToHash(uint64_t hash, uint32_t categoryFla
     // Update local tracking.
     // When IGNORED is applied it wins over DECAL: clear any stale DECAL flags so
     // GetHashCategory accurately reflects that this texture is being ignored.
+    // ANIMATED_WATER likewise clears DECAL_STATIC (water is never a decal).
     uint32_t currentFlags = 0;
     GetHashCategoryFlags(hash, &currentFlags);
     uint32_t newFlags = currentFlags | categoryFlags;
     if (newFlags & IGNORED) {
         newFlags &= ~(DECAL_STATIC | DECAL_DYNAMIC);
+    }
+    if (newFlags & ANIMATED_WATER) {
+        newFlags &= ~DECAL_STATIC;
     }
     SetHashCategoryFlags(hash, newFlags);
 }

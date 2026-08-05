@@ -213,14 +213,21 @@ local function HasVertexColorOrAlphaOptOut(materialName, mat, rawContent)
                mat, content, "$vertexcolor", VERTEXCOLOR_FLAG)
 end
 
-local function HasUnlitEmissionOptOut(materialName, mat, rawContent)
+local function HasUnlitEmissionOptOut(materialName, mat, rawContent, isUnlitGeneric)
     local content = rawContent
     if content == nil then
         content = ReadRawVMT(materialName)
     end
 
-    if HasNoFullbrightOptOut(materialName, mat, content) or
-       HasVertexColorOrAlphaOptOut(materialName, mat, content) then
+    if HasNoFullbrightOptOut(materialName, mat, content) then
+        return true
+    end
+
+    -- $vertexcolor/$vertexalpha only opt UnlitGeneric out - that's where they
+    -- identify foliage/particle tinting. UnlitTwoTexture materials (HUD
+    -- overlays, flightpath-style screens) routinely drive $vertexcolor through
+    -- proxies for brightness modulation and must still force-albedo.
+    if isUnlitGeneric and HasVertexColorOrAlphaOptOut(materialName, mat, content) then
         return true
     end
 
@@ -256,7 +263,8 @@ function RemixCategoryManager.IsMaterialEmissive(materialName)
         local lowerShader = shader:lower()
         if lowerShader:find("^unlitgeneric") or
            lowerShader:find("^unlittwotexture") then
-            return not HasUnlitEmissionOptOut(materialName, mat, content)
+            local isUnlitGeneric = lowerShader:find("^unlitgeneric") ~= nil
+            return not HasUnlitEmissionOptOut(materialName, mat, content, isUnlitGeneric)
         end
     end
     
@@ -621,8 +629,9 @@ function RemixCategoryManager.IsUnlitShaderEmissive(materialName)
     local lowerShader = shader:lower()
     local isUnlit = lowerShader:find("^unlitgeneric") ~= nil or
                     lowerShader:find("^unlittwotexture") ~= nil
+    local isUnlitGeneric = lowerShader:find("^unlitgeneric") ~= nil
     return isUnlit and
-           not HasUnlitEmissionOptOut(materialName, mat)
+           not HasUnlitEmissionOptOut(materialName, mat, nil, isUnlitGeneric)
 end
 
 --[[
@@ -705,7 +714,9 @@ end
 
 -- Build the callback used by immediate and deferred hash resolution. Re-check
 -- the surviving category because C++ may reject a contested global emissive hash.
-local function MakeForceAlbedoCallback(materialName, categoryFlags)
+-- Public so manual marking tools (rtx_mark_emissive, rtx_mark_category) get the
+-- same force-albedo behavior as the automatic BSP/tracked-material scans.
+function RemixCategoryManager.MakeForceAlbedoCallback(materialName, categoryFlags)
     if not RemixMaterial.AddForceAlbedoHash or
        bit.band(categoryFlags or 0, RemixCategoryManager.CATEGORY.LEGACY_EMISSIVE) == 0 or
        not RemixCategoryManager.NeedsForceAlbedoEmission(materialName) then
@@ -778,7 +789,7 @@ function RemixCategoryManager.CategorizeAllTrackedMaterials()
             
             if category then
                 local forceAlbedoCallback =
-                    MakeForceAlbedoCallback(matName, category)
+                    RemixCategoryManager.MakeForceAlbedoCallback(matName, category)
 
                 -- Skip only when every hash already contains every requested
                 -- bit. A particle/decal-only hash still needs EMISSIVE added.
@@ -903,7 +914,7 @@ function RemixCategoryManager.AutoCategorizeMaterial(materialName)
         processedTextures[lowerName] = true
 
         local forceAlbedoCallback =
-            MakeForceAlbedoCallback(materialName, category)
+            RemixCategoryManager.MakeForceAlbedoCallback(materialName, category)
         
         -- Check if already categorized (with pcall protection)
         local hashSuccess, allHashes = pcall(function()
@@ -963,7 +974,8 @@ end
 function RemixCategoryManager.ForceTrackTexture(textureName)
     -- Create a simple material that uses this texture
     local matName = "rtx_force_track_" .. textureName:gsub("[^%w]", "_")
-    
+    local trackedName = textureName
+
     local mat = Material(textureName)
     if not mat or mat:IsError() then
         -- Try creating a material wrapper
@@ -979,10 +991,11 @@ function RemixCategoryManager.ForceTrackTexture(textureName)
             return false
         end
         mat = result
+        trackedName = matName
     end
     
     -- Set as current material for tracking
-    RemixMaterial.TrackMaterial(matName)
+    RemixMaterial.TrackMaterial(trackedName)
     
     -- Render it to a tiny off-screen surface to force D3D9 to bind it
     render.PushRenderTarget(render.GetScreenEffectTexture(0))
@@ -993,8 +1006,103 @@ function RemixCategoryManager.ForceTrackTexture(textureName)
     cam.End2D()
     render.PopRenderTarget()
     
-    -- The created material name is what will be tracked, not the texture name
-    return matName
+    -- textureName resolved to a real material, or matName was created as a wrapper
+    return trackedName
+end
+
+--[[
+    Envmap-only chrome materials ($envmapsphere 1 + $envmapmode 1) carry no
+    $basetexture and are drawn as an extra pass over whatever material is already
+    bound, so the engine never issues a Bind under their own name. ToPBR therefore
+    never sees them. Force-track the spheremap directly to obtain its Remix hash and
+    register a mirror-metal override against that hash.
+]]--
+local chromeInspected = {}
+local chromePending = {}
+
+local function GetChromeEnvmapTexture(materialName)
+    local content, vmtPath = ReadRawVMT(materialName)
+    if not content then
+        MsgC(Color(255, 200, 100), string.format("[RemixCategoryManager] Chrome scan: could not read %s\n", vmtPath))
+        return nil
+    end
+
+    local lower = content:lower()
+    if not lower:find('%$envmapsphere["\']?%s+["\']?1') or
+       not lower:find('%$envmapmode["\']?%s+["\']?1') then
+        return nil
+    end
+
+    local envmapTexture = content:match('%$[eE][nN][vV][mM][aA][pP]["\']?%s+["\']?([^"\'%s]+)')
+    MsgC(Color(100, 255, 255), string.format(
+        "[RemixCategoryManager] Chrome scan: '%s' matched envmapsphere+envmapmode, envmap='%s'\n",
+        materialName, tostring(envmapTexture)))
+    return envmapTexture
+end
+
+--[[
+    Drain force-tracked chrome wrappers whose Remix hash has resolved. The hash only
+    becomes available once the render thread has consumed the forced draw, so this is
+    retried rather than read inline.
+    @return number - count of chrome overrides registered this pass
+]]--
+function RemixCategoryManager.RefreshChromeHashes()
+    local processor = MaterialPipeline and MaterialPipeline.ToPBR
+    if not (processor and processor.RegisterChromeMaterial) then return 0 end
+    if not RemixMaterial.GetAllTextureHashes then return 0 end
+
+    local registered = 0
+    for wrapperName in pairs(chromePending) do
+        local hashes = RemixMaterial.GetAllTextureHashes(wrapperName)
+        if hashes and #hashes > 0 then
+            for _, hash in ipairs(hashes) do
+                local ok = processor.RegisterChromeMaterial(hash)
+                MsgC(Color(100, 255, 100), string.format(
+                    "[RemixCategoryManager] Chrome scan: registered hash %s for '%s' -> %s\n",
+                    tostring(hash), wrapperName, tostring(ok)))
+                if ok then
+                    registered = registered + 1
+                end
+            end
+            chromePending[wrapperName] = nil
+        end
+    end
+    return registered
+end
+
+--[[
+    Inspect materials for the envmap-only chrome pattern and force-track their
+    spheremaps.
+    @param materialNames table - list of material names to inspect
+]]--
+function RemixCategoryManager.ProcessChromeMaterials(materialNames)
+    local processor = MaterialPipeline and MaterialPipeline.ToPBR
+    if not (processor and processor.RegisterChromeMaterial) then return end
+
+    for _, materialName in ipairs(materialNames) do
+        local key = materialName:lower()
+        if not chromeInspected[key] then
+            chromeInspected[key] = true
+
+            local envmapTexture = GetChromeEnvmapTexture(materialName)
+            if envmapTexture then
+                local wrapperName = RemixCategoryManager.ForceTrackTexture(envmapTexture)
+                MsgC(Color(100, 255, 255), string.format(
+                    "[RemixCategoryManager] Chrome scan: force-tracked '%s' -> %s\n",
+                    envmapTexture, tostring(wrapperName)))
+                if wrapperName then
+                    chromePending[wrapperName] = true
+                end
+            end
+        end
+    end
+
+    RemixCategoryManager.RefreshChromeHashes()
+end
+
+function RemixCategoryManager.ResetChromeState()
+    chromeInspected = {}
+    chromePending = {}
 end
 
 --[[
@@ -1756,7 +1864,7 @@ function RemixCategoryManager.SmartMarkWorldTextures()
                 
                 if category then
                     local forceAlbedoCallback =
-                        MakeForceAlbedoCallback(materialName, category)
+                        RemixCategoryManager.MakeForceAlbedoCallback(materialName, category)
                     
                     -- If SetMaterialCategory succeeds immediately (hash available), mark as
                     -- processed now. If it returns false the entry is in pendingCategorizations
@@ -2593,7 +2701,57 @@ local function DrainPendingCategorizations()
     pendingCategorizations = remaining
 end
 
-hook.Add("Think", "RemixCategoryManager_DrainPending", DrainPendingCategorizations)
+hook.Add("Think", "RemixCategoryManager_DrainPending", function()
+    DrainPendingCategorizations()
+    RemixCategoryManager.RefreshChromeHashes()
+end)
+
+-- Chrome materials arrive with whatever the player spawns, so the map-load sweep
+-- can't catch them. Poll for models not yet inspected; dedup keeps this cheap.
+local chromeScannedModels = {}
+
+local function GetModelMaterialNames(modelName)
+    if util.GetModelMaterials then
+        return util.GetModelMaterials(modelName) or {}
+    end
+
+    local names = {}
+    if NikNaks and NikNaks.ModelMaterials then
+        for _, mat in pairs(NikNaks.ModelMaterials(modelName) or {}) do
+            if mat and mat.GetName then
+                table.insert(names, mat:GetName())
+            end
+        end
+    end
+    return names
+end
+
+timer.Create("RemixCategoryManager_ChromeScan", 1, 0, function()
+    local processor = MaterialPipeline and MaterialPipeline.ToPBR
+    if not (processor and processor.RegisterChromeMaterial) then return end
+
+    local newMaterials
+    for _, ent in ipairs(ents.GetAll()) do
+        local model = IsValid(ent) and ent:GetModel()
+        if model and model ~= "" and not chromeScannedModels[model] then
+            chromeScannedModels[model] = true
+            local modelMats = GetModelMaterialNames(model)
+            if cvar_debug_categorization:GetBool() then
+                MsgC(Color(200, 200, 200), string.format(
+                    "[RemixCategoryManager] Chrome scan: model '%s' has %d materials\n",
+                    model, #modelMats))
+            end
+            for _, matName in ipairs(modelMats) do
+                newMaterials = newMaterials or {}
+                table.insert(newMaterials, matName)
+            end
+        end
+    end
+
+    if newMaterials then
+        RemixCategoryManager.ProcessChromeMaterials(newMaterials)
+    end
+end)
 
 -- Initialize C++ flags on every map load and trigger auto-categorization directly
 hook.Add("InitPostEntity", "RemixCategoryManager_InitFlags", function()
@@ -2605,6 +2763,8 @@ hook.Add("InitPostEntity", "RemixCategoryManager_InitFlags", function()
     materialHashCache = {}
     pendingCategorizations = {}
     currentMapToken = game.GetMap() or ""
+    chromeScannedModels = {}
+    RemixCategoryManager.ResetChromeState()
 
     -- Drop previous-map texture associations and synchronize the C++ pipeline
     -- worker before starting this map's scan.

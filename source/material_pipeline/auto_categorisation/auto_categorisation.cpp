@@ -185,6 +185,7 @@ bool CheckVMTForSelfillum(const std::string& materialName, bool debug) {
 static bool CheckVMTForUnlitEmissionOptOut(
     const std::string& materialName,
     bool debug,
+    bool isUnlitGeneric,
     bool* hasVertexColor = nullptr,
     bool* hasTranslucent = nullptr,
     bool* hasAdditive = nullptr) {
@@ -238,7 +239,22 @@ static bool CheckVMTForUnlitEmissionOptOut(
         std::istringstream tokens(line);
         std::string key;
         std::string value;
-        if (tokens >> key >> value && value == "1") {
+        if (tokens >> key >> value) {
+            // An explicit "$selfillum 0" is an authored opt-out of Source's
+            // default unlit-emits-full-albedo behavior - the author is telling
+            // the engine this material should NOT glow, even under UnlitGeneric.
+            if (key == "$selfillum" && value == "0") {
+                foundOptOut = true;
+                if (debug) {
+                    Msg("[AutoCategorisation] CheckVMT: Found active unlit emission opt-out '$selfillum 0'\n");
+                }
+                continue;
+            }
+
+            if (value != "1") {
+                continue;
+            }
+
             if (key == "$translucent" && hasTranslucent) {
                 *hasTranslucent = true;
             } else if (key == "$additive" && hasAdditive) {
@@ -248,13 +264,20 @@ static bool CheckVMTForUnlitEmissionOptOut(
             if (key == "$no_fullbright" ||
                 key == "$vertexalpha" ||
                 key == "$vertexcolor") {
-                foundOptOut = true;
                 if (hasVertexColor && key == "$vertexcolor") {
                     *hasVertexColor = true;
                 }
-                if (debug) {
-                    Msg("[AutoCategorisation] CheckVMT: Found active unlit emission opt-out '%s 1'\n",
-                        key.c_str());
+                // $vertexcolor/$vertexalpha only opt UnlitGeneric out - that's
+                // where the heuristic identifies foliage/particle tinting.
+                // UnlitTwoTexture materials (HUD overlays, flightpath-style
+                // screens) routinely drive $vertexcolor through proxies for
+                // brightness modulation and are still meant to force-albedo.
+                if (key == "$no_fullbright" || isUnlitGeneric) {
+                    foundOptOut = true;
+                    if (debug) {
+                        Msg("[AutoCategorisation] CheckVMT: Found active unlit emission opt-out '%s 1'\n",
+                            key.c_str());
+                    }
                 }
             }
         }
@@ -271,8 +294,11 @@ std::string GetShaderName(IMaterial* material) {
 }
 
 // Read the shader name from the first non-empty, non-comment line of a VMT.
-// Used as a fallback when no IMaterial pointer is available.
-std::string ReadVMTShaderName(const std::string& materialName) {
+// BSP patch materials ("patch" shader wrapping the real VMT via "include")
+// are resolved to the included VMT's shader.
+std::string ReadVMTShaderName(const std::string& materialName, int depth = 0) {
+    if (depth > 4) return "";
+    
     IFileSystem* fs = GetFileSystem();
     if (!fs) return "";
 
@@ -281,7 +307,11 @@ std::string ReadVMTShaderName(const std::string& materialName) {
     if (!file) {
         vmtPath = "materials/" + materialName;
         file = fs->Open(vmtPath.c_str(), "rb", "GAME");
-        if (!file) return "";
+        if (!file) {
+            // Patch includes carry the full "materials/...vmt" path already
+            file = fs->Open(materialName.c_str(), "rb", "GAME");
+            if (!file) return "";
+        }
     }
 
     int fileSize = fs->Size(file);
@@ -294,6 +324,7 @@ std::string ReadVMTShaderName(const std::string& materialName) {
     if (bytesRead <= 0) return "";
 
     // The shader name is the first non-empty, non-comment token (before the opening brace)
+    std::string shaderName;
     std::istringstream ss(content);
     std::string line;
     while (std::getline(ss, line)) {
@@ -306,18 +337,30 @@ std::string ReadVMTShaderName(const std::string& materialName) {
         if (!line.empty() && line.front() == '"') {
             size_t end = line.find('"', 1);
             if (end != std::string::npos) {
-                std::string name = line.substr(1, end - 1);
-                std::transform(name.begin(), name.end(), name.begin(), SafeToLower);
-                return name;
+                shaderName = line.substr(1, end - 1);
             }
+        } else {
+            // Unquoted shader name — take up to first whitespace or brace
+            size_t end = line.find_first_of(" \t\r\n{");
+            shaderName = (end == std::string::npos) ? line : line.substr(0, end);
         }
-        // Unquoted shader name — take up to first whitespace or brace
-        size_t end = line.find_first_of(" \t\r\n{");
-        std::string name = (end == std::string::npos) ? line : line.substr(0, end);
-        std::transform(name.begin(), name.end(), name.begin(), SafeToLower);
-        return name;
+        break;
     }
-    return "";
+    std::transform(shaderName.begin(), shaderName.end(), shaderName.begin(), SafeToLower);
+    
+    if (shaderName == "patch") {
+        std::string contentLower = content;
+        std::transform(contentLower.begin(), contentLower.end(), contentLower.begin(), SafeToLower);
+        size_t pos = contentLower.find("include");
+        if (pos == std::string::npos) return "";
+        pos = content.find('"', pos + 7);
+        if (pos == std::string::npos) return "";
+        size_t end = content.find('"', pos + 1);
+        if (end == std::string::npos) return "";
+        return ReadVMTShaderName(content.substr(pos + 1, end - pos - 1), depth + 1);
+    }
+    
+    return shaderName;
 }
 
 bool IsIntrinsicDecalMaterial(
@@ -496,16 +539,19 @@ uint32_t DetectCategory(const std::string& materialName, IMaterial* material) {
     bool hasRawUnlitVertexColor = false;
     if (isUnlitShader) {
         // MATERIAL_VAR_NO_DEBUG_OVERRIDE is Source's compiled representation
-        // of $no_fullbright. Vertex color/alpha are independent opt-outs:
-        // either one is enough to suppress forced emission. Non-additive
-        // translucency also identifies alpha-blended foliage and similar
-        // materials that must not receive forced albedo emission.
+        // of $no_fullbright. Vertex color/alpha only opt UnlitGeneric out -
+        // that's where they identify foliage/particle tinting. UnlitTwoTexture
+        // materials commonly drive $vertexcolor through proxies for brightness
+        // modulation and must still receive forced albedo emission.
+        // Non-additive translucency identifies alpha-blended foliage and
+        // similar materials that must not receive forced albedo emission.
         bool hasRawUnlitTranslucency = false;
         bool hasRawUnlitAdditive = false;
         const bool hasRawUnlitEmissionOptOut =
             CheckVMTForUnlitEmissionOptOut(
                 materialName,
                 s_config.debugOutput,
+                isUnlitGeneric,
                 &hasRawUnlitVertexColor,
                 &hasRawUnlitTranslucency,
                 &hasRawUnlitAdditive);
@@ -521,8 +567,9 @@ uint32_t DetectCategory(const std::string& materialName, IMaterial* material) {
         hasUnlitEmissionOptOut =
             (material &&
              (material->GetMaterialVarFlag(MATERIAL_VAR_NO_DEBUG_OVERRIDE) ||
-              material->GetMaterialVarFlag(MATERIAL_VAR_VERTEXALPHA) ||
-              material->GetMaterialVarFlag(MATERIAL_VAR_VERTEXCOLOR))) ||
+              (isUnlitGeneric &&
+               (material->GetMaterialVarFlag(MATERIAL_VAR_VERTEXALPHA) ||
+                material->GetMaterialVarFlag(MATERIAL_VAR_VERTEXCOLOR))))) ||
             hasRawUnlitEmissionOptOut ||
             hasNonAdditiveTranslucency;
     }
@@ -543,6 +590,27 @@ uint32_t DetectCategory(const std::string& materialName, IMaterial* material) {
     }
     
     uint32_t flags = 0;
+    
+    // === WATER ===
+    // Remix's AnimatedWater category applies dual-layer time-based normal map
+    // scrolling in the translucent shader - the same effect as Source's water
+    // bump animation, which the fixed-function fallback cannot produce.
+    // The runtime fallback renames water shaders (e.g. LightmappedGeneric_DX6
+    // for dev water), so the VMT shader is consulted too - including through
+    // BSP patch material include chains.
+    {
+        bool isWater = shaderName.find("water") == 0;
+        if (!isWater) {
+            const std::string vmtShader = ReadVMTShaderName(materialName);
+            isWater = vmtShader.find("water") == 0;
+        }
+        if (isWater) {
+            flags |= CategoryFlags::ANIMATED_WATER;
+            if (s_config.debugOutput) {
+                Msg("[AutoCategorisation] Detected water shader for '%s'\n", materialName.c_str());
+            }
+        }
+    }
     
     // === PRIORITY 1: PARTICLES ===
     if (s_config.particleEnabled) {
@@ -839,6 +907,20 @@ void ApplyToHash(uint64_t hash, uint32_t flags, const std::string& materialName)
             }
             if (flags == 0) return;
         }
+        
+        // Water is never a decal: the world smart-mark applies DECAL_STATIC to
+        // every world face including water planes, and decal handling breaks
+        // the translucent water surface. ANIMATED_WATER wins in both arrival
+        // orders.
+        if ((flags & CategoryFlags::DECAL_STATIC) &&
+            ((existingAny | flags) & CategoryFlags::ANIMATED_WATER)) {
+            flags &= ~CategoryFlags::DECAL_STATIC;
+            if (s_config.debugOutput) {
+                Msg("[AutoCategorisation] Skipping DECAL_STATIC for water hash 0x%llX (%s)\n",
+                    hash, materialName.c_str());
+            }
+            if (flags == 0) return;
+        }
     
         // Convert hash to string format for Remix API
         std::string hashStr = HashToString(hash);
@@ -852,6 +934,16 @@ void ApplyToHash(uint64_t hash, uint32_t flags, const std::string& materialName)
                     hash, materialName.c_str());
             }
         }
+        
+        // When ANIMATED_WATER arrives after the smart-mark already tagged this
+        // hash as a world decal, undo the decal registration.
+        if ((flags & CategoryFlags::ANIMATED_WATER) && (existingAny & CategoryFlags::DECAL_STATIC)) {
+            s_remix->RemoveTextureHash("rtx.decalTextures", hashStr.c_str());
+            if (s_config.debugOutput) {
+                Msg("[AutoCategorisation] Removing DECAL_STATIC for hash 0x%llX (%s): water surface\n",
+                    hash, materialName.c_str());
+            }
+        }
     
         // Store mapping without discarding an existing particle bit when a
         // second pass only adds EMISSIVE. DECAL_STATIC is the one category
@@ -859,6 +951,9 @@ void ApplyToHash(uint64_t hash, uint32_t flags, const std::string& materialName)
         uint32_t mergedFlags = existingInternal | flags;
         if (flags & CategoryFlags::DECAL_STATIC) {
             mergedFlags &= ~CategoryFlags::PARTICLE;
+        }
+        if (mergedFlags & CategoryFlags::ANIMATED_WATER) {
+            mergedFlags &= ~CategoryFlags::DECAL_STATIC;
         }
         s_hashToCategoryFlags[hash] = mergedFlags;
     
@@ -869,17 +964,12 @@ void ApplyToHash(uint64_t hash, uint32_t flags, const std::string& materialName)
         if (flags & CategoryFlags::DECAL_STATIC) {
             s_remix->AddTextureHash("rtx.decalTextures", hashStr.c_str());
         }
+        if (flags & CategoryFlags::ANIMATED_WATER) {
+            s_remix->AddTextureHash("rtx.animatedWaterTextures", hashStr.c_str());
+        }
         if (flags & CategoryFlags::EMISSIVE) {
             s_remix->AddTextureHash("rtx.legacyEmissiveTextures", hashStr.c_str());
-            // Source unlit shaders emit their full albedo. Register the hash in
-            // the shared force-albedo registry so Remix does the same.
-            if (s_forceAlbedoEmissiveMaterials.count(materialName)) {
-                AddForceAlbedoHashCpp(hash);
-                if (s_config.debugOutput) {
-                    Msg("[AutoCategorisation] Registered force-albedo for unlit emissive hash 0x%llX (%s)\n",
-                        hash, materialName.c_str());
-                }
-            }
+            ApplyForceAlbedoIfNeeded(hash, materialName);
         }
 
         if (s_config.debugOutput) {
@@ -890,6 +980,19 @@ void ApplyToHash(uint64_t hash, uint32_t flags, const std::string& materialName)
 
     // Reconciliation may query the tracker, so run it after releasing s_mutex.
     ReconcileHashCategories(hash);
+}
+
+void ApplyForceAlbedoIfNeeded(uint64_t hash, const std::string& materialName) {
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
+    // Source unlit shaders emit their full albedo. Register the hash in the
+    // shared force-albedo registry so Remix does the same.
+    if (s_forceAlbedoEmissiveMaterials.count(materialName)) {
+        AddForceAlbedoHashCpp(hash);
+        if (s_config.debugOutput) {
+            Msg("[AutoCategorisation] Registered force-albedo for unlit emissive hash 0x%llX (%s)\n",
+                hash, materialName.c_str());
+        }
+    }
 }
 
 void ReconcileHashCategories(uint64_t hash) {
@@ -1016,7 +1119,15 @@ int RecheckWorldTextures() {
 void SetHashCategoryFlags(uint64_t hash, uint32_t flags) {
     {
         std::lock_guard<std::recursive_mutex> lock(s_mutex);
-        s_hashToCategoryFlags[hash] = flags;
+        // Merge rather than overwrite: category producers are independent (the
+        // world smart-mark must not erase a water/particle bit detected by
+        // Stage 3). RemoveHashCategoryFlags exists for explicit clearing.
+        auto it = s_hashToCategoryFlags.find(hash);
+        if (it != s_hashToCategoryFlags.end()) {
+            it->second |= flags;
+        } else {
+            s_hashToCategoryFlags[hash] = flags;
+        }
     }
     
     // Apply after releasing s_mutex because ApplyToHash snapshots tracker state.

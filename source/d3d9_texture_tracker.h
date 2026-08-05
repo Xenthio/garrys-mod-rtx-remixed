@@ -86,6 +86,9 @@ public:
     // Get cache statistics
     size_t GetCacheSize() const;
     
+    // Number of tracked texture variants (animation frames etc.) for a material
+    size_t GetTextureVariantCount(const char* materialName) const;
+    
     // Check if initialized
     bool IsInitialized() const { return m_bInitialized; }
 

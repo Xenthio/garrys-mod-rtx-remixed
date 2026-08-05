@@ -15,6 +15,7 @@
 #include "../../d3d9_texture_tracker.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstring>
 #include <cmath>
@@ -22,6 +23,7 @@
 #include <sstream>
 #include <direct.h>  // For _mkdir on Windows
 #include <cstdio>    // For std::rename, std::remove (staging file atomic rename)
+#include <cstdlib>   // For std::strtoull (hash string parsing)
 
 // External globals
 extern IMaterialSystem* materials;
@@ -180,19 +182,42 @@ bool TextureProcessor::Initialize(remix::Interface* remixInterface) {
         }
     }
     
-    // Load existing hashes from USDA file to skip already-processed materials
+    // Load existing hashes from USDA file to skip already-processed materials.
+    // If the generator version changed since the USDA was written, discard it -
+    // stale entries would otherwise block regeneration of improved materials.
     if (!m_outputDirectory.empty()) {
         std::string modDir = USDA::GetModDirectory(m_outputDirectory);
         std::string materialsUsdaPath = modDir + "/materials.usda";
+        std::string versionPath = modDir + "/topbr_generation.txt";
         
-        std::unordered_set<uint64_t> existingHashes;
-        if (USDA::LoadExistingHashes(materialsUsdaPath, existingHashes, true)) {
-            // Bulk insert existing hashes
-            m_materialsWrittenToUSDA.insert(existingHashes.begin(), existingHashes.end());
-            
-            if (!existingHashes.empty()) {
-                Msg("[MaterialPipeline::ToPBR] Loaded %zu existing material hashes from USDA\n", 
-                    existingHashes.size());
+        int writtenVersion = 0;
+        {
+            std::ifstream versionFile(versionPath);
+            if (versionFile.is_open()) {
+                versionFile >> writtenVersion;
+            }
+        }
+        
+        if (writtenVersion != OUTPUT_GENERATION_VERSION) {
+            if (std::remove(materialsUsdaPath.c_str()) == 0) {
+                Msg("[MaterialPipeline::ToPBR] Output generation changed (%d -> %d) - discarded stale materials.usda for full regeneration\n",
+                    writtenVersion, OUTPUT_GENERATION_VERSION);
+            }
+            EnsureOutputDirectory();
+            std::ofstream versionFile(versionPath, std::ios::trunc);
+            if (versionFile.is_open()) {
+                versionFile << OUTPUT_GENERATION_VERSION << "\n";
+            }
+        } else {
+            std::unordered_set<uint64_t> existingHashes;
+            if (USDA::LoadExistingHashes(materialsUsdaPath, existingHashes, true)) {
+                // Bulk insert existing hashes
+                m_materialsWrittenToUSDA.insert(existingHashes.begin(), existingHashes.end());
+                
+                if (!existingHashes.empty()) {
+                    Msg("[MaterialPipeline::ToPBR] Loaded %zu existing material hashes from USDA\n", 
+                        existingHashes.size());
+                }
             }
         }
     }
@@ -1711,6 +1736,10 @@ struct VMTProperties {
     std::string surfaceProp;
     bool hasEnvMap;
     std::string envMap;
+    bool hasEnvMapSphere;            // $envmapsphere - spherical (not cubemap) environment projection
+    bool envMapSphere;
+    bool hasEnvMapMode;              // $envmapmode - alternate envmap UV mode used with $envmapsphere
+    bool envMapMode;
     std::string refractTintTexture;  // $refracttinttexture - color texture for Refract shader
     bool hasRefractTintTexture;
     
@@ -1841,8 +1870,13 @@ struct VMTProperties {
 // Parse a VMT file and extract properties that FindVar doesn't reliably expose
 // This is crucial because when running with DX6 fallback shaders, FindVar() returns
 // incorrect or missing values for many material properties
-static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialName, VMTProperties& outProps, bool debugOutput) {
+static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialName, VMTProperties& outProps, bool debugOutput, int depth = 0) {
     if (!fileSystem) return false;
+    
+    // Guard against include cycles in patch VMT chains
+    if (depth > 4) {
+        return false;
+    }
     
     // Initialize all properties to defaults
     outProps = VMTProperties{};
@@ -1851,6 +1885,10 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
     outProps.hasTranslucent = false;
     outProps.translucent = false;
     outProps.hasEnvMap = false;
+    outProps.hasEnvMapSphere = false;
+    outProps.envMapSphere = false;
+    outProps.hasEnvMapMode = false;
+    outProps.envMapMode = false;
     outProps.hasRefractTintTexture = false;
     
     // Extended properties
@@ -2083,6 +2121,27 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
         return content.substr(valueStart, pos - valueStart);
     };
     
+    // vbsp cubemap-patched brush materials (e.g. "maps/<map>/<material>_X_Y_Z")
+    // use the "patch" shader wrapping the real VMT via "include". Parse the
+    // included base VMT so water and other brush materials resolve their true
+    // shader and texture properties.
+    {
+        std::string shaderLower = outProps.shaderName;
+        std::transform(shaderLower.begin(), shaderLower.end(), shaderLower.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (shaderLower == "patch") {
+            std::string includePath = findValue("include");
+            if (includePath.empty()) {
+                return false;
+            }
+            if (debugOutput) {
+                Msg("[MaterialPipeline::ToPBR] %s: patch VMT - resolving include '%s'\n",
+                    materialName.c_str(), includePath.c_str());
+            }
+            return ParseVMTFile(fileSystem, includePath, outProps, debugOutput, depth + 1);
+        }
+    }
+    
     // Check for $refractamount
     size_t refractPos = contentLower.find("$refractamount");
     if (refractPos != std::string::npos) {
@@ -2116,6 +2175,21 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
     if (envmapPos != std::string::npos) {
         outProps.hasEnvMap = true;
         outProps.envMap = findValue("$envmap");
+    }
+    
+    // $envmapsphere + $envmapmode together mean a fully reflective chrome
+    // surface with no envmap mask - Source draws these as mirror-like metal.
+    size_t envmapSpherePos = contentLower.find("$envmapsphere");
+    if (envmapSpherePos != std::string::npos) {
+        outProps.hasEnvMapSphere = true;
+        std::string valStr = findValue("$envmapsphere");
+        outProps.envMapSphere = (valStr == "1" || valStr == "true");
+    }
+    size_t envmapModePos = contentLower.find("$envmapmode");
+    if (envmapModePos != std::string::npos) {
+        outProps.hasEnvMapMode = true;
+        std::string valStr = findValue("$envmapmode");
+        outProps.envMapMode = (valStr == "1" || valStr == "true");
     }
     
     // Check for $refracttinttexture - the actual color texture for Refract shader
@@ -2698,6 +2772,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     outProps.shaderName = "";
     outProps.surfaceProp = "";
     outProps.refractTintTexturePath = "";
+    outProps.isEnvmapSphereChrome = false;
     
     // Metallic detection from base texture brightness
     outProps.baseTextureBrightness = 0.5f;  // Default to mid-grey (non-metallic)
@@ -2870,9 +2945,21 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
         }
     }
     
-    // Get $bumpmap - prefer VMT-parsed value, fallback to FindVar
+    // Get $bumpmap - prefer VMT-parsed value, fallback to FindVar.
+    // Water shader: $bumpmap holds the legacy DX8 du/dv distortion map (UV88
+    // format, not convertible to a normal map). The real tangent-space normal
+    // map lives in $normalmap, handled below - so skip $bumpmap for water.
     bool found = false;
-    if (hasVMTParsed && vmtParsed.hasBumpMap && IsValidTexturePath(vmtParsed.bumpMap)) {
+    std::string shaderLower = outProps.shaderName;
+    std::transform(shaderLower.begin(), shaderLower.end(), shaderLower.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    const bool isWaterShader = shaderLower.find("water") != std::string::npos;
+    if (isWaterShader) {
+        if (m_debugOutput) {
+            Msg("[MaterialPipeline::ToPBR] %s: Water shader - ignoring $bumpmap (du/dv map), using $normalmap\n",
+                materialName.c_str());
+        }
+    } else if (hasVMTParsed && vmtParsed.hasBumpMap && IsValidTexturePath(vmtParsed.bumpMap)) {
         outProps.bumpMapPath = vmtParsed.bumpMap;
         outProps.hasBumpMap = true;
         if (m_debugOutput) {
@@ -3019,6 +3106,36 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
             } else if (m_debugOutput && strVal && isUndefined) {
                 Msg("[MaterialPipeline::ToPBR] %s: $envmap = %s (ignored)\n", materialName.c_str(), strVal);
             }
+        }
+    }
+    
+    // $envmapsphere + $envmapmode together mean a fully reflective chrome
+    // surface with no envmap mask - force full metal, mirror-like roughness.
+    {
+        bool hasSphere = false, sphere = false, hasMode = false, mode = false;
+        if (hasVMTParsed) {
+            hasSphere = vmtParsed.hasEnvMapSphere;
+            sphere = vmtParsed.envMapSphere;
+            hasMode = vmtParsed.hasEnvMapMode;
+            mode = vmtParsed.envMapMode;
+        }
+        if (!hasSphere) {
+            IMaterialVar* pVar = pMaterial->FindVar("$envmapsphere", &found, false);
+            if (found && pVar) {
+                hasSphere = true;
+                sphere = pVar->GetIntValue() != 0;
+            }
+        }
+        if (!hasMode) {
+            IMaterialVar* pVar = pMaterial->FindVar("$envmapmode", &found, false);
+            if (found && pVar) {
+                hasMode = true;
+                mode = pVar->GetIntValue() != 0;
+            }
+        }
+        outProps.isEnvmapSphereChrome = hasSphere && sphere && hasMode && mode;
+        if (m_debugOutput && outProps.isEnvmapSphereChrome) {
+            Msg("[MaterialPipeline::ToPBR] %s: $envmapsphere+$envmapmode detected -> forcing chrome\n", materialName.c_str());
         }
     }
     
@@ -3774,27 +3891,106 @@ static void CopyProcessedMaterial(const ProcessedMaterial& src, TextureProcessor
     }
 }
 
-bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uint64_t textureHash) {
-    if (textureHash == 0) {
+// Animated materials render one D3D texture per frame, each with its own
+// Remix hash. Collect them all so every frame receives the PBR override.
+static std::vector<uint64_t> CollectMaterialFrameHashes(const std::string& materialName) {
+    std::vector<uint64_t> hashes;
+    auto variants =
+        D3D9TextureTracker::Instance().GetTextureVariantsForMaterial(materialName.c_str());
+    for (IDirect3DTexture9* tex : variants) {
+        if (!tex) continue;
+        auto result = g_remix->dxvk_GetTextureHash(tex);
+        if (result && result.value() != 0) {
+            uint64_t hash = result.value();
+            if (std::find(hashes.begin(), hashes.end(), hash) == hashes.end()) {
+                hashes.push_back(hash);
+            }
+        }
+    }
+    return hashes;
+}
+
+void TextureProcessor::RegisterProcessedMaterial(const std::vector<uint64_t>& hashes,
+                                                 ProcessedMaterialInfo info) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    for (uint64_t hash : hashes) {
+        info.textureHash = hash;
+        m_processedMaterialInfo[hash] = info;
+    }
+    m_stats.materialsProcessed++;
+}
+
+bool TextureProcessor::RegisterChromeMaterial(uint64_t hash) {
+    if (!m_initialized || hash == 0) {
         return false;
     }
-    
-    // Check if we've already created a material for this hash (thread-safe)
+
     {
         std::lock_guard<std::recursive_mutex> lock(m_mutex);
-        if (m_processedMaterialInfo.find(textureHash) != m_processedMaterialInfo.end()) {
-            return true; // Already done this session
-        }
-        
-        // Also check if hash was already in USDA file from previous session
-        if (m_materialsWrittenToUSDA.find(textureHash) != m_materialsWrittenToUSDA.end()) {
-            if (m_debugOutput) {
-                Msg("[MaterialPipeline::ToPBR] Skipping hash 0x%llX - already in USDA from previous session\n", 
-                    (unsigned long long)textureHash);
-            }
-            return true; // Already done in previous session
+        if (m_processedMaterialInfo.count(hash) ||
+            m_materialsWrittenToUSDA.count(hash)) {
+            return false;
         }
     }
+
+    ProcessedMaterialInfo info{};
+    info.textureHash = hash;
+    info.roughnessConstant = 0.05f;
+    info.metallicConstant = 1.0f;
+    info.heightScale = 0.025f;
+    info.ior = 1.0f;
+    info.emissionIntensity = 1.0f;
+    RegisterProcessedMaterial({ hash }, info);
+
+    m_needsUSDAUpdate = true;
+    if (m_debugOutput) {
+        Msg("[MaterialPipeline::ToPBR] Registered chrome override for hash 0x%llX\n",
+            (unsigned long long)hash);
+    }
+    return true;
+}
+
+bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, const std::vector<uint64_t>& textureHashes) {
+    // Partition into hashes that still need a USDA entry. If a sibling frame
+    // was already processed this session, reuse its maps for the new frames.
+    std::vector<uint64_t> newHashes;
+    ProcessedMaterialInfo siblingInfo;
+    bool haveSiblingInfo = false;
+    {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        for (uint64_t hash : textureHashes) {
+            if (hash == 0) continue;
+            auto it = m_processedMaterialInfo.find(hash);
+            if (it != m_processedMaterialInfo.end()) {
+                siblingInfo = it->second;
+                haveSiblingInfo = true;
+                continue;
+            }
+            if (m_materialsWrittenToUSDA.find(hash) != m_materialsWrittenToUSDA.end()) {
+                if (m_debugOutput) {
+                    Msg("[MaterialPipeline::ToPBR] Skipping hash 0x%llX - already in USDA from previous session\n", 
+                        (unsigned long long)hash);
+                }
+                continue;
+            }
+            newHashes.push_back(hash);
+        }
+    }
+    
+    if (newHashes.empty()) {
+        return !textureHashes.empty();
+    }
+    
+    if (haveSiblingInfo) {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        for (uint64_t hash : newHashes) {
+            siblingInfo.textureHash = hash;
+            m_processedMaterialInfo[hash] = siblingInfo;
+        }
+        return true;
+    }
+    
+    uint64_t textureHash = newHashes[0];
     
     // Ensure output directory exists for texture files
     if (!EnsureOutputDirectory()) {
@@ -3826,9 +4022,7 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
         ProcessedMaterial result = ExoPBR::ProcessTextures(props, textureHash, ctx);
         if (result.success) {
             CopyProcessedMaterial(result, matInfo);
-            std::lock_guard<std::recursive_mutex> lock(m_mutex);
-            m_processedMaterialInfo[textureHash] = matInfo;
-            m_stats.materialsProcessed++;
+            RegisterProcessedMaterial(newHashes, matInfo);
             return true;
         }
     }
@@ -3838,9 +4032,7 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
         ProcessedMaterial result = GPBR::ProcessTextures(props, textureHash, ctx);
         if (result.success) {
             CopyProcessedMaterial(result, matInfo);
-            std::lock_guard<std::recursive_mutex> lock(m_mutex);
-            m_processedMaterialInfo[textureHash] = matInfo;
-            m_stats.materialsProcessed++;
+            RegisterProcessedMaterial(newHashes, matInfo);
             return true;
         }
     }
@@ -3850,9 +4042,7 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
         ProcessedMaterial result = MWBPBR::ProcessTextures(props, textureHash, ctx);
         if (result.success) {
             CopyProcessedMaterial(result, matInfo);
-            std::lock_guard<std::recursive_mutex> lock(m_mutex);
-            m_processedMaterialInfo[textureHash] = matInfo;
-            m_stats.materialsProcessed++;
+            RegisterProcessedMaterial(newHashes, matInfo);
             return true;
         }
     }
@@ -3862,9 +4052,7 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
         ProcessedMaterial result = BFTPseudoPBR::ProcessTextures(props, textureHash, ctx);
         if (result.success) {
             CopyProcessedMaterial(result, matInfo);
-            std::lock_guard<std::recursive_mutex> lock(m_mutex);
-            m_processedMaterialInfo[textureHash] = matInfo;
-            m_stats.materialsProcessed++;
+            RegisterProcessedMaterial(newHashes, matInfo);
             return true;
         }
     }
@@ -3878,15 +4066,11 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, uin
         CopyProcessedMaterial(result, matInfo);
         
         // Store for USDA generation (thread-safe)
-        {
-            std::lock_guard<std::recursive_mutex> lock(m_mutex);
-            m_processedMaterialInfo[textureHash] = matInfo;
-            m_stats.materialsProcessed++;
-        }
+        RegisterProcessedMaterial(newHashes, matInfo);
         
         if (m_debugOutput) {
-            Msg("[MaterialPipeline::ToPBR] Processed material '%s' (hash 0x%llX): roughness=%.2f, metallic=%.2f%s%s%s%s\n",
-                props.materialName.c_str(), textureHash, matInfo.roughnessConstant, matInfo.metallicConstant,
+            Msg("[MaterialPipeline::ToPBR] Processed material '%s' (hash 0x%llX, %zu frames): roughness=%.2f, metallic=%.2f%s%s%s%s\n",
+                props.materialName.c_str(), textureHash, newHashes.size(), matInfo.roughnessConstant, matInfo.metallicConstant,
                 !matInfo.normalPath.empty() ? " [normal]" : "",
                 !matInfo.roughnessPath.empty() ? " [roughness]" : "",
                 !matInfo.metallicPath.empty() ? " [metallic]" : "",
@@ -4009,37 +4193,22 @@ int TextureProcessor::ProcessTrackedMaterialsBatch(int maxBatch) {
             continue;
         }
         
-        // Get the texture hash from the tracker
-        auto variants =
-            D3D9TextureTracker::Instance().GetTextureVariantsForMaterial(matName.c_str());
+        // Get all frame hashes from the tracker (animated textures have one per frame)
+        std::vector<uint64_t> frameHashes = CollectMaterialFrameHashes(matName);
         
-        if (variants.empty()) {
+        if (frameHashes.empty()) {
             continue;
         }
         
-        // Get hash for first variant
-        uint64_t textureHash = 0;
-        for (IDirect3DTexture9* tex : variants) {
-            if (!tex) continue;
-            auto result = g_remix->dxvk_GetTextureHash(tex);
-            if (result && result.value() != 0) {
-                textureHash = result.value();
-                break;
-            }
-        }
-        
-        if (textureHash == 0) {
-            continue;
-        }
-        
-        props.baseTextureHash = textureHash;
+        props.baseTextureHash = frameHashes[0];
         
         // Create PBR material (generates textures and tracks info for USDA)
-        if (CreatePBRMaterial(props, textureHash)) {
+        if (CreatePBRMaterial(props, frameHashes)) {
             processedCount++;
         }
         
         m_processedMaterials.insert(matName);
+        m_processedFrameCounts[matName] = frameHashes.size();
     }
     
     if (processedCount > 0) {
@@ -4072,6 +4241,7 @@ void TextureProcessor::ClearCache() {
     // Clear all tracking data for reprocessing.
     // Note: USDA files remain on disk and need game restart to reload.
     m_processedMaterials.clear();
+    m_processedFrameCounts.clear();
     m_uploadedTextures.clear();
     m_processedMaterialInfo.clear();
     m_needsUSDAUpdate = false;
@@ -4131,35 +4301,20 @@ bool TextureProcessor::ProcessSingleMaterial(const std::string& materialName) {
         return false;
     }
     
-    // Get the texture hash from the tracker
-    auto variants =
-        D3D9TextureTracker::Instance().GetTextureVariantsForMaterial(materialName.c_str());
+    // Get all frame hashes from the tracker (animated textures have one per frame)
+    std::vector<uint64_t> frameHashes = CollectMaterialFrameHashes(materialName);
     
-    if (variants.empty()) {
+    if (frameHashes.empty()) {
         return false;
     }
     
-    // Get hash for first variant
-    uint64_t textureHash = 0;
-    for (IDirect3DTexture9* tex : variants) {
-        if (!tex) continue;
-        auto result = g_remix->dxvk_GetTextureHash(tex);
-        if (result && result.value() != 0) {
-            textureHash = result.value();
-            break;
-        }
-    }
-    
-    if (textureHash == 0) {
-        return false;
-    }
-    
-    props.baseTextureHash = textureHash;
+    props.baseTextureHash = frameHashes[0];
     
     // Create PBR material (generates textures and tracks info for USDA)
-    bool success = CreatePBRMaterial(props, textureHash);
+    bool success = CreatePBRMaterial(props, frameHashes);
     
     m_processedMaterials.insert(materialName);
+    m_processedFrameCounts[materialName] = frameHashes.size();
     
     if (success) {
         m_needsUSDAUpdate = true;
@@ -4173,11 +4328,25 @@ void TextureProcessor::OnNewMaterialDetected(const std::string& materialName, ui
         return;
     }
     
-    // Skip already processed
+    // Skip already processed - unless this is a new frame hash of an animated
+    // material (e.g. water) that finished processing before all frames rendered.
+    // Re-queue it: CreatePBRMaterial reuses the sibling frame's maps, so this
+    // only registers the new hash for the USDA override.
     {
         std::lock_guard<std::recursive_mutex> lock(m_mutex);
         if (m_processedMaterials.find(materialName) != m_processedMaterials.end()) {
-            return;
+            const bool isNewFrameHash = textureHash != 0 &&
+                m_ineligibleCache.find(materialName) == m_ineligibleCache.end() &&
+                m_processedMaterialInfo.find(textureHash) == m_processedMaterialInfo.end() &&
+                m_materialsWrittenToUSDA.find(textureHash) == m_materialsWrittenToUSDA.end();
+            if (!isNewFrameHash) {
+                return;
+            }
+            m_processedMaterials.erase(materialName);
+            if (m_debugOutput) {
+                Msg("[MaterialPipeline::ToPBR] New frame hash 0x%llX for processed material '%s' - re-queueing\n",
+                    (unsigned long long)textureHash, materialName.c_str());
+            }
         }
     }
     
@@ -4468,42 +4637,25 @@ bool TextureProcessor::ProcessMaterialOnWorker(const std::string& materialName) 
         return false;
     }
     
-    // Get the texture hash from the tracker
-    auto variants =
-        D3D9TextureTracker::Instance().GetTextureVariantsForMaterial(materialName.c_str());
+    // Get all frame hashes from the tracker (animated textures have one per frame)
+    std::vector<uint64_t> frameHashes = CollectMaterialFrameHashes(materialName);
     
-    if (variants.empty()) {
+    if (frameHashes.empty()) {
         std::lock_guard<std::recursive_mutex> lock(m_mutex);
         m_processedMaterials.insert(materialName);
         return false;
     }
     
-    // Get hash for first variant
-    uint64_t textureHash = 0;
-    for (IDirect3DTexture9* tex : variants) {
-        if (!tex) continue;
-        auto result = g_remix->dxvk_GetTextureHash(tex);
-        if (result && result.value() != 0) {
-            textureHash = result.value();
-            break;
-        }
-    }
-    
-    if (textureHash == 0) {
-        std::lock_guard<std::recursive_mutex> lock(m_mutex);
-        m_processedMaterials.insert(materialName);
-        return false;
-    }
-    
-    props.baseTextureHash = textureHash;
+    props.baseTextureHash = frameHashes[0];
     
     // Create PBR material (generates textures - file I/O is thread safe)
-    bool success = CreatePBRMaterial(props, textureHash);
+    bool success = CreatePBRMaterial(props, frameHashes);
     
     // Mark as processed
     {
         std::lock_guard<std::recursive_mutex> lock(m_mutex);
         m_processedMaterials.insert(materialName);
+        m_processedFrameCounts[materialName] = frameHashes.size();
         
         if (success) {
             m_stats.materialsProcessed++;
@@ -4515,7 +4667,7 @@ bool TextureProcessor::ProcessMaterialOnWorker(const std::string& materialName) 
         Msg("[MaterialPipeline::ToPBR] Converted: %s\n", materialName.c_str());
     } else if (m_debugOutput) {
         Msg("[MaterialPipeline::ToPBR] [BG] Skipped: %s (hash 0x%llX)\n", 
-            materialName.c_str(), textureHash);
+            materialName.c_str(), frameHashes[0]);
     }
     
     return success;
@@ -4546,14 +4698,34 @@ int TextureProcessor::QueueMaterialsForProcessing() {
     
     int queuedCount = 0;
     
+    // Query tracker variant counts before taking m_mutex (avoids nesting the
+    // tracker lock inside ours - the tracker's hook path can call back into us)
+    std::vector<size_t> variantCounts;
+    variantCounts.reserve(cachedMaterials.size());
+    for (const std::string& matName : cachedMaterials) {
+        variantCounts.push_back(D3D9TextureTracker::Instance().GetTextureVariantCount(matName.c_str()));
+    }
+    
     // Quick check which materials need processing
     std::vector<std::string> materialsToQueue;
     {
         std::lock_guard<std::recursive_mutex> lock(m_mutex);
-        for (const std::string& matName : cachedMaterials) {
-            // Skip already processed
-            if (m_processedMaterials.find(matName) != m_processedMaterials.end()) {
-                continue;
+        for (size_t i = 0; i < cachedMaterials.size(); i++) {
+            const std::string& matName = cachedMaterials[i];
+            auto processedIt = m_processedMaterials.find(matName);
+            if (processedIt != m_processedMaterials.end()) {
+                // Animated textures reveal frames over time. If the tracker now
+                // has more variants than when we processed, re-queue so the new
+                // frame hashes get registered (cheap sibling-reuse path).
+                auto countIt = m_processedFrameCounts.find(matName);
+                if (countIt == m_processedFrameCounts.end() || variantCounts[i] <= countIt->second) {
+                    continue;
+                }
+                m_processedMaterials.erase(processedIt);
+                if (m_debugOutput) {
+                    Msg("[MaterialPipeline::ToPBR] '%s' has new frames (%zu -> %zu) - re-queueing\n",
+                        matName.c_str(), countIt->second, variantCounts[i]);
+                }
             }
             materialsToQueue.push_back(matName);
         }
@@ -4757,6 +4929,22 @@ LUA_FUNCTION(ToPBR_SetDebugOutput) {
     
     MaterialPipeline::ToPBR::TextureProcessor::Instance().SetDebugOutput(LUA->GetBool(1));
     return 0;
+}
+
+LUA_FUNCTION(ToPBR_RegisterChromeMaterial) {
+    if (!LUA->IsType(1, GarrysMod::Lua::Type::String)) {
+        LUA->ThrowError("Expected hash string for chrome material");
+        return 0;
+    }
+
+    const char* hashStr = LUA->GetString(1);
+    const uint64_t hash = std::strtoull(
+        (hashStr[0] == '0' && (hashStr[1] == 'x' || hashStr[1] == 'X')) ? hashStr + 2 : hashStr,
+        nullptr, 16);
+
+    LUA->PushBool(
+        MaterialPipeline::ToPBR::TextureProcessor::Instance().RegisterChromeMaterial(hash));
+    return 1;
 }
 
 LUA_FUNCTION(ToPBR_SetMetallicGeneration) {
@@ -5283,6 +5471,9 @@ void InitializeToPBRLuaBindings(GarrysMod::Lua::ILuaBase* LUA) {
     
     LUA->PushCFunction(ToPBR_SetDebugOutput);
     LUA->SetField(-2, "SetDebugOutput");
+    
+    LUA->PushCFunction(ToPBR_RegisterChromeMaterial);
+    LUA->SetField(-2, "RegisterChromeMaterial");
     
     LUA->PushCFunction(ToPBR_SetMetallicGeneration);
     LUA->SetField(-2, "SetMetallicGeneration");

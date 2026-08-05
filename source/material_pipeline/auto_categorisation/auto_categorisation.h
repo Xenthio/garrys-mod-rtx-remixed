@@ -159,6 +159,15 @@ bool IsIntrinsicDecalMaterial(
 // @param materialName - For logging
 void ApplyToHash(uint64_t hash, uint32_t flags, const std::string& materialName);
 
+// Register a hash for force-albedo emission if the given material was flagged
+// as needing it during DetectCategory. Shared by ApplyToHash and by
+// D3D9TextureTracker::ApplyCategoryToHash (the deferred pending-hash path) so
+// materials whose hash resolves late - most model/prop textures - still get
+// the same force-albedo treatment as materials resolved immediately.
+// @param hash - Texture hash from Remix
+// @param materialName - Name of the material that produced this hash
+void ApplyForceAlbedoIfNeeded(uint64_t hash, const std::string& materialName);
+
 // Re-evaluate global category bits after another verified Source material is
 // associated with a hash. LEGACY_EMISSIVE is removed when any material sharing
 // the hash is not emissive, since Remix categories operate on the hash globally.

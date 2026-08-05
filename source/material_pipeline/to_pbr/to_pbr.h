@@ -148,6 +148,10 @@ struct MaterialPBRProperties {
     bool isRefractShader;           // Material uses Refract shader (important: baseTexture may be set to normalmap by fixer)
     std::string shaderName;         // The shader name (VertexLitGeneric, LightmappedGeneric, Refract, etc.)
     std::string surfaceProp;        // $surfaceprop value
+    
+    // Chrome detection: $envmapsphere 1 + $envmapmode 1 means an unmasked,
+    // fully-reflective spherical envmap - Source renders these as mirror metal.
+    bool isEnvmapSphereChrome = false;
     std::string refractTintTexturePath;  // $refracttinttexture - color texture for Refract shader
     
     // Metallic detection from base texture darkness
@@ -277,8 +281,10 @@ public:
     bool ExtractMaterialPBR(const std::string& materialName, MaterialPBRProperties& outProps);
     
     // Create a Remix PBR material from extracted properties
-    // This binds to an existing rendered texture hash
-    bool CreatePBRMaterial(const MaterialPBRProperties& props, uint64_t textureHash);
+    // Binds to every rendered texture hash of the material - animated textures
+    // (e.g. water) produce one Remix hash per frame and all frames share the
+    // same generated PBR maps
+    bool CreatePBRMaterial(const MaterialPBRProperties& props, const std::vector<uint64_t>& textureHashes);
     
     // Process all materials in the texture tracker cache
     int ProcessAllTrackedMaterials();
@@ -373,6 +379,11 @@ public:
     bool NeedsUSDAUpdate() const { return m_needsUSDAUpdate; }
     void WriteUSDAIfNeeded();
     
+    // Emit a mirror-metal override for a texture hash. Used for envmap-only
+    // chrome materials, whose Stage 0 bind never carries their material name so
+    // they cannot reach the normal VMT-driven path.
+    bool RegisterChromeMaterial(uint64_t hash);
+    
     // =========================================================================
     // Background Processing API
     // =========================================================================
@@ -446,6 +457,9 @@ private:
     // Ensure output directory exists
     bool EnsureOutputDirectory();
     
+    // Record processed material info under every frame hash of a material
+    void RegisterProcessedMaterial(const std::vector<uint64_t>& hashes, ProcessedMaterialInfo info);
+    
     // Generate output filename for a texture type, named after the source game
     // texture path (sanitized for the filesystem)
     std::string GenerateOutputPath(const std::string& sourceName, const std::string& suffix);
@@ -499,10 +513,23 @@ private:
     // Cache of processed materials (includes failed/skipped - never reprocess)
     std::unordered_set<std::string> m_processedMaterials;
     
+    // Tracker variant count seen when each material was processed. Animated
+    // textures reveal frames over time - a growing count re-queues the
+    // material so new frame hashes get registered (cheap sibling-reuse path).
+    std::unordered_map<std::string, size_t> m_processedFrameCounts;
+    
     // Persistent disk cache of materials known to be PBR-ineligible (global, survives restarts)
     // This avoids re-running ExtractMaterialPBR on hundreds of materials (e.g. spawnmenu icons)
     // that will never qualify for PBR conversion.
-    static constexpr int INELIGIBLE_CACHE_VERSION = 1;
+    // v3: chrome ($envmapsphere+$envmapmode) materials must be re-evaluated
+    static constexpr int INELIGIBLE_CACHE_VERSION = 3;
+    
+    // Version of the generated output (materials.usda contents). Bump when the
+    // generator changes in a way that invalidates previously written entries -
+    // on mismatch the stale materials.usda is discarded and fully regenerated.
+    // v2: water $normalmap fix + per-frame hash registration
+    // v4: animated normal sprite sheets removed (v3) - regenerate without them
+    static constexpr int OUTPUT_GENERATION_VERSION = 5;
     std::unordered_set<std::string> m_ineligibleCache;
     bool m_ineligibleCacheDirty = false;
     

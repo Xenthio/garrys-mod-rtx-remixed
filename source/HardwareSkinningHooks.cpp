@@ -1049,7 +1049,7 @@ Define_method_Hook(__int64, R_StudioDrawGroupHWSkin, void*,
         result = R_StudioDrawGroupHWSkin_trampoline()(_this, pRenderContext, bodyPartInfo, pGroup, actualLighting, r_blend, pMaterial, flags, pColorMeshInfo);
     }
     __except(EXCEPTION_EXECUTE_HANDLER) {
-        HWSKIN_DBG_ALWAYS("[HWSkin] CRASH in DrawGroupHWSkin trampoline!\n");
+//        HWSKIN_DBG_ALWAYS("[HWSkin] CRASH in DrawGroupHWSkin trampoline!\n");
     }
     
     // Deactivate per-strip DIP hook

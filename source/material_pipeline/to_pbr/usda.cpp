@@ -242,6 +242,7 @@ void WriteOpaqueMaterial(std::ostream& stream,
     
     // Standard opaque materials use AperturePBR_Opaque shader
     stream << "                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@\n";
+    stream << "                uniform token info:mdl:sourceAsset:subIdentifier = \"AperturePBR_Opaque\"\n";
     
     // Albedo/Diffuse texture override (e.g., BFT metallic albedo reconstruction)
     if (!info.albedoPath.empty()) {

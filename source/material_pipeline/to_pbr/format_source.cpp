@@ -682,6 +682,21 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
         }
     }
     
+    // $envmapsphere + $envmapmode: unmasked spherical reflection, i.e. chrome.
+    // Keep the normal map for surface detail but force full metal, mirror-like
+    // roughness instead of running per-pixel roughness/metallic estimation.
+    if (props.isEnvmapSphereChrome) {
+        constexpr float kChromeRoughness = 0.05f;
+        result.roughnessConstant = kChromeRoughness;
+        result.metallicConstant = 1.0f;
+        result.success = true;
+        if (ctx.debugOutput) {
+            Msg("[Source] %s: chrome material -> metallic=1.0, roughness=%.2f\n",
+                props.materialName.c_str(), kChromeRoughness);
+        }
+        return result;
+    }
+    
     // =========================================================================
     // Roughness texture generation - comprehensive priority system
     // =========================================================================
