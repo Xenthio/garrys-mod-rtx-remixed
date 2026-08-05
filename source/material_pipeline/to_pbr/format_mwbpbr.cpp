@@ -196,8 +196,7 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
                     
                     ctx.convertToOctahedral(normalTex);
                     
-                    uint64_t hash = ctx.generateHash(props.bumpMapPath + "_normal", normalTex.width, normalTex.height);
-                    std::string path = ctx.generateOutputPath(hash, "_normal");
+                    std::string path = ctx.generateOutputPath(props.bumpMapPath, "_normal");
                     
                     if (ctx.fileExists(path)) {
                         result.normalPath = path;
@@ -253,8 +252,7 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
                         roughTex.pixelData[i * 4 + 3] = 255;
                     }
                     
-                    uint64_t roughHash = ctx.generateHash(props.bftExponentTexturePath + "_mwb_rough", roughTex.width, roughTex.height);
-                    std::string roughPath = ctx.generateOutputPath(roughHash, "_roughness");
+                    std::string roughPath = ctx.generateOutputPath(props.bftExponentTexturePath, "_roughness");
                     
                     if (ctx.fileExists(roughPath)) {
                         result.roughnessPath = roughPath;
@@ -302,8 +300,7 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
                             metallicTex.pixelData[i * 4 + 3] = 255;
                         }
                         
-                        uint64_t metalHash = ctx.generateHash(props.bftExponentTexturePath + "_mwb_metallic", metallicTex.width, metallicTex.height);
-                        std::string metalPath = ctx.generateOutputPath(metalHash, "_metallic");
+                        std::string metalPath = ctx.generateOutputPath(props.bftExponentTexturePath, "_metallic");
                         
                         if (ctx.fileExists(metalPath)) {
                             result.metallicPath = metalPath;
@@ -365,8 +362,7 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
                                 metallicTex.pixelData[i * 4 + 3] = 255;
                             }
                             
-                            uint64_t metalHash = ctx.generateHash(props.baseTexturePath + "_mwb_metallic", metallicTex.width, metallicTex.height);
-                            std::string metalPath = ctx.generateOutputPath(metalHash, "_metallic");
+                            std::string metalPath = ctx.generateOutputPath(props.baseTexturePath, "_metallic");
                             
                             if (ctx.fileExists(metalPath)) {
                                 result.metallicPath = metalPath;

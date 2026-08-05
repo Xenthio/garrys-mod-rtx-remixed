@@ -28,7 +28,7 @@ namespace USDA {
 // =========================================================================
 
 std::string GetRelativeTexturePath(const std::string& absolutePath, const std::string& outputDir) {
-    // We want a path relative to the mod directory like "./textures/HASH_type.dds"
+    // We want a path relative to the mod directory like "./textures/models_props_foo_type.dds"
     size_t texturesPos = absolutePath.find("textures");
     if (texturesPos != std::string::npos) {
         return "./" + absolutePath.substr(texturesPos);

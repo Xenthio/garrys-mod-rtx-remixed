@@ -93,7 +93,7 @@ bool LoadExistingHashes(const std::string& materialsUsdaPath,
 // Convert absolute path to relative path from mod directory
 // @param absolutePath - Full path to texture file
 // @param outputDir - Output directory for context
-// @return Relative path like "./textures/HASH_type.dds"
+// @return Relative path like "./textures/models_props_foo_type.dds"
 std::string GetRelativeTexturePath(const std::string& absolutePath, const std::string& outputDir);
 
 // Get mod directory from output directory (parent of textures folder)

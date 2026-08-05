@@ -132,8 +132,7 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
                             roughTex.pixelData[i * 4 + 3] = 255;
                         }
                         
-                        uint64_t hash = ctx.generateHash(props.armTexturePath + "_rough", roughTex.width, roughTex.height);
-                        std::string path = ctx.generateOutputPath(hash, "_roughness");
+                        std::string path = ctx.generateOutputPath(props.armTexturePath, "_roughness");
                         
                         if (ctx.fileExists(path)) {
                             result.roughnessPath = path;
@@ -163,8 +162,7 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
                             metalTex.pixelData[i * 4 + 3] = 255;
                         }
                         
-                        uint64_t hash = ctx.generateHash(props.armTexturePath + "_metal", metalTex.width, metalTex.height);
-                        std::string path = ctx.generateOutputPath(hash, "_metallic");
+                        std::string path = ctx.generateOutputPath(props.armTexturePath, "_metallic");
                         
                         if (ctx.fileExists(path)) {
                             result.metallicPath = path;
@@ -199,8 +197,7 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
                                 heightTex.pixelData[i * 4 + 3] = 255;
                             }
                             
-                            uint64_t hash = ctx.generateHash(props.armTexturePath + "_height", heightTex.width, heightTex.height);
-                            std::string path = ctx.generateOutputPath(hash, "_height");
+                            std::string path = ctx.generateOutputPath(props.armTexturePath, "_height");
                             
                             if (ctx.fileExists(path)) {
                                 result.heightPath = path;
@@ -233,8 +230,7 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
                     
                     ctx.convertToOctahedral(normalTex);
                     
-                    uint64_t hash = ctx.generateHash(props.exoNormalPath + "_normal", normalTex.width, normalTex.height);
-                    std::string path = ctx.generateOutputPath(hash, "_normal");
+                    std::string path = ctx.generateOutputPath(props.exoNormalPath, "_normal");
                     
                     if (ctx.fileExists(path)) {
                         result.normalPath = path;
@@ -259,8 +255,7 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
                 emitTex.isNormalMap = false;
                 
                 if (ctx.extractPixelData(fileData, header, emitTex, false)) {
-                    uint64_t hash = ctx.generateHash(props.emissionTexturePath + "_emit", emitTex.width, emitTex.height);
-                    std::string path = ctx.generateOutputPath(hash, "_emission");
+                    std::string path = ctx.generateOutputPath(props.emissionTexturePath, "_emission");
                     
                     if (ctx.fileExists(path)) {
                         result.emissivePath = path;

@@ -76,8 +76,7 @@ struct ProcessingContext {
     std::function<bool(const ConvertedTexture&, const std::string&)> writeDDS;
     std::function<void(ConvertedTexture&)> convertToOctahedral;
     std::function<void(ConvertedTexture&)> convertSSBumpToNormal;
-    std::function<uint64_t(const std::string&, uint32_t, uint32_t)> generateHash;
-    std::function<std::string(uint64_t, const std::string&)> generateOutputPath;
+    std::function<std::string(const std::string&, const std::string&)> generateOutputPath;
     std::function<bool(const std::string&)> fileExists;
     
     bool debugOutput = false;

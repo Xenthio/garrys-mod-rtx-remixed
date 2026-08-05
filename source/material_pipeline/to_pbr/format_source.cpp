@@ -313,8 +313,7 @@ static bool GenerateRoughnessFromSource(
         Msg("[Source]   PhongExp=%.1f -> BaseRoughness=%.3f\n", constantPhongExponent, PhongToRoughness(constantPhongExponent));
     }
     
-    uint64_t hash = ctx.generateHash(sourcePath + "_rough", roughTex.width, roughTex.height);
-    std::string path = ctx.generateOutputPath(hash, "_roughness");
+    std::string path = ctx.generateOutputPath(sourcePath, "_roughness");
     
     if (ctx.fileExists(path)) {
         result.roughnessPath = path;
@@ -587,8 +586,7 @@ static MetallicExtractionResult GenerateMetallicFromEnvmapMaskAndBrightness(
     }
     
     // Write metallic texture
-    uint64_t metallicHash = ctx.generateHash(props.baseTexturePath + "_envmetal", width, height);
-    std::string metallicPath = ctx.generateOutputPath(metallicHash, "_metallic");
+    std::string metallicPath = ctx.generateOutputPath(props.baseTexturePath, "_metallic");
     
     if (ctx.fileExists(metallicPath)) {
         result.metallicPath = metallicPath;
@@ -606,8 +604,7 @@ static MetallicExtractionResult GenerateMetallicFromEnvmapMaskAndBrightness(
     }
     
     // Write modified albedo texture
-    uint64_t albedoHash = ctx.generateHash(props.baseTexturePath + "_metalalbedo", width, height);
-    std::string albedoPath = ctx.generateOutputPath(albedoHash, "_albedo");
+    std::string albedoPath = ctx.generateOutputPath(props.baseTexturePath, "_albedo");
     
     if (ctx.fileExists(albedoPath)) {
         result.albedoPath = albedoPath;
@@ -652,8 +649,7 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
             VTFFileHeader header;
             if (ctx.parseVTFHeader(fileData, header)) {
                 // Check if output file already exists BEFORE expensive decompression
-                uint64_t hash = ctx.generateHash(props.bumpMapPath + "_normal", header.width, header.height);
-                std::string path = ctx.generateOutputPath(hash, "_normal");
+                std::string path = ctx.generateOutputPath(props.bumpMapPath, "_normal");
                 
                 if (ctx.fileExists(path)) {
                     // File already exists - skip all processing
@@ -795,8 +791,7 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
             VTFFileHeader header;
             if (ctx.parseVTFHeader(fileData, header)) {
                 // Check if output file already exists BEFORE expensive decompression
-                uint64_t hash = ctx.generateHash(vtfPath + "_rough", header.width, header.height);
-                std::string path = ctx.generateOutputPath(hash, "_roughness");
+                std::string path = ctx.generateOutputPath(vtfPath, "_roughness");
                 
                 if (ctx.fileExists(path)) {
                     // File already exists - skip all processing
@@ -1012,8 +1007,7 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
             VTFFileHeader header;
             if (ctx.parseVTFHeader(fileData, header)) {
                 // Check if output file already exists BEFORE expensive decompression
-                uint64_t hash = ctx.generateHash(heightMapPath + "_height", header.width, header.height);
-                std::string path = ctx.generateOutputPath(hash, "_height");
+                std::string path = ctx.generateOutputPath(heightMapPath, "_height");
                 
                 if (ctx.fileExists(path)) {
                     // File already exists - skip all processing

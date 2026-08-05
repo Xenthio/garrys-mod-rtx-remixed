@@ -424,9 +424,6 @@ private:
                         std::vector<uint8_t>& outRGBA);
     
     // Generate a unique hash for a texture
-    uint64_t GenerateTextureHash(const std::string& path, uint32_t width, uint32_t height);
-    
-    // Generate hash for a texture with pixel data (handles solid color detection)
     uint64_t GenerateTextureHashWithPixelData(const std::string& path, uint32_t width, uint32_t height, 
                                               const std::vector<uint8_t>& pixelData);
     
@@ -449,8 +446,9 @@ private:
     // Ensure output directory exists
     bool EnsureOutputDirectory();
     
-    // Generate output filename for a texture type
-    std::string GenerateOutputPath(uint64_t hash, const std::string& suffix);
+    // Generate output filename for a texture type, named after the source game
+    // texture path (sanitized for the filesystem)
+    std::string GenerateOutputPath(const std::string& sourceName, const std::string& suffix);
     
     // Convert normal map from DirectX format to octahedral format for RTX Remix
     void ConvertNormalMapToOctahedral(ConvertedTexture& texture);

@@ -422,8 +422,7 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
                                 metallicTex.pixelData[i * 4 + 3] = 255;
                             }
                             
-                            uint64_t hash = ctx.generateHash(props.baseTexturePath + "_bft_metallic", metallicTex.width, metallicTex.height);
-                            std::string path = ctx.generateOutputPath(hash, "_metallic");
+                            std::string path = ctx.generateOutputPath(props.baseTexturePath, "_metallic");
                             
                             if (ctx.fileExists(path)) {
                                 result.metallicPath = path;
@@ -566,8 +565,7 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
     //                }
     //                
     //                // Write the boosted albedo
-    //                uint64_t hash = ctx.generateHash(props.baseTexturePath + "_bft_albedo", albedoTex.width, albedoTex.height);
-    //                std::string path = ctx.generateOutputPath(hash, "_albedo");
+    //                std::string path = ctx.generateOutputPath(props.baseTexturePath, "_albedo");
     //                
     //                if (ctx.fileExists(path)) {
     //                    result.albedoPath = path;
@@ -604,8 +602,7 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
                     
                     ctx.convertToOctahedral(normalTex);
                     
-                    uint64_t hash = ctx.generateHash(props.bumpMapPath + "_normal", normalTex.width, normalTex.height);
-                    std::string path = ctx.generateOutputPath(hash, "_normal");
+                    std::string path = ctx.generateOutputPath(props.bumpMapPath, "_normal");
                     
                     if (ctx.fileExists(path)) {
                         result.normalPath = path;
@@ -665,8 +662,7 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
                         roughTex.pixelData[i * 4 + 3] = 255;
                     }
                     
-                    uint64_t roughHash = ctx.generateHash(props.bftExponentTexturePath + "_bft_rough", roughTex.width, roughTex.height);
-                    std::string roughPath = ctx.generateOutputPath(roughHash, "_roughness");
+                    std::string roughPath = ctx.generateOutputPath(props.bftExponentTexturePath, "_roughness");
                     
                     if (ctx.fileExists(roughPath)) {
                         result.roughnessPath = roughPath;

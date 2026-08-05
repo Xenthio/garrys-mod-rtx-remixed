@@ -386,10 +386,36 @@ bool TextureProcessor::EnsureOutputDirectory() {
     return true;
 }
 
-std::string TextureProcessor::GenerateOutputPath(uint64_t hash, const std::string& suffix) {
-    std::ostringstream oss;
-    oss << m_outputDirectory << "\\" << std::hex << std::uppercase << hash << suffix << ".dds";
-    return oss.str();
+std::string TextureProcessor::GenerateOutputPath(const std::string& sourceName, const std::string& suffix) {
+    // Build a readable filename from the game texture path, e.g.
+    // "models/props_c17/furniture_metal001a" -> "models_props_c17_furniture_metal001a_normal.dds"
+    // Source texture paths are case-insensitive, so lowercase for stable names.
+    std::string name;
+    name.reserve(sourceName.size());
+    for (char c : sourceName) {
+        if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-') {
+            name += c;
+        } else if (c >= 'A' && c <= 'Z') {
+            name += static_cast<char>(c - 'A' + 'a');
+        } else {
+            name += '_';
+        }
+    }
+    
+    if (name.empty()) {
+        name = "unnamed";
+    }
+    
+    // Keep the full path under MAX_PATH: truncate very long names and append a
+    // short hash of the original name to preserve uniqueness.
+    constexpr size_t kMaxNameLength = 160;
+    if (name.size() > kMaxNameLength) {
+        std::ostringstream tail;
+        tail << std::hex << std::uppercase << std::hash<std::string>{}(sourceName);
+        name = name.substr(0, kMaxNameLength) + "_" + tail.str();
+    }
+    
+    return m_outputDirectory + "\\" + name + suffix + ".dds";
 }
 
 // Calculate number of mipmap levels for a given dimension
@@ -932,12 +958,6 @@ void TextureProcessor::ConvertSSBumpToNormal(ConvertedTexture& texture) {
     // Delegate to VTF module
     VTF::ConvertSSBumpToNormal(texture, m_debugOutput);
 }
-
-uint64_t TextureProcessor::GenerateTextureHash(const std::string& path, uint32_t width, uint32_t height) {
-    // Delegate to the pixel-data version with empty pixel data
-    return GenerateTextureHashWithPixelData(path, width, height, std::vector<uint8_t>());
-}
-
 
 bool TextureProcessor::IsSolidColorTexture(const std::vector<uint8_t>& pixelData, uint32_t width, uint32_t height) {
     // Handle edge cases
@@ -3716,11 +3736,8 @@ ProcessingContext TextureProcessor::CreateProcessingContext() {
     ctx.convertSSBumpToNormal = [this](ConvertedTexture& tex) {
         ConvertSSBumpToNormal(tex);
     };
-    ctx.generateHash = [this](const std::string& name, uint32_t w, uint32_t h) {
-        return GenerateTextureHash(name, w, h);
-    };
-    ctx.generateOutputPath = [this](uint64_t hash, const std::string& suffix) {
-        return GenerateOutputPath(hash, suffix.c_str());
+    ctx.generateOutputPath = [this](const std::string& sourceName, const std::string& suffix) {
+        return GenerateOutputPath(sourceName, suffix);
     };
     ctx.fileExists = [this](const std::string& path) {
         return FileExists(path);
