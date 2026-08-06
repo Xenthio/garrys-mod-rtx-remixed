@@ -572,6 +572,27 @@ local function ApplySkinRemap(materialPath, skinRemap)
     return materialPath
 end
 
+-- Shared with BSP material categorization. util.GetModelMaterials only reports
+-- skin 0, so consumers that need the material used by a particular static prop
+-- must apply the MDL skin-family table themselves.
+RTXModelSkinResolver = RTXModelSkinResolver or {}
+function RTXModelSkinResolver.GetMaterialNames(modelPath, skin, baseMaterialNames)
+    local resolved = {}
+    local seen = {}
+    local skinRemap = GetSkinMaterialRemap(modelPath, tonumber(skin) or 0)
+
+    for _, materialPath in ipairs(baseMaterialNames or {}) do
+        local resolvedPath = ApplySkinRemap(materialPath, skinRemap)
+        local key = string.lower(resolvedPath or "")
+        if key ~= "" and not seen[key] then
+            seen[key] = true
+            table.insert(resolved, resolvedPath)
+        end
+    end
+
+    return resolved
+end
+
 -- Get mesh data directly using GetModelMeshes
 local function GetModelMeshes(modelPath)
     -- Load the model if not already loaded
