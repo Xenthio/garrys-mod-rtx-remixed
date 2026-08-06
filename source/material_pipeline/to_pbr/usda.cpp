@@ -188,7 +188,11 @@ void WriteGlassMaterial(std::ostream& stream,
     
     // Glass-specific properties
     stream << "                float inputs:ior_constant = " << info.ior << "\n";
-    stream << "                bool inputs:thin_walled = 0\n";  // Use solid glass (false) for proper refraction, not thin_walled (true)
+    stream << "                bool inputs:thin_walled = " << (info.thinWalled ? 1 : 0) << "\n";
+    // Translucent replacement textures do not participate in Remix's sampler
+    // feedback path. Force their full mip chain to be resident instead of
+    // leaving a newly-loaded glass texture at its single smallest mip.
+    stream << "                bool inputs:preload_textures = 1\n";
     
     // Roughness
     if (!info.roughnessPath.empty()) {
@@ -208,6 +212,9 @@ void WriteGlassMaterial(std::ostream& stream,
         stream << "                    colorSpace = \"srgb\"\n";
         stream << "                )\n";
         stream << "                bool inputs:use_diffuse_layer = 1\n";
+        if (info.enableTransmissionMask) {
+            stream << "                bool inputs:enable_transmission_mask = 1\n";
+        }
         
         // For Refract shaders: reduce diffuse opacity
         if (info.isRefractShader) {
@@ -243,6 +250,15 @@ void WriteOpaqueMaterial(std::ostream& stream,
     // Standard opaque materials use AperturePBR_Opaque shader
     stream << "                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@\n";
     stream << "                uniform token info:mdl:sourceAsset:subIdentifier = \"AperturePBR_Opaque\"\n";
+
+    // Remix associates auxiliary opaque textures with the replacement
+    // albedo's sampler-feedback stamp. Most ToPBR materials intentionally
+    // preserve Source's original albedo, leaving generated normal maps with
+    // no replacement stamp to inherit. Preload those materials so the normal
+    // map cannot remain at its initially loaded smallest mip.
+    if (!info.normalPath.empty() && info.albedoPath.empty()) {
+        stream << "                bool inputs:preload_textures = 1\n";
+    }
     
     // Albedo/Diffuse texture override (e.g., BFT metallic albedo reconstruction)
     if (!info.albedoPath.empty()) {

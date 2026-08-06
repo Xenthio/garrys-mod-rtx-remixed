@@ -69,6 +69,13 @@ export material AperturePBR_Translucent(
     anno::description("When set, simulates a diffuse layer on top of the material"),
     anno::in_group("Volume")
   ]],
+  uniform bool enable_transmission_mask = false
+  [[
+    anno::display_name("Enable transmission mask"),
+    anno::description("Use the diffuse texture RGB and alpha to attenuate visibility rays"),
+    anno::in_group("Volume"),
+    anno::enable_if("use_diffuse_layer == true")
+  ]],
   // Note: The transmittance color/diffuse albedo texture should always be treated as sRGB.
   uniform texture_2d transmittance_texture = texture_2d("", tex::gamma_srgb)
   [[

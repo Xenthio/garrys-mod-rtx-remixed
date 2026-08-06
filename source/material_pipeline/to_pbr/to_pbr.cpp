@@ -4,6 +4,7 @@
 #include "formats.h"
 #include "vtf.h"
 #include "usda.h"
+#include "../material_filter.h"
 #include <tier0/dbg.h>
 #include <materialsystem/imaterialsystem.h>
 #include <materialsystem/imaterial.h>
@@ -2768,6 +2769,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     
     // Glass properties
     outProps.isGlass = false;
+    outProps.isWater = false;
     outProps.isRefractShader = false;
     outProps.shaderName = "";
     outProps.surfaceProp = "";
@@ -2954,6 +2956,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     std::transform(shaderLower.begin(), shaderLower.end(), shaderLower.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     const bool isWaterShader = shaderLower.find("water") != std::string::npos;
+    outProps.isWater = isWaterShader;
     if (isWaterShader) {
         if (m_debugOutput) {
             Msg("[MaterialPipeline::ToPBR] %s: Water shader - ignoring $bumpmap (du/dv map), using $normalmap\n",
@@ -3882,12 +3885,99 @@ static void CopyProcessedMaterial(const ProcessedMaterial& src, TextureProcessor
         dst.emissionIntensity = src.emissionIntensity;
     }
     if (!src.transmittancePath.empty()) dst.transmittancePath = src.transmittancePath;
+    dst.enableTransmissionMask = src.enableTransmissionMask;
     if (!src.albedoPath.empty()) dst.albedoPath = src.albedoPath;
     if (src.roughnessConstant != 0.5f) dst.roughnessConstant = src.roughnessConstant;
     if (src.metallicConstant != 0.0f) dst.metallicConstant = src.metallicConstant;
     if (src.isGlass) {
         dst.isGlass = src.isGlass;
         dst.ior = src.ior;
+    }
+}
+
+// Preserve the Source color texture when replacing glass with Remix's
+// translucent material. Refract shaders use $refracttinttexture for color;
+// their $basetexture may be a normal/distortion map and is deliberately not
+// used as a fallback. Other glass materials retain their original
+// $basetexture as the transmittance texture. Water is explicitly excluded:
+// its texture inputs describe animated surface normals/distortion, not a
+// color or opacity mask for light transmission.
+static void AddGlassTransmittance(const MaterialPBRProperties& props,
+                                  const ProcessingContext& ctx,
+                                  ProcessedMaterial& result) {
+    if (!props.isGlass || props.isWater || !result.transmittancePath.empty()) {
+        return;
+    }
+
+    result.isGlass = true;
+    result.ior = 1.52f;
+
+    const std::string& sourcePath = props.isRefractShader
+        ? props.refractTintTexturePath
+        : props.baseTexturePath;
+    if (sourcePath.empty()) {
+        if (ctx.debugOutput) {
+            Msg("[MaterialPipeline::ToPBR] %s: glass has no color texture for transmittance\n",
+                props.materialName.c_str());
+        }
+        return;
+    }
+
+    const std::string outputPath =
+        ctx.generateOutputPath(sourcePath, "_transmittance");
+    const bool outputExists = ctx.fileExists(outputPath);
+
+    std::vector<uint8_t> fileData;
+    VTFFileHeader header;
+    ConvertedTexture texture;
+    texture.isNormalMap = false;
+    const bool textureDecoded =
+        ctx.readVTFFile(sourcePath, fileData) &&
+        ctx.parseVTFHeader(fileData, header) &&
+        ctx.extractPixelData(fileData, header, texture, false);
+
+    if (!textureDecoded) {
+        if (outputExists) {
+            // Preserve the existing successful conversion, but leave the new mask
+            // disabled because its alpha semantics could not be classified safely.
+            result.transmittancePath = outputPath;
+            result.skippedCount++;
+            if (ctx.debugOutput) {
+                Msg("[MaterialPipeline::ToPBR] %s: reusing transmittance texture without shadow mask; source alpha could not be inspected\n",
+                    props.materialName.c_str());
+            }
+            return;
+        }
+
+        Warning("[MaterialPipeline::ToPBR] %s: failed to preserve glass color texture '%s'\n",
+            props.materialName.c_str(), sourcePath.c_str());
+        return;
+    }
+
+    // VTF decoders fill textures without meaningful alpha with 255. Enable the
+    // shadow mask only when at least one pixel transmits some light, which also
+    // supports uniform partial alpha while protecting ordinary opaque RGB maps.
+    for (size_t i = 3; i < texture.pixelData.size(); i += 4) {
+        if (texture.pixelData[i] < 255) {
+            result.enableTransmissionMask = true;
+            break;
+        }
+    }
+
+    if (!outputExists && !ctx.writeDDS(texture, outputPath)) {
+        Warning("[MaterialPipeline::ToPBR] %s: failed to write glass transmittance texture '%s'\n",
+            props.materialName.c_str(), outputPath.c_str());
+        return;
+    }
+
+    result.transmittancePath = outputPath;
+    if (ctx.debugOutput) {
+        Msg("[MaterialPipeline::ToPBR] %s: %s transmittance texture %s%s\n",
+            props.materialName.c_str(), outputExists ? "reused" : "wrote", outputPath.c_str(),
+            result.enableTransmissionMask ? " [transmission mask]" : "");
+    }
+    if (outputExists) {
+        result.skippedCount++;
     }
 }
 
@@ -4005,6 +4095,7 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, con
     matInfo.metallicConstant = props.metallic;
     matInfo.heightScale = 0.025f;  // Default height scale
     matInfo.isGlass = props.isGlass;
+    matInfo.thinWalled = props.isGlass && !props.isWater;
     matInfo.isRefractShader = props.isRefractShader;
     matInfo.ior = props.isGlass ? 1.52f : 1.0f;  // Glass IOR: 1.52 is typical for window/crown glass
     matInfo.emissionIntensity = props.hasEmissionScale ? props.emissionScale : 1.0f;
@@ -4021,6 +4112,7 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, con
     if (props.isExoPBR) {
         ProcessedMaterial result = ExoPBR::ProcessTextures(props, textureHash, ctx);
         if (result.success) {
+            AddGlassTransmittance(props, ctx, result);
             CopyProcessedMaterial(result, matInfo);
             RegisterProcessedMaterial(newHashes, matInfo);
             return true;
@@ -4031,6 +4123,7 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, con
     if (props.isGPBR) {
         ProcessedMaterial result = GPBR::ProcessTextures(props, textureHash, ctx);
         if (result.success) {
+            AddGlassTransmittance(props, ctx, result);
             CopyProcessedMaterial(result, matInfo);
             RegisterProcessedMaterial(newHashes, matInfo);
             return true;
@@ -4041,6 +4134,7 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, con
     if (props.isMWBPBR) {
         ProcessedMaterial result = MWBPBR::ProcessTextures(props, textureHash, ctx);
         if (result.success) {
+            AddGlassTransmittance(props, ctx, result);
             CopyProcessedMaterial(result, matInfo);
             RegisterProcessedMaterial(newHashes, matInfo);
             return true;
@@ -4051,6 +4145,7 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, con
     if (props.isBFTPseudoPBR) {
         ProcessedMaterial result = BFTPseudoPBR::ProcessTextures(props, textureHash, ctx);
         if (result.success) {
+            AddGlassTransmittance(props, ctx, result);
             CopyProcessedMaterial(result, matInfo);
             RegisterProcessedMaterial(newHashes, matInfo);
             return true;
@@ -4063,6 +4158,7 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, con
     // =========================================================================
     ProcessedMaterial result = SourceEngine::ProcessTextures(props, textureHash, ctx);
     if (result.success) {
+        AddGlassTransmittance(props, ctx, result);
         CopyProcessedMaterial(result, matInfo);
         
         // Store for USDA generation (thread-safe)
@@ -4169,8 +4265,8 @@ int TextureProcessor::ProcessTrackedMaterialsBatch(int maxBatch) {
         // Reset skip counter when we find something unprocessed
         skippedCount = 0;
         
-        // Skip internal materials
-        if (matName.find("__") == 0 || matName.find("vgui") == 0) {
+        // Skip engine-generated and 2D interface materials.
+        if (MaterialFilter::IsNonSceneMaterialName(matName)) {
             m_processedMaterials.insert(matName);
             continue;
         }
@@ -4274,8 +4370,8 @@ bool TextureProcessor::ProcessSingleMaterial(const std::string& materialName) {
         return true; // Already done
     }
     
-    // Skip internal materials
-    if (materialName.find("__") == 0 || materialName.find("vgui") == 0) {
+    // Skip engine-generated and 2D interface materials.
+    if (MaterialFilter::IsNonSceneMaterialName(materialName)) {
         return false;
     }
     
@@ -4327,6 +4423,10 @@ void TextureProcessor::OnNewMaterialDetected(const std::string& materialName, ui
     if (!m_initialized || !m_autoProcessing || !m_enabled.load(std::memory_order_relaxed)) {
         return;
     }
+
+    if (MaterialFilter::IsNonSceneMaterialName(materialName)) {
+        return;
+    }
     
     // Skip already processed - unless this is a new frame hash of an animated
     // material (e.g. water) that finished processing before all frames rendered.
@@ -4348,11 +4448,6 @@ void TextureProcessor::OnNewMaterialDetected(const std::string& materialName, ui
                     (unsigned long long)textureHash, materialName.c_str());
             }
         }
-    }
-    
-    // Skip internal materials
-    if (materialName.find("__") == 0 || materialName.find("vgui") == 0) {
-        return;
     }
     
     // Clear the lock-free flag so batch processing will check for new materials
@@ -4608,8 +4703,8 @@ bool TextureProcessor::ProcessMaterialOnWorker(const std::string& materialName) 
         }
     }
     
-    // Skip internal materials
-    if (materialName.find("__") == 0 || materialName.find("vgui") == 0) {
+    // Skip engine-generated and 2D interface materials.
+    if (MaterialFilter::IsNonSceneMaterialName(materialName)) {
         std::lock_guard<std::recursive_mutex> lock(m_mutex);
         m_processedMaterials.insert(materialName);
         return false;
@@ -4712,6 +4807,11 @@ int TextureProcessor::QueueMaterialsForProcessing() {
         std::lock_guard<std::recursive_mutex> lock(m_mutex);
         for (size_t i = 0; i < cachedMaterials.size(); i++) {
             const std::string& matName = cachedMaterials[i];
+            if (MaterialFilter::IsNonSceneMaterialName(matName)) {
+                m_processedMaterials.insert(matName);
+                continue;
+            }
+
             auto processedIt = m_processedMaterials.find(matName);
             if (processedIt != m_processedMaterials.end()) {
                 // Animated textures reveal frames over time. If the tracker now

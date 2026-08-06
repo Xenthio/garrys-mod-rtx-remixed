@@ -23,8 +23,8 @@ def Scope "Looks"
             uniform token info:implementationSource = "sourceAsset"
             uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
             uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+            bool inputs:thin_walled = 1
             token outputs:out
         }
     }
 }
-

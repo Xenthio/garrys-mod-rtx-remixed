@@ -363,6 +363,58 @@ std::string ReadVMTShaderName(const std::string& materialName, int depth = 0) {
     return shaderName;
 }
 
+// Read the authored $decal flag directly when the runtime material has been
+// replaced by a DX fallback shader and no longer exposes the parameter through
+// FindVar. This also works for map-packed VMTs through Source's GAME search path.
+static bool CheckVMTForDecal(const std::string& materialName) {
+    IFileSystem* fs = GetFileSystem();
+    if (!fs) return false;
+
+    std::string vmtPath = "materials/" + materialName + ".vmt";
+    FileHandle_t file = fs->Open(vmtPath.c_str(), "rb", "GAME");
+    if (!file) {
+        vmtPath = "materials/" + materialName;
+        file = fs->Open(vmtPath.c_str(), "rb", "GAME");
+        if (!file) return false;
+    }
+
+    const int fileSize = fs->Size(file);
+    if (fileSize <= 0 || fileSize > 65536) {
+        fs->Close(file);
+        return false;
+    }
+
+    std::string content(static_cast<size_t>(fileSize), '\0');
+    const int bytesRead = fs->Read(&content[0], fileSize, file);
+    fs->Close(file);
+    if (bytesRead <= 0) return false;
+    content.resize(static_cast<size_t>(bytesRead));
+
+    std::istringstream lines(content);
+    std::string line;
+    while (std::getline(lines, line)) {
+        const size_t commentPos = line.find("//");
+        if (commentPos != std::string::npos) {
+            line.resize(commentPos);
+        }
+
+        std::transform(line.begin(), line.end(), line.begin(), SafeToLower);
+        std::replace(line.begin(), line.end(), '"', ' ');
+        std::replace(line.begin(), line.end(), '\'', ' ');
+
+        std::istringstream tokens(line);
+        std::string key;
+        std::string value;
+        if (tokens >> key >> value) {
+            if (key == "$decal" && (value == "1" || value == "true")) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
 bool IsIntrinsicDecalMaterial(
     const std::string& materialName,
     IMaterial* material)
@@ -371,8 +423,14 @@ bool IsIntrinsicDecalMaterial(
     std::transform(
         lowerName.begin(), lowerName.end(), lowerName.begin(), SafeToLower);
 
-    // Method 1: explicit $decal material parameter.
+    // Method 1: Source's compiled material flag. Map overlays commonly retain
+    // this even when a DX fallback shader hides the original $decal parameter.
     if (material && !material->IsErrorMaterial()) {
+        if (material->GetMaterialVarFlag(MATERIAL_VAR_DECAL)) {
+            return true;
+        }
+
+        // Explicit $decal material parameter.
         bool found = false;
         IMaterialVar* decalVar = material->FindVar("$decal", &found, false);
         if (found && decalVar && decalVar->GetIntValue() == 1) {
@@ -381,15 +439,25 @@ bool IsIntrinsicDecalMaterial(
     }
 
     // Method 2: Decal/DecalModulate shader, including DX-level suffixes.
+    // Always inspect the authored VMT too: a non-empty runtime fallback shader
+    // must not prevent detection of the original decal shader.
+    const auto isDecalShader = [](const std::string& shaderName) {
+        return shaderName.find("decalmodulate") == 0 ||
+            (shaderName.find("decal") == 0 &&
+             shaderName.find("modulate") == std::string::npos);
+    };
+
     std::string shaderName = GetShaderName(material);
     std::transform(
         shaderName.begin(), shaderName.end(), shaderName.begin(), SafeToLower);
-    if (shaderName.empty()) {
-        shaderName = ReadVMTShaderName(materialName);
+    if (isDecalShader(shaderName)) {
+        return true;
     }
-    if (shaderName.find("decalmodulate") == 0 ||
-        (shaderName.find("decal") == 0 &&
-         shaderName.find("modulate") == std::string::npos)) {
+
+    std::string vmtShaderName = ReadVMTShaderName(materialName);
+    std::transform(vmtShaderName.begin(), vmtShaderName.end(),
+        vmtShaderName.begin(), SafeToLower);
+    if (isDecalShader(vmtShaderName) || CheckVMTForDecal(materialName)) {
         return true;
     }
 
@@ -1088,7 +1156,22 @@ void SetWorldTextureNames(const std::vector<std::string>& textureNames) {
     for (const auto& name : textureNames) {
         std::string lower = name;
         std::transform(lower.begin(), lower.end(), lower.begin(), SafeToLower);
-        s_worldTextureNames.insert(lower);
+
+        if (lower.find("materials/") == 0) {
+            lower = lower.substr(10);
+        }
+        if (lower.size() > 4 &&
+            lower.substr(lower.size() - 4) == ".vmt") {
+            lower = lower.substr(0, lower.size() - 4);
+        }
+        if (lower.size() > 7 &&
+            lower.substr(lower.size() - 7) == "_stage1") {
+            lower = lower.substr(0, lower.size() - 7);
+        }
+
+        if (!lower.empty()) {
+            s_worldTextureNames.insert(lower);
+        }
     }
     
     if (s_config.debugOutput) {

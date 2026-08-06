@@ -145,6 +145,7 @@ struct MaterialPBRProperties {
     
     // Glass material detection
     bool isGlass;                   // Material detected as glass (translucent + glass surfaceprop or Refract shader)
+    bool isWater;                   // Material uses a Source water shader and must remain solid-volume
     bool isRefractShader;           // Material uses Refract shader (important: baseTexture may be set to normalmap by fixer)
     std::string shaderName;         // The shader name (VertexLitGeneric, LightmappedGeneric, Refract, etc.)
     std::string surfaceProp;        // $surfaceprop value
@@ -330,7 +331,9 @@ public:
         float metallicConstant;
         float heightScale;            // Displacement scale (from $parallaxmapscale, default 0.025)
         bool isGlass;               // Whether this material should use the translucent glass shader
+        bool thinWalled;            // Default for translucent replacement; disabled for water
         bool isRefractShader;       // Whether this is a Refract shader (don't use baseTexture for transmittance)
+        bool enableTransmissionMask; // Use the preserved texture's RGBA for visibility-ray attenuation
         float ior;                  // Index of Refraction (for glass, default 1.52 for window/crown glass)
         float emissionIntensity;    // Emission intensity (from $emissionscale)
     };
@@ -529,7 +532,15 @@ private:
     // on mismatch the stale materials.usda is discarded and fully regenerated.
     // v2: water $normalmap fix + per-frame hash registration
     // v4: animated normal sprite sheets removed (v3) - regenerate without them
-    static constexpr int OUTPUT_GENERATION_VERSION = 5;
+    // Version 6 adds transmittance DDS maps for glass materials.
+    // Version 7 preloads glass textures so their highest-resolution mips are
+    // resident even though translucent textures lack sampler feedback.
+    // Version 8 preloads opaque normal maps that have no replacement albedo
+    // from which to inherit a sampler-feedback stamp.
+    // Version 9 adds opt-in texture-masked shadows for glass with meaningful alpha.
+    // Version 10 makes generated translucent materials thin-walled except for water.
+    // Version 11 removes transmittance textures accidentally generated for water.
+    static constexpr int OUTPUT_GENERATION_VERSION = 11;
     std::unordered_set<std::string> m_ineligibleCache;
     bool m_ineligibleCacheDirty = false;
     

@@ -14,6 +14,7 @@
 #ifdef _WIN64
 
 #include "material_pipeline.h"
+#include "material_filter.h"
 #include "../d3d9_texture_tracker.h"
 #include "to_pbr/to_pbr.h"
 #include "hash_collision_fixer/hash_collision_fixer.h"
@@ -120,7 +121,8 @@ void Pipeline::Shutdown() {
 void Pipeline::OnNewMaterialDetected(const std::string& materialName, uint64_t textureHash, IDirect3DTexture9* pTexture) {
     Pipeline& pipeline = Instance();
     
-    if (!pipeline.IsInitialized() || !pTexture) {
+    if (!pipeline.IsInitialized() || !pTexture ||
+        MaterialFilter::IsNonSceneMaterialName(materialName)) {
         return;
     }
 
@@ -341,6 +343,10 @@ void Pipeline::ProcessMaterialStages(const std::string& materialName,
                                       IMaterial* material, 
                                       IDirect3DTexture9* texture,
                                       bool processAllTrackedVariants) {
+    if (MaterialFilter::IsNonSceneMaterialName(materialName)) {
+        return;
+    }
+
     // -------------------------------------------------------------------------
     // STAGE 1: ShaderFixes
     // -------------------------------------------------------------------------
@@ -410,6 +416,10 @@ void Pipeline::ProcessMaterialStages(const std::string& materialName,
 bool Pipeline::ProcessMaterial(const std::string& materialName) {
     if (!m_initialized) {
         Warning("[MaterialPipeline] Not initialized\n");
+        return false;
+    }
+
+    if (MaterialFilter::IsNonSceneMaterialName(materialName)) {
         return false;
     }
     
@@ -614,7 +624,10 @@ void Pipeline::WorkerThreadFunc() {
 void Pipeline::ProcessMaterialOnWorker(const PendingMaterial& pending) {
     extern IMaterialSystem* materials;
     
-    if (!m_config.autoProcessing || !pending.texture || !m_remix) return;
+    if (!m_config.autoProcessing || !pending.texture || !m_remix ||
+        MaterialFilter::IsNonSceneMaterialName(pending.name)) {
+        return;
+    }
 
     // Revalidate the queued observation before applying any category. The hash
     // and pointer were captured together in SetTexture; if Remix no longer
@@ -902,6 +915,10 @@ void Pipeline::SetOnMaterialProcessed(MaterialProcessedCallback callback) {
 }
 
 void Pipeline::OnMaterialDetected(const std::string& materialName, uint64_t textureHash) {
+    if (MaterialFilter::IsNonSceneMaterialName(materialName)) {
+        return;
+    }
+
     // Fire callback
     if (m_onDetected) {
         m_onDetected(materialName, textureHash);
@@ -929,6 +946,10 @@ int Pipeline::ProcessAllMaterialsThroughPipeline() {
     extern IMaterialSystem* materials;
     
     for (const auto& materialName : materialList) {
+        if (MaterialFilter::IsNonSceneMaterialName(materialName)) {
+            continue;
+        }
+
         // Get the IMaterial for stages that need it
         IMaterial* material = nullptr;
         if (materials) {

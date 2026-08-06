@@ -8,12 +8,15 @@
 #include <materialsystem/imaterialvar.h>
 #include <materialsystem/itexture.h>
 #include <filesystem.h>
+#include <texture_group_names.h>
 #include <algorithm>
 #include <atomic>
 #include <functional>
 #include <cctype>
+#include <cstring>
 #include <remix/remix.h>
 #include "material_pipeline/material_pipeline.h"
+#include "material_pipeline/material_filter.h"
 #include "material_pipeline/auto_categorisation/auto_categorisation.h"
 
 // Global material system pointer (from module.cpp)
@@ -34,6 +37,7 @@ struct ThreadMaterialState {
     std::string materialName;
     IMaterial* material = nullptr;
     bool bindPending = false;
+    bool pipelineEligible = false;
 
     // D3D9 stage at which this material's $detail texture is expected:
     //   0 = none, 1 = Stage 1, 2 = Stage 2, 3 = separate Stage 0/1 overlay.
@@ -70,10 +74,6 @@ static std::string NormalizeTextureName(const char* name) {
             return c == '\\' ? '/' : static_cast<char>(std::tolower(c));
         });
     return normalized;
-}
-
-static bool IsInternalEngineMaterial(const std::string& normalizedName) {
-    return normalizedName.rfind("engine/", 0) == 0;
 }
 
 static bool IsMaterialPageAlias(
@@ -391,6 +391,7 @@ void D3D9TextureTracker::SetCurrentMaterial(IMaterial* pMaterial) {
     state.stage0Texture = nullptr;
     state.detailStage = 0;
     state.hasBaseTexture2 = false;
+    state.pipelineEligible = false;
     
     if (pMaterial) {
         const char* name = pMaterial->GetName();
@@ -403,6 +404,14 @@ void D3D9TextureTracker::SetCurrentMaterial(IMaterial* pMaterial) {
         ITexture* baseTexture2 = nullptr;
         state.hasBaseTexture2 =
             GetMaterialTexture(pMaterial, "$basetexture2", &baseTexture2);
+
+        const char* textureGroup = pMaterial->GetTextureGroupName();
+        const bool isVGUITextureGroup =
+            textureGroup && std::strcmp(textureGroup, TEXTURE_GROUP_VGUI) == 0;
+        state.pipelineEligible =
+            !isVGUITextureGroup &&
+            !MaterialPipeline::MaterialFilter::IsNonSceneMaterialName(
+                state.materialName);
     } else {
         state.materialName.clear();
     }
@@ -768,13 +777,14 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
         // $basetexture2. For ordinary materials it is a lightmap, bump/detail
         // texture, or another shader input and must never inherit Stage 0's category.
         const bool shouldTrackMaterialTexture =
-            !IsInternalEngineMaterial(drawState.materialName) &&
+            drawState.pipelineEligible &&
             (Stage == 0 || (Stage == 1 && drawState.hasBaseTexture2));
 
         // Remember every Stage 0 pointer, including rejected auxiliary passes.
         // A following Stage 1 bind of the same pointer is the signal used to
         // identify LightmappedGeneric's separate $detail overlay pass.
-        if (Stage == 0 && pTexture && pTexture->GetType() == D3DRTYPE_TEXTURE) {
+        if (drawState.pipelineEligible && Stage == 0 && pTexture &&
+            pTexture->GetType() == D3DRTYPE_TEXTURE) {
             drawState.stage0Texture =
                 static_cast<IDirect3DTexture9*>(pTexture);
         }
@@ -1995,6 +2005,7 @@ void D3D9TextureTracker::SetWorldTextureNames(const std::vector<std::string>& te
         std::lock_guard<std::recursive_mutex> lock(m_mutex);
         
         m_worldTextureNames.clear();
+        m_bspWorldMaterials.clear();
         
         for (const auto& name : textureNames) {
             if (name.empty()) continue;
@@ -2020,6 +2031,11 @@ void D3D9TextureTracker::SetWorldTextureNames(const std::vector<std::string>& te
             
             if (!lowerName.empty()) {
                 m_worldTextureNames.insert(lowerName);
+                // The NikNaks list contains every material owned by the BSP,
+                // including static-prop material slots. Keep the reverse
+                // collision guard in sync with the real-time world list so a
+                // late texture observation cannot strip DECAL_STATIC again.
+                m_bspWorldMaterials.insert(lowerName);
             }
         }
         

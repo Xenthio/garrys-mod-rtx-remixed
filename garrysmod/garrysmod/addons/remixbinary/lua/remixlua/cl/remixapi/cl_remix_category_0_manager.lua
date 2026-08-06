@@ -1685,21 +1685,25 @@ function RemixCategoryManager.SmartMarkWorldTextures()
         MsgC(Color(100, 255, 100), string.format("[RemixCategoryManager] Added %d displacement materials to processing queue\n", addedDispCount))
     end
     
-    -- Process Static Props (models placed in Hammer)
-    -- These should NOT get DECAL_STATIC unless they have $decal parameter
-    local propTextures = {}  -- Track prop materials separately
+    -- Process static props baked into the BSP. These are map-owned static
+    -- geometry just like brush faces, so their material slots belong in the
+    -- persistent DECAL_STATIC world list too. This is important for decal-card
+    -- models that use ordinary translucent VertexLitGeneric materials.
+    local propTextures = {}  -- Track BSP static-prop materials separately
     MsgC(Color(200, 200, 200), "[RemixCategoryManager] Checking static props...\n")
     if bsp.GetStaticProps then
         local ok_props, staticProps = pcall(function() return bsp:GetStaticProps() end)
         if ok_props and staticProps then
             local propCount = 0
             local propMatCount = 0
-            local processedModels = {}
+            local processedModelSkins = {}
             
             for _, prop in pairs(staticProps) do
                 local modelName = prop.PropType
-                if modelName and not processedModels[modelName] then
-                    processedModels[modelName] = true
+                local skin = tonumber(prop.Skin) or 0
+                local modelSkinKey = string.lower(modelName or "") .. "#" .. skin
+                if modelName and not processedModelSkins[modelSkinKey] then
+                    processedModelSkins[modelSkinKey] = true
                     propCount = propCount + 1
                     
                     -- Get materials for this model
@@ -1716,6 +1720,15 @@ function RemixCategoryManager.SmartMarkWorldTextures()
                                 end
                             end
                         end
+                    end
+
+                    -- util.GetModelMaterials always reports skin 0. Resolve the
+                    -- actual skin family used by this BSP static prop so every
+                    -- authored material variant enters the persistent world list.
+                    if RTXModelSkinResolver and
+                       RTXModelSkinResolver.GetMaterialNames then
+                        matNames = RTXModelSkinResolver.GetMaterialNames(
+                            modelName, skin, matNames)
                     end
                     
                     for _, matName in ipairs(matNames) do
@@ -1738,12 +1751,22 @@ function RemixCategoryManager.SmartMarkWorldTextures()
                     end
                 end
             end
-            MsgC(Color(100, 255, 100), string.format("[RemixCategoryManager] Scanned %d unique static prop models, added %d new textures\n", propCount, propMatCount))
+            MsgC(Color(100, 255, 100), string.format("[RemixCategoryManager] Scanned %d unique static prop model/skin variants, added %d new textures\n", propCount, propMatCount))
         else
              MsgC(Color(255, 200, 100), "[RemixCategoryManager] GetStaticProps returned error or nil\n")
         end
     else
         MsgC(Color(255, 200, 100), "[RemixCategoryManager] BSP does not support GetStaticProps\n")
+    end
+
+    -- Send the complete NikNaks-derived list to C++ after brushes,
+    -- displacements, and static props have all been collected. C++ retains
+    -- this list and categorizes materials that do not render until later.
+    if RemixMaterial and RemixMaterial.SetWorldTextureList and #textures > 0 then
+        RemixMaterial.SetWorldTextureList(textures)
+        MsgC(Color(100, 255, 100), string.format(
+            "[RemixCategoryManager] Sent %d BSP-owned materials to C++\n",
+            #textures))
     end
     
     local stats = {
@@ -1855,10 +1878,11 @@ function RemixCategoryManager.SmartMarkWorldTextures()
                         stats.solid = stats.solid + 1
                     end
                 
-                -- Static prop materials - NO DECAL_STATIC unless they have $decal parameter
-                -- These are already handled by emissive/decal checks above
-                -- Leave uncategorized (category = nil) so they render as normal models
+                -- Static props baked into the BSP are map-owned static geometry.
+                -- Categorize them even when the VMT itself has no decal metadata;
+                -- many maps implement paint, posters, and grime as thin prop models.
                 elseif isFromProp then
+                    category = RemixCategoryManager.PRESET.WORLD_GEOMETRY
                     stats.props = stats.props + 1
                 end
                 

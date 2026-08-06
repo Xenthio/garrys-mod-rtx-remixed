@@ -51,6 +51,7 @@ struct ProcessedMaterial {
     float emissionIntensity = 1.0f;
     
     bool isGlass = false;
+    bool enableTransmissionMask = false;
     float ior = 1.5f;
     
     // Albedo color multiplier (for brightening dark metallic textures)

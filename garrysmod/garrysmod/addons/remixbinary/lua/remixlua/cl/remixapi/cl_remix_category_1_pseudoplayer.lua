@@ -310,20 +310,15 @@ end)
 
 -- Console command for manual player categorization
 concommand.Add("rtx_categorize_pseudoplayer", function()
-    -- Clear the D3D9 texture cache to remove old texture variants
-    MsgC(Color(200, 200, 255), "[RemixPseudoplayerCategory] Clearing D3D9 texture cache...\n")
-    RemixMaterial.ClearTextureCache()
-    
+    -- Unique proxy suffixes and force mode already retire stale hashes. A full
+    -- tracker clear here also destroys the freshly parsed BSP world list.
     processedMaterials = {} -- Clear cache to reprocess
     CategorizePseudoplayerMaterials(true) -- Force categorization (will clear old hashes automatically)
 end, nil, "Manually categorize pseudoplayer materials as Player Model textures")
 
 -- Console command for manual weapon categorization
 concommand.Add("rtx_categorize_pseudoweapon", function()
-    -- Clear the D3D9 texture cache to remove old texture variants
-    MsgC(Color(200, 200, 255), "[RemixPseudoplayerCategory] Clearing D3D9 texture cache...\n")
-    RemixMaterial.ClearTextureCache()
-    
+    -- Preserve the BSP/world registry for the same reason as pseudoplayer.
     processedMaterials = {} -- Clear cache to reprocess
     CategorizePseudoweaponMaterials(true) -- Force categorization (will clear old hashes automatically)
 end, nil, "Manually categorize pseudoweapon materials as Player Model textures")
