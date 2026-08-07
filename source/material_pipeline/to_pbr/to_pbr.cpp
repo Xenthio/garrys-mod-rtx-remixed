@@ -1734,6 +1734,8 @@ struct VMTProperties {
     float refractAmount;
     bool hasTranslucent;
     bool translucent;
+    bool hasDecal;
+    bool decal;
     std::string surfaceProp;
     bool hasEnvMap;
     std::string envMap;
@@ -1885,6 +1887,8 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
     outProps.refractAmount = 0.0f;
     outProps.hasTranslucent = false;
     outProps.translucent = false;
+    outProps.hasDecal = false;
+    outProps.decal = false;
     outProps.hasEnvMap = false;
     outProps.hasEnvMapSphere = false;
     outProps.envMapSphere = false;
@@ -2163,6 +2167,31 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
         outProps.hasTranslucent = true;
         std::string valStr = findValue("$translucent");
         outProps.translucent = (valStr == "1" || valStr == "true");
+    }
+
+    // Explicit decals use translucency for ordinary alpha blending, not for
+    // optical transmission. Preserve this distinction for glass detection.
+    std::istringstream decalLines(content);
+    std::string decalLine;
+    while (std::getline(decalLines, decalLine)) {
+        const size_t commentPos = decalLine.find("//");
+        if (commentPos != std::string::npos) {
+            decalLine.resize(commentPos);
+        }
+
+        std::transform(decalLine.begin(), decalLine.end(), decalLine.begin(),
+            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        std::replace(decalLine.begin(), decalLine.end(), '"', ' ');
+        std::replace(decalLine.begin(), decalLine.end(), '\'', ' ');
+
+        std::istringstream tokens(decalLine);
+        std::string key;
+        std::string value;
+        if (tokens >> key >> value && key == "$decal") {
+            outProps.hasDecal = true;
+            outProps.decal = (value == "1" || value == "true");
+            break;
+        }
     }
     
     // Check for $surfaceprop
@@ -3692,7 +3721,8 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     // Glass detection: Material is considered glass if:
     // 1. Shader is "Refract" (always glass), OR
     // 2. VMT has $refractamount (indicates Refract shader even if FindVar says otherwise), OR
-    // 3. $surfaceprop = "glass" AND $translucent = 1 (surfaceprop alone is for physics, needs translucent)
+    // 3. $surfaceprop = "glass" AND $translucent = 1, unless the material is
+    //    an explicit Source decal (whose translucency is ordinary alpha blending)
     // NOTE: $surfaceprop "glass" alone is NOT enough - materials like nukwindowa have it for physics sounds
     //       but are not meant to be transparent. They need $translucent=1 to actually be glass.
     {
@@ -3718,6 +3748,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
         // Check VMT shader name and $refractamount
         bool vmtIsRefract = false;
         bool vmtHasRefractAmount = false;
+        bool isExplicitDecal = false;
         if (hasVMTParsed) {
             if (!vmtParsed.shaderName.empty()) {
                 std::string vmtShaderLower = vmtParsed.shaderName;
@@ -3725,11 +3756,26 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
                 vmtIsRefract = (vmtShaderLower == "refract");
             }
             vmtHasRefractAmount = vmtParsed.hasRefractAmount;
+            isExplicitDecal = vmtParsed.hasDecal && vmtParsed.decal;
             
             // Get $refracttinttexture if present
             if (vmtParsed.hasRefractTintTexture && !vmtParsed.refractTintTexture.empty()) {
                 outProps.refractTintTexturePath = vmtParsed.refractTintTexture;
             }
+        }
+
+        // Retain runtime fallbacks for materials whose VMT could not be read
+        // directly (for example, some mounted or dynamically-created content).
+        if (!isExplicitDecal &&
+            pMaterial->GetMaterialVarFlag(MATERIAL_VAR_DECAL)) {
+            isExplicitDecal = true;
+        }
+        if (!isExplicitDecal) {
+            bool foundDecal = false;
+            IMaterialVar* decalVar =
+                pMaterial->FindVar("$decal", &foundDecal, false);
+            isExplicitDecal =
+                foundDecal && decalVar && decalVar->GetIntValue() == 1;
         }
         
         // Track if this is a Refract shader (important for transmittance texture handling)
@@ -3744,7 +3790,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
             outProps.isGlass = true;  // Refract shader is always glass
         } else if (vmtHasRefractAmount) {
             outProps.isGlass = true;  // Has $refractamount means it's a refractive material
-        } else if (isSurfaceGlass && outProps.isTranslucent) {
+        } else if (isSurfaceGlass && outProps.isTranslucent && !isExplicitDecal) {
             // surfaceprop=glass ONLY triggers glass shader if ALSO translucent
             // Materials like nukwindowa have $surfaceprop "glass" but no $translucent
             // They're just textures with glass surface properties for physics/sounds
@@ -3757,14 +3803,16 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
         
         if (m_debugOutput) {
             if (outProps.isGlass) {
-                Msg("[MaterialPipeline::ToPBR] %s: DETECTED AS GLASS (shader=%s, vmtShader=%s, vmtRefract=%d, translucent=%d, surfaceprop=%s, hasEnvMap=%d)\n",
+                Msg("[MaterialPipeline::ToPBR] %s: DETECTED AS GLASS (shader=%s, vmtShader=%s, vmtRefract=%d, translucent=%d, decal=%d, surfaceprop=%s, hasEnvMap=%d)\n",
                     materialName.c_str(), outProps.shaderName.c_str(), 
                     hasVMTParsed ? vmtParsed.shaderName.c_str() : "N/A",
-                    vmtHasRefractAmount, outProps.isTranslucent, outProps.surfaceProp.c_str(), outProps.hasEnvMap);
+                    vmtHasRefractAmount, outProps.isTranslucent, isExplicitDecal,
+                    outProps.surfaceProp.c_str(), outProps.hasEnvMap);
             } else if (isSurfaceGlass || isRefractShader || vmtIsRefract || vmtHasRefractAmount) {
-                // This shouldn't happen, but log it for debugging
-                Msg("[MaterialPipeline::ToPBR] %s: GLASS DETECTION FAILED - shader=%s, isRefract=%d, vmtIsRefract=%d, vmtRefract=%d, isSurfaceGlass=%d, translucent=%d, hasEnvMap=%d\n",
-                    materialName.c_str(), outProps.shaderName.c_str(), isRefractShader, vmtIsRefract, vmtHasRefractAmount, isSurfaceGlass, outProps.isTranslucent, outProps.hasEnvMap);
+                Msg("[MaterialPipeline::ToPBR] %s: GLASS CANDIDATE REJECTED - shader=%s, isRefract=%d, vmtIsRefract=%d, vmtRefract=%d, isSurfaceGlass=%d, translucent=%d, decal=%d, hasEnvMap=%d\n",
+                    materialName.c_str(), outProps.shaderName.c_str(), isRefractShader,
+                    vmtIsRefract, vmtHasRefractAmount, isSurfaceGlass,
+                    outProps.isTranslucent, isExplicitDecal, outProps.hasEnvMap);
             }
         }
     }

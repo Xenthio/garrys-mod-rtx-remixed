@@ -544,7 +544,9 @@ private:
     // Version 10 makes generated translucent materials thin-walled except for water.
     // Version 12 gives water the curated constant volume-transmittance
     // parameters used by base_mod (version 11 removed its texture input).
-    static constexpr int OUTPUT_GENERATION_VERSION = 12;
+    // Version 13 excludes explicit alpha-blended decals from the surfaceprop
+    // glass heuristic and removes their stale translucent overrides.
+    static constexpr int OUTPUT_GENERATION_VERSION = 13;
     std::unordered_set<std::string> m_ineligibleCache;
     bool m_ineligibleCacheDirty = false;
     
