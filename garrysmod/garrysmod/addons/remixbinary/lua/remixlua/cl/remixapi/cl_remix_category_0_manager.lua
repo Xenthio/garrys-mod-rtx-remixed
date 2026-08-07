@@ -23,7 +23,7 @@ CreateClientConVar("rtx_auto_categorize_world", "1", true, false, "Auto-categori
 CreateClientConVar("rtx_auto_categorize_particles", "1", true, false, "Auto-categorize particle effects (1 = enabled, 0 = disabled)")
 CreateClientConVar("rtx_auto_categorize_decals", "1", true, false, "Auto-categorize overlay decals with $decal parameter (1 = enabled, 0 = disabled)")
 CreateClientConVar("rtx_auto_categorize_emissive", "1", true, false, "Auto-categorize legacy emissive materials (1 = enabled, 0 = disabled)")
-CreateClientConVar("rtx_require_emissive_mask", "1", true, false, "Require $selfillummask or alpha channel for emissive materials (1 = strict, 0 = allow any $selfillum)")
+CreateClientConVar("rtx_require_emissive_mask", "1", true, false, "Require an explicit or Source-implicit texture mask for emissive materials (1 = strict, 0 = allow any $selfillum)")
 CreateClientConVar("rtx_debug_categorization", "0", true, false, "Show debug messages for auto-categorization (1 = enabled, 0 = disabled)")
 
 -- Cache ConVar references at module level to avoid repeated GetConVar calls
@@ -374,13 +374,21 @@ function RemixCategoryManager.IsMaterialEmissive(materialName)
     -- If $selfillum is found on any other shader, check if mask is required
     if hasSelfillum then
         if requireMask then
-            -- Strict mode: require $selfillummask or alpha rendering mode
+            -- Source's $selfillum uses $basetexture alpha as its implicit mask;
+            -- it does not require $translucent or $alphatest. Accept a valid
+            -- base texture here so ordinary VertexLitGeneric self-illumination
+            -- (such as Portal's door indicator) survives strict mode.
             if hasMask then
                 return true
             end
+
+            local baseTexture = mat:GetTexture("$basetexture")
+            if baseTexture and not baseTexture:IsError() then
+                return true
+            end
             
-            -- Check if material has alpha rendering enabled
-            -- ($translucent or $alphatest indicates alpha channel is used for masking)
+            -- Alpha rendering flags remain a fallback for dynamically-created
+            -- materials whose base texture is not exposed through GetTexture.
             local translucent = mat:GetInt("$translucent")
             local alphatest = mat:GetInt("$alphatest")
             if (translucent and translucent == 1) or (alphatest and alphatest == 1) then
@@ -2230,15 +2238,24 @@ concommand.Add("rtx_check_emissive", function(ply, cmd, args)
         else
             MsgC(Color(255, 200, 100), "  - $selfillummask: (none) ⚠\n")
         end
+
+        local baseTexture = mat:GetTexture("$basetexture")
+        if baseTexture and not baseTexture:IsError() then
+            MsgC(Color(100, 255, 100), string.format(
+                "  - Implicit $selfillum mask: %s alpha ✓\n",
+                baseTexture:GetName()))
+        else
+            MsgC(Color(255, 200, 100), "  - Implicit $selfillum mask: no valid $basetexture ⚠\n")
+        end
         
-        -- Check for alpha channel indicators
+        -- Check for alpha-rendering fallback indicators
         local translucent = mat:GetInt("$translucent")
         local alphatest = mat:GetInt("$alphatest")
         if (translucent and translucent == 1) or (alphatest and alphatest == 1) then
-            MsgC(Color(100, 255, 100), string.format("  - Alpha masking: $translucent=%s $alphatest=%s ✓\n", 
+            MsgC(Color(100, 255, 100), string.format("  - Alpha rendering fallback: $translucent=%s $alphatest=%s ✓\n",
                 tostring(translucent), tostring(alphatest)))
         else
-            MsgC(Color(255, 200, 100), string.format("  - Alpha masking: $translucent=%s $alphatest=%s ⚠\n", 
+            MsgC(Color(200, 200, 200), string.format("  - Alpha rendering fallback: $translucent=%s $alphatest=%s\n",
                 tostring(translucent or 0), tostring(alphatest or 0)))
         end
         

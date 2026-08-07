@@ -768,8 +768,10 @@ uint32_t DetectCategory(const std::string& materialName, IMaterial* material) {
             s_forceAlbedoEmissiveMaterials.insert(materialName);
         }
         
-        // Method 1: Check IMaterial::FindVar for $selfillum
-        if (!isDecal && !isEmissive && material) {
+        // Method 1: Check authored material parameters. DECAL_STATIC is
+        // orthogonal to emission: static props and real decals may use
+        // $selfillum with the base texture alpha as their emission mask.
+        if (!isEmissive && material) {
             bool found = false;
             IMaterialVar* pVar = material->FindVar("$selfillum", &found, false);
             if (found && pVar && pVar->GetIntValue() == 1) {
@@ -789,14 +791,16 @@ uint32_t DetectCategory(const std::string& materialName, IMaterial* material) {
             }
         }
         
-        // Method 3: Read VMT file directly (fallback when material pointer is unavailable)
-        if (!isDecal && !isEmissive) {
+        // Method 3: Read VMT file directly (fallback when material pointer is
+        // unavailable or a DX fallback shader hides the authored parameter).
+        if (!isEmissive) {
             if (CheckVMTForSelfillum(materialName, s_config.debugOutput)) {
                 isEmissive = true;
             }
         }
         
-        // Method 4: Keyword-based detection
+        // Method 4: Keyword-based detection. Unlike explicit shader
+        // parameters, this weaker heuristic stays disabled for decals.
         if (!isDecal && !isEmissive) {
             bool hasOnSuffix = (lowerName.find("_on") != std::string::npos);
             bool isKnownEmissivePack = (lowerName.find("pkvoidplaces") != std::string::npos ||
