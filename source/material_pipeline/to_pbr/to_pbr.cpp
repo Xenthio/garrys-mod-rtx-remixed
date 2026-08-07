@@ -4089,7 +4089,7 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, con
     }
     
     // Track material info for USDA generation
-    ProcessedMaterialInfo matInfo;
+    ProcessedMaterialInfo matInfo{};
     matInfo.textureHash = textureHash;
     matInfo.roughnessConstant = props.roughness;
     matInfo.metallicConstant = props.metallic;
@@ -4097,7 +4097,14 @@ bool TextureProcessor::CreatePBRMaterial(const MaterialPBRProperties& props, con
     matInfo.isGlass = props.isGlass;
     matInfo.thinWalled = props.isGlass && !props.isWater;
     matInfo.isRefractShader = props.isRefractShader;
-    matInfo.ior = props.isGlass ? 1.52f : 1.0f;  // Glass IOR: 1.52 is typical for window/crown glass
+    matInfo.hasVolumeTransmittance = props.isWater;
+    matInfo.transmittanceColor[0] = 0.3f;
+    matInfo.transmittanceColor[1] = 0.65f;
+    matInfo.transmittanceColor[2] = 0.86f;
+    matInfo.transmittanceMeasurementDistance = 800.0f;
+    // Match the hand-authored base_mod water replacements. Glass uses the
+    // crown/window-glass IOR while water uses its physical IOR.
+    matInfo.ior = props.isWater ? 1.33f : (props.isGlass ? 1.52f : 1.0f);
     matInfo.emissionIntensity = props.hasEmissionScale ? props.emissionScale : 1.0f;
     
     // Create processing context for modular handlers

@@ -189,6 +189,14 @@ void WriteGlassMaterial(std::ostream& stream,
     // Glass-specific properties
     stream << "                float inputs:ior_constant = " << info.ior << "\n";
     stream << "                bool inputs:thin_walled = " << (info.thinWalled ? 1 : 0) << "\n";
+    if (info.hasVolumeTransmittance) {
+        stream << "                color3f inputs:transmittance_color = ("
+               << info.transmittanceColor[0] << ", "
+               << info.transmittanceColor[1] << ", "
+               << info.transmittanceColor[2] << ")\n";
+        stream << "                float inputs:transmittance_measurement_distance = "
+               << info.transmittanceMeasurementDistance << "\n";
+    }
     // Translucent replacement textures do not participate in Remix's sampler
     // feedback path. Force their full mip chain to be resident instead of
     // leaving a newly-loaded glass texture at its single smallest mip.

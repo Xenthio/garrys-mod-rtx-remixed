@@ -334,6 +334,9 @@ public:
         bool thinWalled;            // Default for translucent replacement; disabled for water
         bool isRefractShader;       // Whether this is a Refract shader (don't use baseTexture for transmittance)
         bool enableTransmissionMask; // Use the preserved texture's RGBA for visibility-ray attenuation
+        bool hasVolumeTransmittance; // Emit constant volume absorption parameters (used by water)
+        float transmittanceColor[3]; // Expected RGB transmission after the measurement distance
+        float transmittanceMeasurementDistance;
         float ior;                  // Index of Refraction (for glass, default 1.52 for window/crown glass)
         float emissionIntensity;    // Emission intensity (from $emissionscale)
     };
@@ -539,8 +542,9 @@ private:
     // from which to inherit a sampler-feedback stamp.
     // Version 9 adds opt-in texture-masked shadows for glass with meaningful alpha.
     // Version 10 makes generated translucent materials thin-walled except for water.
-    // Version 11 removes transmittance textures accidentally generated for water.
-    static constexpr int OUTPUT_GENERATION_VERSION = 11;
+    // Version 12 gives water the curated constant volume-transmittance
+    // parameters used by base_mod (version 11 removed its texture input).
+    static constexpr int OUTPUT_GENERATION_VERSION = 12;
     std::unordered_set<std::string> m_ineligibleCache;
     bool m_ineligibleCacheDirty = false;
     
