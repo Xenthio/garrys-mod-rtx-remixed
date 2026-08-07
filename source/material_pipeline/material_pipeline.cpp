@@ -406,6 +406,22 @@ void Pipeline::ProcessMaterialStages(const std::string& materialName,
         // Normal hook-driven processing is deliberately scoped to the exact,
         // verified Stage 0 pointer that produced the detection event.
         uint32_t categoryFlags = AutoCategorisation::DetectAndApply(materialName, material, texture);
+
+        // Animated water is the exception to exact-pointer-only application.
+        // The BSP smart-mark may already have assigned DECAL_STATIC to every
+        // cached runtime variant. Once shader detection proves this material is
+        // water, repair all of its verified variants together so no frame can
+        // alternate between the decal and animated-water paths.
+        if (categoryFlags & AutoCategorisation::CategoryFlags::ANIMATED_WATER) {
+            auto textureVariants =
+                D3D9TextureTracker::Instance().GetTextureVariantsForMaterial(
+                    materialName.c_str());
+            if (textureVariants.size() > 1) {
+                categoryFlags = AutoCategorisation::DetectAndApplyAllVariants(
+                    materialName, material, &textureVariants.Get());
+            }
+        }
+
         if (categoryFlags != 0 && m_config.debugOutput) {
             Msg("[MaterialPipeline] Stage 3 (AutoCategorisation): %s - flags 0x%X\n", 
                 materialName.c_str(), categoryFlags);

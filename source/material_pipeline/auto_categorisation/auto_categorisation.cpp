@@ -739,7 +739,12 @@ uint32_t DetectCategory(const std::string& materialName, IMaterial* material) {
     }
     
     // === PRIORITY 2: DECALS ===
-    if (s_config.decalEnabled && !(flags & CategoryFlags::PARTICLE)) {
+    // Water is BSP world geometry, but DECAL_STATIC changes how Remix treats
+    // the surface and breaks its animated translucent frames. The BSP list is
+    // intentionally broad, so preserve the shader-derived water category here
+    // instead of allowing the world-texture fallback to overwrite it.
+    if (s_config.decalEnabled &&
+        !(flags & (CategoryFlags::PARTICLE | CategoryFlags::ANIMATED_WATER))) {
         bool isDecal = IsIntrinsicDecalMaterial(materialName, material);
         
         // BSP world surfaces are the other DECAL_STATIC source.
@@ -1003,11 +1008,13 @@ void ApplyToHash(uint64_t hash, uint32_t flags, const std::string& materialName)
             }
         }
         
-        // When ANIMATED_WATER arrives after the smart-mark already tagged this
-        // hash as a world decal, undo the decal registration.
-        if ((flags & CategoryFlags::ANIMATED_WATER) && (existingAny & CategoryFlags::DECAL_STATIC)) {
+        // Water must never remain in the decal list. Remove unconditionally:
+        // hashes restored from user.conf are not represented in either local
+        // category map, so checking existingAny would miss stale persisted
+        // DECAL_STATIC entries from an earlier run.
+        if (flags & CategoryFlags::ANIMATED_WATER) {
             s_remix->RemoveTextureHash("rtx.decalTextures", hashStr.c_str());
-            if (s_config.debugOutput) {
+            if (s_config.debugOutput && (existingAny & CategoryFlags::DECAL_STATIC)) {
                 Msg("[AutoCategorisation] Removing DECAL_STATIC for hash 0x%llX (%s): water surface\n",
                     hash, materialName.c_str());
             }
