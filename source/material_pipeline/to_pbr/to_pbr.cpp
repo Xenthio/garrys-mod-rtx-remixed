@@ -1751,6 +1751,7 @@ struct VMTProperties {
     bool hasBaseTexture;
     std::string bumpMap;
     bool hasBumpMap;
+    std::string bumpMapSourceBlock;
     std::string normalMap;
     bool hasNormalMap;
     std::string envMapMask;
@@ -1899,6 +1900,7 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
     // Extended properties
     outProps.hasBaseTexture = false;
     outProps.hasBumpMap = false;
+    outProps.bumpMapSourceBlock.clear();
     outProps.hasNormalMap = false;
     outProps.hasEnvMapMask = false;
     outProps.hasPhongExponentTexture = false;
@@ -2125,6 +2127,150 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
         
         return content.substr(valueStart, pos - valueStart);
     };
+
+    // Extract one named shader fallback block without flattening its values
+    // into sibling blocks. Source VMTs commonly provide different bump maps
+    // for HDR DX9, DX9, and DX8; a global first-match search only follows file
+    // order and can therefore select the wrong rendering tier.
+    auto extractNamedBlock = [&contentLower, &content](
+        const std::string& blockName) -> std::string {
+        std::string blockNameLower = blockName;
+        std::transform(blockNameLower.begin(), blockNameLower.end(),
+            blockNameLower.begin(),
+            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+        size_t namePos = contentLower.find(blockNameLower);
+        if (namePos == std::string::npos) return "";
+
+        size_t openBrace = content.find('{', namePos + blockName.size());
+        if (openBrace == std::string::npos) return "";
+
+        int braceDepth = 1;
+        for (size_t pos = openBrace + 1; pos < content.size(); ++pos) {
+            if (content[pos] == '{') {
+                ++braceDepth;
+            } else if (content[pos] == '}') {
+                --braceDepth;
+                if (braceDepth == 0) {
+                    return content.substr(openBrace + 1, pos - openBrace - 1);
+                }
+            }
+        }
+        return "";
+    };
+
+    auto findValueInBlock = [](const std::string& block,
+                               const std::string& key) -> std::string {
+        if (block.empty()) return "";
+
+        std::string blockLower = block;
+        std::string keyLower = key;
+        std::transform(blockLower.begin(), blockLower.end(), blockLower.begin(),
+            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        std::transform(keyLower.begin(), keyLower.end(), keyLower.begin(),
+            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+        size_t searchPos = 0;
+        while ((searchPos = blockLower.find(keyLower, searchPos)) !=
+               std::string::npos) {
+            const size_t valuePos = searchPos + keyLower.size();
+            const bool hasKeyBoundary =
+                valuePos >= block.size() ||
+                std::isspace(static_cast<unsigned char>(block[valuePos])) ||
+                block[valuePos] == '"' || block[valuePos] == '\'';
+            if (!hasKeyBoundary) {
+                searchPos = valuePos;
+                continue;
+            }
+
+            size_t pos = valuePos;
+            while (pos < block.size() &&
+                   (std::isspace(static_cast<unsigned char>(block[pos])) ||
+                    block[pos] == '"' || block[pos] == '\'')) {
+                ++pos;
+            }
+
+            const size_t start = pos;
+            while (pos < block.size() &&
+                   !std::isspace(static_cast<unsigned char>(block[pos])) &&
+                   block[pos] != '"' && block[pos] != '\'') {
+                ++pos;
+            }
+            return block.substr(start, pos - start);
+        }
+        return "";
+    };
+
+    // Find a property authored directly on the root shader, ignoring nested
+    // rendering-tier fallback blocks. This is used as inheritance for a
+    // selected tier: values in unrelated lower tiers must not leak into it.
+    auto findRootValue = [&contentLower, &content](
+        const std::string& keyLower) -> std::string {
+        const size_t rootOpenBrace = content.find('{');
+        if (rootOpenBrace == std::string::npos) return "";
+
+        int braceDepth = 1;
+        char quote = '\0';
+        for (size_t pos = rootOpenBrace + 1; pos < content.size(); ++pos) {
+            const char c = content[pos];
+
+            if (quote != '\0') {
+                if (c == quote) quote = '\0';
+                continue;
+            }
+            if (c == '"' || c == '\'') {
+                // VMT keys are commonly quoted. Leave the opening quote out
+                // of quote state when it introduces the property we seek so
+                // the key comparison below can consume it on the next byte.
+                if (braceDepth == 1 &&
+                    contentLower.compare(pos + 1, keyLower.size(), keyLower) == 0) {
+                    continue;
+                }
+                quote = c;
+                continue;
+            }
+            if (c == '{') {
+                ++braceDepth;
+                continue;
+            }
+            if (c == '}') {
+                --braceDepth;
+                if (braceDepth == 0) break;
+                continue;
+            }
+            if (braceDepth != 1 ||
+                contentLower.compare(pos, keyLower.size(), keyLower) != 0) {
+                continue;
+            }
+
+            const bool hasLeadingBoundary =
+                pos == 0 ||
+                std::isspace(static_cast<unsigned char>(content[pos - 1])) ||
+                content[pos - 1] == '"' || content[pos - 1] == '\'';
+            const size_t valuePos = pos + keyLower.size();
+            const bool hasTrailingBoundary =
+                valuePos >= content.size() ||
+                std::isspace(static_cast<unsigned char>(content[valuePos])) ||
+                content[valuePos] == '"' || content[valuePos] == '\'';
+            if (!hasLeadingBoundary || !hasTrailingBoundary) continue;
+
+            size_t valueStart = valuePos;
+            while (valueStart < content.size() &&
+                   (std::isspace(static_cast<unsigned char>(content[valueStart])) ||
+                    content[valueStart] == '"' || content[valueStart] == '\'')) {
+                ++valueStart;
+            }
+
+            size_t valueEnd = valueStart;
+            while (valueEnd < content.size() &&
+                   !std::isspace(static_cast<unsigned char>(content[valueEnd])) &&
+                   content[valueEnd] != '"' && content[valueEnd] != '\'') {
+                ++valueEnd;
+            }
+            return content.substr(valueStart, valueEnd - valueStart);
+        }
+        return "";
+    };
     
     // vbsp cubemap-patched brush materials (e.g. "maps/<map>/<material>_X_Y_Z")
     // use the "patch" shader wrapping the real VMT via "include". Parse the
@@ -2146,6 +2292,35 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
             return ParseVMTFile(fileSystem, includePath, outProps, debugOutput, depth + 1);
         }
     }
+
+    // Resolve the highest-quality authored bump-map tier explicitly. Keep the
+    // selected block around so format flags such as $ssbump come from the same
+    // tier instead of leaking in from a different fallback block.
+    std::string preferredBumpMap;
+    std::string preferredBumpBlock;
+    const char* bumpTierSuffixes[] = { "_HDR_DX9", "_DX9", "_DX8" };
+    for (const char* suffix : bumpTierSuffixes) {
+        const std::string blockName = outProps.shaderName + suffix;
+        const std::string block = extractNamedBlock(blockName);
+        const std::string bumpMap = findValueInBlock(block, "$bumpmap");
+        if (!bumpMap.empty()) {
+            preferredBumpMap = bumpMap;
+            preferredBumpBlock = block;
+            outProps.bumpMapSourceBlock = blockName;
+            break;
+        }
+    }
+
+    // A selected conditional block inherits root properties, but never values
+    // from sibling fallback blocks. Preserve the legacy global lookup for VMTs
+    // where no conditional bump tier was selected.
+    auto findRenderTierValue = [&](const std::string& keyLower) -> std::string {
+        if (preferredBumpBlock.empty()) return findValue(keyLower);
+
+        std::string value = findValueInBlock(preferredBumpBlock, keyLower);
+        if (!value.empty()) return value;
+        return findRootValue(keyLower);
+    };
     
     // Check for $refractamount
     size_t refractPos = contentLower.find("$refractamount");
@@ -2239,7 +2414,10 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
         outProps.hasBaseTexture = !outProps.baseTexture.empty();
     }
     
-    if (contentLower.find("$bumpmap") != std::string::npos) {
+    if (!preferredBumpMap.empty()) {
+        outProps.bumpMap = preferredBumpMap;
+        outProps.hasBumpMap = true;
+    } else if (contentLower.find("$bumpmap") != std::string::npos) {
         outProps.bumpMap = findValue("$bumpmap");
         outProps.hasBumpMap = !outProps.bumpMap.empty();
     }
@@ -2249,8 +2427,8 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
         outProps.hasNormalMap = !outProps.normalMap.empty();
     }
     
-    if (contentLower.find("$envmapmask") != std::string::npos) {
-        outProps.envMapMask = findValue("$envmapmask");
+    {
+        outProps.envMapMask = findRenderTierValue("$envmapmask");
         outProps.hasEnvMapMask = !outProps.envMapMask.empty();
     }
     
@@ -2290,33 +2468,45 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
     }
     
     // SSBump
-    if (contentLower.find("$ssbump") != std::string::npos) {
+    if (!preferredBumpBlock.empty()) {
+        std::string val = findValueInBlock(preferredBumpBlock, "$ssbump");
+        if (!val.empty()) {
+            outProps.hasSSBump = true;
+            outProps.ssbump = (val == "1" || val == "true") ? 1 : 0;
+        }
+    } else if (contentLower.find("$ssbump") != std::string::npos) {
         std::string val = findValue("$ssbump");
         if (!val.empty()) {
             outProps.hasSSBump = true;
             outProps.ssbump = (val == "1" || val == "true") ? 1 : 0;
         }
     }
+
+    if (debugOutput && !outProps.bumpMapSourceBlock.empty()) {
+        Msg("[MaterialPipeline::ToPBR] %s: selected %s bump map '%s' (ssbump=%d)\n",
+            materialName.c_str(), outProps.bumpMapSourceBlock.c_str(),
+            outProps.bumpMap.c_str(), outProps.ssbump);
+    }
     
     // Mask properties
-    if (contentLower.find("$normalmapalphaenvmapmask") != std::string::npos) {
-        std::string val = findValue("$normalmapalphaenvmapmask");
+    {
+        std::string val = findRenderTierValue("$normalmapalphaenvmapmask");
         if (!val.empty()) {
             outProps.hasNormalMapAlphaEnvMapMask = true;
             outProps.normalMapAlphaEnvMapMask = (val == "1" || val == "true") ? 1 : 0;
         }
     }
     
-    if (contentLower.find("$basemapalphaphongmask") != std::string::npos) {
-        std::string val = findValue("$basemapalphaphongmask");
+    {
+        std::string val = findRenderTierValue("$basemapalphaphongmask");
         if (!val.empty()) {
             outProps.hasBaseMapAlphaPhongMask = true;
             outProps.baseMapAlphaPhongMask = (val == "1" || val == "true") ? 1 : 0;
         }
     }
     
-    if (contentLower.find("$basealphaenvmapmask") != std::string::npos) {
-        std::string val = findValue("$basealphaenvmapmask");
+    {
+        std::string val = findRenderTierValue("$basealphaenvmapmask");
         if (!val.empty()) {
             outProps.hasBaseAlphaEnvMapMask = true;
             outProps.baseAlphaEnvMapMask = (val == "1" || val == "true") ? 1 : 0;

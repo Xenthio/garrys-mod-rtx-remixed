@@ -546,7 +546,24 @@ private:
     // parameters used by base_mod (version 11 removed its texture input).
     // Version 13 excludes explicit alpha-blended decals from the surfaceprop
     // glass heuristic and removes their stale translucent overrides.
-    static constexpr int OUTPUT_GENERATION_VERSION = 13;
+    // Version 14 resolves conditional bump maps by rendering-tier precedence:
+    // HDR DX9, then DX9, then DX8, before the ordinary top-level fallback.
+    // Version 15 keeps roughness-mask properties in that selected tier so a
+    // lower-quality fallback cannot override the HDR/DX9 mask source.
+    // Version 16 strengthens reconstructed SSBump normals and gives them a
+    // versioned output path so stale weaker conversions are not reused.
+    // Version 17 maps SSBump envmap masks to a polished reflection-presence
+    // curve instead of linearly treating reflection intensity as roughness.
+    // Version 18 raises reconstructed SSBump normal strength to 3x and advances
+    // its versioned output path so cached 2x normals cannot be reused.
+    // Version 19 restores the height relief preserved in SSBump alpha instead
+    // of discarding it during directional-weight normalization.
+    // Version 20 returns the directional SSBump component to 1x now that the
+    // alpha height field supplies the intended relief.
+    // Version 21 halves the restored alpha-height contribution from 32x to 16x.
+    // Version 22 reduces the alpha-height contribution to one quarter of v6:
+    // 4x instead of 16x.
+    static constexpr int OUTPUT_GENERATION_VERSION = 22;
     std::unordered_set<std::string> m_ineligibleCache;
     bool m_ineligibleCacheDirty = false;
     

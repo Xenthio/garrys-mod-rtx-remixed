@@ -214,6 +214,7 @@ static bool GenerateRoughnessFromSource(
     bool isPhongExponentTexture,
     bool isInvertedMask,
     bool isPhongMask,
+    bool isSSBumpEnvMapMask,
     float constantPhongExponent,
     const std::string& sourcePath,
     const ProcessingContext& ctx,
@@ -282,6 +283,20 @@ static bool GenerateRoughnessFromSource(
                 Msg("[Source] Pixel %d: alpha=%d, maskStr=%.3f, falloff=%.3f, phongRough=%.3f, finalRough=%.3f (byte=%d)\n",
                     i, sourceValue, maskStrength, falloff, phongRoughness, rough, roughness);
             }
+        } else if (isSSBumpEnvMapMask) {
+            // $normalmapalphaenvmapmask controls cubemap intensity in Source,
+            // not the width of the reflected lobe. A linear inversion makes
+            // partially reflective SSBumps much too diffuse in PBR. Treat the
+            // mask more like reflection presence: retain a polished lobe where
+            // the mask is present, while mask values near zero still become
+            // rough enough to suppress reflections.
+            constexpr float kReflectiveRoughness = 0.25f;
+            constexpr float kMaskFalloffPower = 3.0f;
+            float maskStrength = static_cast<float>(sourceValue) / 255.0f;
+            float falloff = std::pow(1.0f - maskStrength, kMaskFalloffPower);
+            float rough = kReflectiveRoughness +
+                (1.0f - kReflectiveRoughness) * falloff;
+            roughness = static_cast<uint8_t>(rough * 255.0f + 0.5f);
         } else if (isInvertedMask) {
             // $basealphaenvmapmask: white = masked (matte), black = reflective (shiny)
             // So we DON'T invert - high value = high roughness
@@ -313,7 +328,10 @@ static bool GenerateRoughnessFromSource(
         Msg("[Source]   PhongExp=%.1f -> BaseRoughness=%.3f\n", constantPhongExponent, PhongToRoughness(constantPhongExponent));
     }
     
-    std::string path = ctx.generateOutputPath(sourcePath, "_roughness");
+    const char* roughnessSuffix = isSSBumpEnvMapMask
+        ? "_ssbump_roughness_v2"
+        : "_roughness";
+    std::string path = ctx.generateOutputPath(sourcePath, roughnessSuffix);
     
     if (ctx.fileExists(path)) {
         result.roughnessPath = path;
@@ -649,7 +667,10 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
             VTFFileHeader header;
             if (ctx.parseVTFHeader(fileData, header)) {
                 // Check if output file already exists BEFORE expensive decompression
-                std::string path = ctx.generateOutputPath(props.bumpMapPath, "_normal");
+                const char* normalSuffix = props.isSSBump
+                    ? "_ssbump_normal_v7"
+                    : "_normal";
+                std::string path = ctx.generateOutputPath(props.bumpMapPath, normalSuffix);
                 
                 if (ctx.fileExists(path)) {
                     // File already exists - skip all processing
@@ -706,6 +727,7 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
     bool isPhongExponentTexture = false;
     bool isInvertedMask = false;
     bool isPhongMask = false;
+    bool isSSBumpEnvMapMask = false;
     
     // =========================================================================
     // PHONG MATERIAL PATH - prioritize phong-specific properties
@@ -776,12 +798,14 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
         else if (props.normalMapAlphaEnvMapMask && props.hasBumpMap && !props.bumpMapPath.empty()) {
             vtfPath = props.bumpMapPath;
             useAlphaChannel = true;
+            isSSBumpEnvMapMask = props.isSSBump;
             if (ctx.debugOutput) Msg("[Source] Using normal map alpha ($normalmapalphaenvmapmask - non-phong)\n");
         }
         // Priority 9: $envmap + normal map alpha (implicit $normalmapalphaenvmapmask)
         else if ((props.hasEnvMap || props.hasEnvMapTint) && props.hasBumpMap && !props.bumpMapPath.empty()) {
             vtfPath = props.bumpMapPath;
             useAlphaChannel = true;
+            isSSBumpEnvMapMask = props.isSSBump;
             if (ctx.debugOutput) Msg("[Source] Trying normal map alpha (implicit envmap roughness)\n");
         }
         // Priority 10: $envmap + base texture alpha (implicit $basealphaenvmapmask)
@@ -806,7 +830,10 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
             VTFFileHeader header;
             if (ctx.parseVTFHeader(fileData, header)) {
                 // Check if output file already exists BEFORE expensive decompression
-                std::string path = ctx.generateOutputPath(vtfPath, "_roughness");
+                const char* roughnessSuffix = isSSBumpEnvMapMask
+                    ? "_ssbump_roughness_v2"
+                    : "_roughness";
+                std::string path = ctx.generateOutputPath(vtfPath, roughnessSuffix);
                 
                 if (ctx.fileExists(path)) {
                     // File already exists - skip all processing
@@ -822,7 +849,7 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
                     if (ctx.extractPixelData(fileData, header, sourceTex, false)) {
                         hasRoughnessTexture = GenerateRoughnessFromSource(
                             sourceTex, useAlphaChannel, isPhongExponentTexture, isInvertedMask, isPhongMask,
-                            props.phongExponent, vtfPath, ctx, result);
+                            isSSBumpEnvMapMask, props.phongExponent, vtfPath, ctx, result);
                         
                         if (hasRoughnessTexture && ctx.debugOutput) {
                             Msg("[Source] Generated roughness texture from: %s\n", vtfPath.c_str());

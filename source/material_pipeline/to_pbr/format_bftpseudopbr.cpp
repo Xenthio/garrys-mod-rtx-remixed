@@ -602,7 +602,10 @@ ProcessedMaterial ProcessTextures(const MaterialPBRProperties& props,
                     
                     ctx.convertToOctahedral(normalTex);
                     
-                    std::string path = ctx.generateOutputPath(props.bumpMapPath, "_normal");
+                    const char* normalSuffix = props.isSSBump
+                        ? "_ssbump_normal_v7"
+                        : "_normal";
+                    std::string path = ctx.generateOutputPath(props.bumpMapPath, normalSuffix);
                     
                     if (ctx.fileExists(path)) {
                         result.normalPath = path;

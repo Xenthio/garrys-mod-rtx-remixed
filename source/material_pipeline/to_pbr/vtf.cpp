@@ -246,7 +246,15 @@ void ConvertSSBumpToNormal(ConvertedTexture& texture, bool debugOutput) {
     const float basisT2_y = OO_SQRT_3;
     const float basisT2_z = OO_SQRT_3;
     
-    const float normalStrength = 1.5f;
+    // Source's SSBump lighting response has more pronounced relief than the
+    // reconstructed unit normal otherwise produces in Remix. Strengthen only
+    // the tangent-plane components before renormalizing; ordinary normal maps
+    // do not pass through this conversion.
+    const float normalStrength = 2.0f;
+    // Valve's SSBump generator preserves the source height field in alpha.
+    // Reintroduce its gradient here; RGB reconstruction alone recovers only
+    // the directional-lighting ratios and discards much of that relief.
+    const float heightDetailStrength = 0.1f;
     
     for (size_t i = 0; i < pixelCount; i++) {
         size_t srcIdx = i * 4;
@@ -260,10 +268,33 @@ void ConvertSSBumpToNormal(ConvertedTexture& texture, bool debugOutput) {
         float nx = r * basisT0_x + g * basisT0_y + b * basisT0_z;
         float ny = r * basisT1_x + g * basisT1_y + b * basisT1_z;
         float nz = r * basisT2_x + g * basisT2_y + b * basisT2_z;
-        
-        // Boost normal strength
-        nx *= normalStrength;
-        ny *= normalStrength;
+
+        // Match Source's wrapping height-field construction. The central
+        // difference yields the local height slope without baking the height
+        // value itself into the normal.
+        const uint32_t x = static_cast<uint32_t>(i % width);
+        const uint32_t y = static_cast<uint32_t>(i / width);
+        const uint32_t xLeft = (x + width - 1) % width;
+        const uint32_t xRight = (x + 1) % width;
+        const uint32_t yUp = (y + height - 1) % height;
+        const uint32_t yDown = (y + 1) % height;
+        const float heightLeft = texture.pixelData[(y * width + xLeft) * 4 + 3] / 255.0f;
+        const float heightRight = texture.pixelData[(y * width + xRight) * 4 + 3] / 255.0f;
+        const float heightUp = texture.pixelData[(yUp * width + x) * 4 + 3] / 255.0f;
+        const float heightDown = texture.pixelData[(yDown * width + x) * 4 + 3] / 255.0f;
+        const float heightDx = (heightRight - heightLeft) * 0.5f;
+        const float heightDy = (heightDown - heightUp) * 0.5f;
+
+        // Work in tangent-plane slopes so the existing directional boost and
+        // the recovered height detail combine predictably before normalization.
+        if (nz > 0.0001f) {
+            nx = (nx / nz) * normalStrength - heightDx * heightDetailStrength;
+            ny = (ny / nz) * normalStrength - heightDy * heightDetailStrength;
+            nz = 1.0f;
+        } else {
+            nx *= normalStrength;
+            ny *= normalStrength;
+        }
         
         // Renormalize
         float len = sqrtf(nx * nx + ny * ny + nz * nz);
@@ -287,7 +318,8 @@ void ConvertSSBumpToNormal(ConvertedTexture& texture, bool debugOutput) {
     texture.pixelData = std::move(normalData);
     
     if (debugOutput) {
-        Msg("[VTF] Converted SSBump to normal (%dx%d) strength %.1fx\n", width, height, normalStrength);
+        Msg("[VTF] Converted SSBump to normal (%dx%d) strength %.1fx, height detail %.1fx\n",
+            width, height, normalStrength, heightDetailStrength);
     }
 }
 
