@@ -563,7 +563,12 @@ private:
     // Version 21 halves the restored alpha-height contribution from 32x to 16x.
     // Version 22 reduces the alpha-height contribution to one quarter of v6:
     // 4x instead of 16x.
-    static constexpr int OUTPUT_GENERATION_VERSION = 22;
+    // Version 23 corrects Blinn-Phong to perceptual-GGX roughness conversion,
+    // makes Phong masks gradual, and stops treating unrelated normal alpha as
+    // an implicit roughness map on non-reflective materials.
+    // Version 24 prevents additive effects with a glass physics surface from
+    // being emitted as refractive translucent replacements.
+    static constexpr int OUTPUT_GENERATION_VERSION = 24;
     std::unordered_set<std::string> m_ineligibleCache;
     bool m_ineligibleCacheDirty = false;
     

@@ -699,14 +699,6 @@ bool TextureProcessor::GenerateRoughnessTexture(const MaterialPBRProperties& pro
                 Msg("[MaterialPipeline::ToPBR] %s: Trying base texture alpha (implicit envmap - INVERTED)\n", props.materialName.c_str());
             }
         }
-        // Priority 10 (LAST RESORT): Try normal map alpha anyway for materials with bumpmap
-        else if (props.hasBumpMap && !props.bumpMapPath.empty()) {
-            vtfPath = props.bumpMapPath;
-            useAlphaChannel = true;
-            if (m_debugOutput) {
-                Msg("[MaterialPipeline::ToPBR] %s: Last resort - trying normal map alpha\n", props.materialName.c_str());
-            }
-        }
     }
     
     // No valid roughness source found - use constant value in USDA
@@ -1380,18 +1372,19 @@ float TextureProcessor::PhongToRoughness(float phongExponent) {
     // Clamp to reasonable range
     phongExponent = std::clamp(phongExponent, 1.0f, 512.0f);
     
-    // Standard formula to convert Phong exponent to PBR roughness:
-    // roughness = sqrt(2 / (phongExponent + 2))
-    // 
-    // This is derived from the relationship between Phong specular and PBR GGX:
-    // phongExponent 1   -> roughness ~0.82 (very broad highlight)
-    // phongExponent 10  -> roughness ~0.41 (moderate)
-    // phongExponent 25  -> roughness ~0.27 (fairly smooth)
-    // phongExponent 50  -> roughness ~0.19 (smooth, like glossy plastic)
-    // phongExponent 150 -> roughness ~0.11 (very smooth, like polished metal)
-    // phongExponent 256 -> roughness ~0.09 (highly glossy)
-    
-    float roughness = sqrtf(2.0f / (phongExponent + 2.0f));
+    // Matching a Blinn-Phong lobe to GGX gives the microfacet alpha value:
+    //   alpha = sqrt(2 / (phongExponent + 2))
+    // AperturePBR squares its user-facing roughness before passing it to GGX,
+    // so writing alpha directly made every converted Phong material much too
+    // smooth. Convert alpha to perceptual roughness with one more square root.
+    //
+    // phongExponent 1   -> roughness ~0.90 (very broad highlight)
+    // phongExponent 10  -> roughness ~0.64 (moderate)
+    // phongExponent 20  -> roughness ~0.55 (cloth/skin-scale highlight)
+    // phongExponent 50  -> roughness ~0.44 (smooth plastic)
+    // phongExponent 150 -> roughness ~0.34 (polished surface)
+    // phongExponent 256 -> roughness ~0.30 (very glossy)
+    float roughness = powf(2.0f / (phongExponent + 2.0f), 0.25f);
     
     // Clamp minimum to avoid perfectly mirror-like reflections (which can look broken)
     // and maximum to ensure some specular response for phong materials
@@ -1447,61 +1440,12 @@ float TextureProcessor::CalculateRoughness(const MaterialPBRProperties& props) {
         return 1.0f;
     }
     
-    // If there's an envmap with tint, the tint controls reflection intensity
-    // LOWER tint = LESS reflective = HIGHER roughness
-    if (props.hasEnvMapTint && props.hasEnvMap) {
-        float tintIntensity = (props.envMapTint[0] + props.envMapTint[1] + props.envMapTint[2]) / 3.0f;
-        
-        // Low tint means the material reflects less, so increase roughness a bit
-        // But don't completely override the phong-based roughness
-        if (tintIntensity < 0.5f) {
-            roughness = roughness + (0.5f - tintIntensity) * 0.3f;
-        }
-        roughness = std::clamp(roughness, 0.30f, 0.85f);
-    }
-    
-    // Phong boost affects highlight brightness
-    // Higher boost suggests intentionally shiny material - DECREASE roughness slightly
-    if (props.phongBoost > 1.0f) {
-        // phongBoost 2 -> small decrease
-        // phongBoost 5 -> moderate decrease
-        // phongBoost 10 -> capped decrease (don't go below 0.30)
-        float boostFactor = min((props.phongBoost - 1.0f) * 0.03f, 0.15f);
-        roughness = max(0.30f, roughness - boostFactor);
-    }
-    
-    // NEW: Rim lighting affects perceived glossiness
-    // Materials with rim lighting typically have shiny edges, suggesting lower roughness overall
-    if (props.hasRimLight) {
-        // Rim lighting active - material is shinier
-        // rimlightboost 0.5 -> small decrease
-        // rimlightboost 1.0 -> moderate decrease
-        // rimlightboost 2.0+ -> significant decrease
-        float rimFactor = 0.05f;  // Base rim factor
-        if (props.hasRimLightBoost && props.rimLightBoost > 0.5f) {
-            rimFactor = min((props.rimLightBoost - 0.5f) * 0.04f + 0.05f, 0.15f);
-        }
-        roughness = max(0.30f, roughness - rimFactor);
-        if (m_debugOutput) {
-            Msg("[MaterialPipeline::ToPBR] %s: Rim light adjustment: rimFactor=%.2f, roughness=%.2f\n",
-                props.materialName.c_str(), rimFactor, roughness);
-        }
-    }
-    
-    // NEW: $envmapcontrast affects perceived glossiness
-    // Higher contrast means sharper reflections = lower roughness
-    if (props.hasEnvMapContrast && props.envMapContrast > 0.0f) {
-        float contrastFactor = min(props.envMapContrast * 0.05f, 0.10f);
-        roughness = max(0.25f, roughness - contrastFactor);
-    }
-    
-    // NEW: $phongalbedotint with high boost suggests color-tinted metal-like reflections
-    if (props.phongAlbedoTint && props.hasPhongAlbedoBoost && props.phongAlbedoBoost > 1.0f) {
-        float albedoBoostFactor = min((props.phongAlbedoBoost - 1.0f) * 0.02f, 0.08f);
-        roughness = max(0.30f, roughness - albedoBoostFactor);
-    }
-    
-    return std::clamp(roughness, 0.30f, 0.85f);
+    // $phongboost, $phongfresnelranges, $envmaptint/$envmapcontrast, and
+    // $rimlight control intensity or add separate lighting lobes in Source.
+    // Treating them as lower roughness makes materials look wet and changes the
+    // width selected by $phongexponent. AperturePBR_Opaque has no independent
+    // specular-strength input, so preserve the exponent-derived width here.
+    return std::clamp(roughness, 0.05f, 0.90f);
 }
 
 float TextureProcessor::EstimateMetallic(const MaterialPBRProperties& props) {
@@ -1734,6 +1678,8 @@ struct VMTProperties {
     float refractAmount;
     bool hasTranslucent;
     bool translucent;
+    bool hasAdditive;
+    bool additive;
     bool hasDecal;
     bool decal;
     std::string surfaceProp;
@@ -1888,6 +1834,8 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
     outProps.refractAmount = 0.0f;
     outProps.hasTranslucent = false;
     outProps.translucent = false;
+    outProps.hasAdditive = false;
+    outProps.additive = false;
     outProps.hasDecal = false;
     outProps.decal = false;
     outProps.hasEnvMap = false;
@@ -2342,6 +2290,16 @@ static bool ParseVMTFile(IFileSystem* fileSystem, const std::string& materialNam
         outProps.hasTranslucent = true;
         std::string valStr = findValue("$translucent");
         outProps.translucent = (valStr == "1" || valStr == "true");
+    }
+
+    // Additive blending is not optical transmission. Keep it available to the
+    // glass heuristic so an UnlitGeneric glow/effect cannot become refractive
+    // merely because it also uses the "glass" physics surface property.
+    size_t additivePos = contentLower.find("$additive");
+    if (additivePos != std::string::npos) {
+        outProps.hasAdditive = true;
+        std::string valStr = findValue("$additive");
+        outProps.additive = (valStr == "1" || valStr == "true");
     }
 
     // Explicit decals use translucency for ordinary alpha blending, not for
@@ -3912,7 +3870,8 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
     // 1. Shader is "Refract" (always glass), OR
     // 2. VMT has $refractamount (indicates Refract shader even if FindVar says otherwise), OR
     // 3. $surfaceprop = "glass" AND $translucent = 1, unless the material is
-    //    an explicit Source decal (whose translucency is ordinary alpha blending)
+    //    an explicit Source decal (ordinary alpha blending) or additive
+    //    (emissive/effect blending rather than optical transmission)
     // NOTE: $surfaceprop "glass" alone is NOT enough - materials like nukwindowa have it for physics sounds
     //       but are not meant to be transparent. They need $translucent=1 to actually be glass.
     {
@@ -3939,6 +3898,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
         bool vmtIsRefract = false;
         bool vmtHasRefractAmount = false;
         bool isExplicitDecal = false;
+        bool isAdditive = false;
         if (hasVMTParsed) {
             if (!vmtParsed.shaderName.empty()) {
                 std::string vmtShaderLower = vmtParsed.shaderName;
@@ -3947,6 +3907,7 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
             }
             vmtHasRefractAmount = vmtParsed.hasRefractAmount;
             isExplicitDecal = vmtParsed.hasDecal && vmtParsed.decal;
+            isAdditive = vmtParsed.hasAdditive && vmtParsed.additive;
             
             // Get $refracttinttexture if present
             if (vmtParsed.hasRefractTintTexture && !vmtParsed.refractTintTexture.empty()) {
@@ -3967,6 +3928,10 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
             isExplicitDecal =
                 foundDecal && decalVar && decalVar->GetIntValue() == 1;
         }
+        if (!isAdditive &&
+            pMaterial->GetMaterialVarFlag(MATERIAL_VAR_ADDITIVE)) {
+            isAdditive = true;
+        }
         
         // Track if this is a Refract shader (important for transmittance texture handling)
         if (isRefractShader || vmtIsRefract) {
@@ -3980,7 +3945,8 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
             outProps.isGlass = true;  // Refract shader is always glass
         } else if (vmtHasRefractAmount) {
             outProps.isGlass = true;  // Has $refractamount means it's a refractive material
-        } else if (isSurfaceGlass && outProps.isTranslucent && !isExplicitDecal) {
+        } else if (isSurfaceGlass && outProps.isTranslucent &&
+                   !isExplicitDecal && !isAdditive) {
             // surfaceprop=glass ONLY triggers glass shader if ALSO translucent
             // Materials like nukwindowa have $surfaceprop "glass" but no $translucent
             // They're just textures with glass surface properties for physics/sounds
@@ -3993,16 +3959,16 @@ bool TextureProcessor::ExtractMaterialPBR(const std::string& materialName,
         
         if (m_debugOutput) {
             if (outProps.isGlass) {
-                Msg("[MaterialPipeline::ToPBR] %s: DETECTED AS GLASS (shader=%s, vmtShader=%s, vmtRefract=%d, translucent=%d, decal=%d, surfaceprop=%s, hasEnvMap=%d)\n",
+                Msg("[MaterialPipeline::ToPBR] %s: DETECTED AS GLASS (shader=%s, vmtShader=%s, vmtRefract=%d, translucent=%d, decal=%d, additive=%d, surfaceprop=%s, hasEnvMap=%d)\n",
                     materialName.c_str(), outProps.shaderName.c_str(), 
                     hasVMTParsed ? vmtParsed.shaderName.c_str() : "N/A",
-                    vmtHasRefractAmount, outProps.isTranslucent, isExplicitDecal,
+                    vmtHasRefractAmount, outProps.isTranslucent, isExplicitDecal, isAdditive,
                     outProps.surfaceProp.c_str(), outProps.hasEnvMap);
             } else if (isSurfaceGlass || isRefractShader || vmtIsRefract || vmtHasRefractAmount) {
-                Msg("[MaterialPipeline::ToPBR] %s: GLASS CANDIDATE REJECTED - shader=%s, isRefract=%d, vmtIsRefract=%d, vmtRefract=%d, isSurfaceGlass=%d, translucent=%d, decal=%d, hasEnvMap=%d\n",
+                Msg("[MaterialPipeline::ToPBR] %s: GLASS CANDIDATE REJECTED - shader=%s, isRefract=%d, vmtIsRefract=%d, vmtRefract=%d, isSurfaceGlass=%d, translucent=%d, decal=%d, additive=%d, hasEnvMap=%d\n",
                     materialName.c_str(), outProps.shaderName.c_str(), isRefractShader,
                     vmtIsRefract, vmtHasRefractAmount, isSurfaceGlass,
-                    outProps.isTranslucent, isExplicitDecal, outProps.hasEnvMap);
+                    outProps.isTranslucent, isExplicitDecal, isAdditive, outProps.hasEnvMap);
             }
         }
     }
