@@ -56,6 +56,7 @@ static ConVar* CreateOrFindConVar(const char* name, const char* defaultVal, cons
 
 ConVar* GlobalConvars::r_eyes_hwskin;
 ConVar* GlobalConvars::r_remix_material_debug;
+ConVar* GlobalConvars::rtx_flush_textures_on_map_exit;
 void GlobalConvars::InitialiseConVars() {
 	m_pLuaConVars = loader_lua_shared.GetInterface<GarrysMod::Lua::ILuaConVars>(GMOD_LUACONVARS_INTERFACE);
 	if (!m_pLuaConVars) {
@@ -83,5 +84,8 @@ void GlobalConvars::InitialiseConVars() {
 	else { Msg("[RTX Fixes 2] r_eyes_hwskin convar created\n"); }
 
 	r_remix_material_debug = CreateOrFindConVar("r_remix_material_debug", "0", "Enable verbose logging for RemixMaterial Lua bindings (TrackMaterial, FindMaterialByHash, etc.)");
+	rtx_flush_textures_on_map_exit = CreateOrFindConVar(
+		"rtx_flush_textures_on_map_exit", "1",
+		"Purge Source and RTX Remix texture residency when a map shuts down");
 
 }

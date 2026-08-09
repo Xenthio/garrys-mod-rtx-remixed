@@ -928,15 +928,14 @@ extern "C" {
   // NOTE: If adding a new function, append at the end of the struct.
   //       Reordering breaks backwards compatibility.
 
-  // Force the RtxTextureManager to demote/clear textures not currently needed.
+  // Force the RtxTextureManager to release all resident replacement texture images.
   // Hooks SceneManager::requestTextureVramFree, which sets an atomic flag
-  // consumed next render-thread tick; the tick calls textureManager.clear(),
-  // which wipes the SparseUniqueCache and (if over the fork's texturemanager
-  // budget) demotes streaming textures to 0 mips. Complements the plugin's
-  // own material/texture refcount chain: this catches orphans whose cache
-  // entry outlives their last owner.
+  // consumed next render-thread tick. The tick waits for GPU idle, clears scene
+  // references, invalidates older asynchronous uploads, releases every resident
+  // replacement image, and compacts unused allocator chunks. Asset definitions
+  // remain cached so textures can stream again in the next scene.
   //
-  // Not free -- the cache wipe runs on the render thread. Fire at bulk
+  // Not free -- the purge waits for GPU idle on the render thread. Fire at bulk
   // scene-turnover events (cell transitions, fast-travel), not every frame.
   //
   // Thread-safe: sets an atomic on SceneManager; no lock acquired.
@@ -963,9 +962,8 @@ extern "C" {
   // Sizes are in bytes. poolRetainedBytes == totalAllocatedBytes - totalUsedBytes
   // and represents memory owned by the DXVK allocator's empty-chunk pool that
   // has not been returned to the driver -- the number that RequestVramCompaction
-  // moves. Category breakdown mirrors DxvkMemoryStats::Category and covers only
-  // RTX-owned suballocations; app-owned buffers/textures (D3D9 app traffic) are
-  // not included.
+  // moves. Category breakdown mirrors DxvkMemoryStats::Category and includes
+  // both RTX-owned suballocations and D3D9 app texture/buffer traffic.
   typedef struct remixapi_VramStats {
     uint64_t totalAllocatedBytes;
     uint64_t totalUsedBytes;
@@ -990,6 +988,10 @@ extern "C" {
     // If this climbs while plugin's own texture count is stable, the
     // growth is in fork-side streaming/native textures, not plugin uploads.
     uint32_t forkTextureCacheCount;
+    // D3D9 application resources. These fields are appended to preserve the
+    // offsets of every field above when the module and renderer are updated.
+    uint64_t usedAppTextureBytes;
+    uint64_t usedAppBufferBytes;
   } remixapi_VramStats;
 
   typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_GetVramStats)(

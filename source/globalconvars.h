@@ -21,5 +21,6 @@ public:
 	static ConVar* r_hwskin_vtx_hw;      // Keep HW vertex data (.dx90.vtx) for skinned models
 	static ConVar* r_eyes_hwskin;          // Force eye meshes through HW skinning path for RTX Remix
 	static ConVar* r_remix_material_debug; // Verbose logging for RemixMaterial Lua bindings
+	static ConVar* rtx_flush_textures_on_map_exit; // Purge Source and Remix texture residency at map shutdown
 	static void InitialiseConVars();
-}; 
+};

@@ -25,13 +25,48 @@ LUA_FUNCTION(RemixResource_ClearResources) {
 LUA_FUNCTION(RemixResource_ForceCleanup) {
     try {
         auto& resourceManager = RemixAPI::Instance().GetResourceManager();
-        resourceManager.ForceCleanup();
-        
-        LUA->PushBool(true);
+        LUA->PushBool(resourceManager.ForceCleanup());
         return 1;
     } catch (...) {
         Error("[RemixResource] Exception in ForceCleanup\n");
         LUA->PushBool(false);
+        return 1;
+    }
+}
+
+// Lua function: RemixResource.GetVramStats()
+LUA_FUNCTION(RemixResource_GetVramStats) {
+    try {
+        remixapi_VramStats stats = {};
+        auto& resourceManager = RemixAPI::Instance().GetResourceManager();
+        if (!resourceManager.GetVramStats(stats)) {
+            LUA->PushNil();
+            return 1;
+        }
+
+        LUA->CreateTable();
+#define PUSH_VRAM_STAT(field) \
+        LUA->PushNumber(static_cast<double>(stats.field)); \
+        LUA->SetField(-2, #field)
+        PUSH_VRAM_STAT(totalAllocatedBytes);
+        PUSH_VRAM_STAT(totalUsedBytes);
+        PUSH_VRAM_STAT(poolRetainedBytes);
+        PUSH_VRAM_STAT(usedReplacementGeometryBytes);
+        PUSH_VRAM_STAT(usedBufferBytes);
+        PUSH_VRAM_STAT(usedAccelerationStructureBytes);
+        PUSH_VRAM_STAT(usedOpacityMicromapBytes);
+        PUSH_VRAM_STAT(usedMaterialTextureBytes);
+        PUSH_VRAM_STAT(usedRenderTargetBytes);
+        PUSH_VRAM_STAT(driverAllocatedBytes);
+        PUSH_VRAM_STAT(driverBudgetBytes);
+        PUSH_VRAM_STAT(forkTextureCacheCount);
+        PUSH_VRAM_STAT(usedAppTextureBytes);
+        PUSH_VRAM_STAT(usedAppBufferBytes);
+#undef PUSH_VRAM_STAT
+        return 1;
+    } catch (...) {
+        Error("[RemixResource] Exception in GetVramStats\n");
+        LUA->PushNil();
         return 1;
     }
 }
@@ -88,6 +123,9 @@ void ResourceManager::InitializeLuaBindings() {
     
     m_lua->PushCFunction(RemixResource_ForceCleanup);
     m_lua->SetField(-2, "ForceCleanup");
+
+    m_lua->PushCFunction(RemixResource_GetVramStats);
+    m_lua->SetField(-2, "GetVramStats");
     
     m_lua->PushCFunction(RemixResource_SetMemoryLimits);
     m_lua->SetField(-2, "SetMemoryLimits");
@@ -106,4 +144,4 @@ void ResourceManager::InitializeLuaBindings() {
 
 } // namespace RemixAPI
 
-#endif // _WIN64 
+#endif // _WIN64

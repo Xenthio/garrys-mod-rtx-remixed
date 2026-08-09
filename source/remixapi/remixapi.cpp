@@ -1185,16 +1185,41 @@ void ResourceManager::ClearResources() {
     }
 }
 
-void ResourceManager::ForceCleanup() {
-    if (!m_remixInterface) return;
+bool ResourceManager::ForceCleanup() {
+    auto requestTextureVramFree = m_remixInterface
+        ? m_remixInterface->m_CInterface.RequestTextureVramFree
+        : nullptr;
+    if (!requestTextureVramFree) {
+        Warning("[ResourceManager] remixapi_RequestTextureVramFree is unavailable\n");
+        return false;
+    }
 
-    // Force cleanup through config
-    m_remixInterface->SetConfigVariable("rtx.resourceLimits.forceCleanup", "1");
-    
-    ClearResources();
-    
-    // Reset to normal cleanup behavior
-    m_remixInterface->SetConfigVariable("rtx.resourceLimits.forceCleanup", "0");
+    const remixapi_ErrorCode result = requestTextureVramFree();
+    if (result != REMIXAPI_ERROR_CODE_SUCCESS) {
+        Warning("[ResourceManager] Texture VRAM purge request failed with error %d\n", static_cast<int>(result));
+        return false;
+    }
+
+    Msg("[ResourceManager] Texture VRAM purge requested\n");
+    return true;
+}
+
+bool ResourceManager::GetVramStats(remixapi_VramStats& stats) const {
+    auto getVramStats = m_remixInterface
+        ? m_remixInterface->m_CInterface.GetVramStats
+        : nullptr;
+    if (!getVramStats) {
+        Warning("[ResourceManager] remixapi_GetVramStats is unavailable\n");
+        return false;
+    }
+
+    stats = {};
+    const remixapi_ErrorCode result = getVramStats(&stats);
+    if (result != REMIXAPI_ERROR_CODE_SUCCESS) {
+        Warning("[ResourceManager] VRAM stats request failed with error %d\n", static_cast<int>(result));
+        return false;
+    }
+    return true;
 }
 
 void ResourceManager::SetMemoryLimits(size_t maxCacheSize, size_t maxVRAM) {

@@ -279,7 +279,8 @@ namespace RemixAPI {
         
         // Resource cleanup
         void ClearResources();
-        void ForceCleanup();
+        bool ForceCleanup();
+        bool GetVramStats(remixapi_VramStats& stats) const;
         
         // Memory management
         void SetMemoryLimits(size_t maxCacheSize, size_t maxVRAM);

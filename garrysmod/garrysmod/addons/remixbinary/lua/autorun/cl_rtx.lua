@@ -122,6 +122,22 @@ PersistBinaryConVar("r_forcehwskin", "0")
 -- Load all sub-addons
 LoadSubAddons()
 
+-- Run before Garry's Mod tears down the client Lua state and unloads the binary
+-- module. A VClient LevelShutdown hook is too late because the module is already
+-- gone by then.
+hook.Add("ShutDown", "RTXTextureCleanup_MapExit", function()
+    if not RTX_CleanupMapTextures then
+        return
+    end
+
+    local ok, queued = pcall(RTX_CleanupMapTextures)
+    if not ok then
+        ErrorNoHalt("[RTX Texture Cleanup] Map-exit cleanup failed: " .. tostring(queued) .. "\n")
+    elseif queued then
+        print("[RTX Texture Cleanup] Map-exit renderer purge queued")
+    end
+end)
+
 local patcherOk, patcherErr = pcall(include, "patcher/cl_init.lua")
 if not patcherOk then
     DebugPrint("[gmRTX] Warning: Failed to load runtime patcher - " .. tostring(patcherErr))
