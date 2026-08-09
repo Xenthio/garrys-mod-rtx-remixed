@@ -209,6 +209,7 @@ extern "C" {
   typedef struct remixapi_MeshHandle_T* remixapi_MeshHandle;
   typedef struct remixapi_LightHandle_T* remixapi_LightHandle;
   typedef struct remixapi_TextureHandle_T* remixapi_TextureHandle;
+  typedef uint64_t remixapi_PersistentInstanceHandle;
 
   typedef const wchar_t* remixapi_Path;
 
@@ -803,6 +804,39 @@ extern "C" {
   // Internal helper to auto-instance persistent external API lights once per frame
   typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_AutoInstancePersistentLights)(void);
   REMIXAPI remixapi_ErrorCode REMIXAPI_CALL remixapi_AutoInstancePersistentLights(void);
+
+  // Fork extension for querying the active runtime's ray-portal limits. Older
+  // runtimes do not export this function and should be treated as supporting
+  // only the stock pair.
+  typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_GetRayPortalCapabilities)(
+    uint32_t* out_maxActivePortalSurfaces,
+    uint32_t* out_maxDedicatedPortalVolumes);
+  REMIXAPI remixapi_ErrorCode REMIXAPI_CALL remixapi_GetRayPortalCapabilities(
+    uint32_t* out_maxActivePortalSurfaces,
+    uint32_t* out_maxDedicatedPortalVolumes);
+
+  // Fork extension for runtime-owned mesh-instance persistence. Persistent
+  // instances currently accept only the base InstanceInfo (pNext must be NULL).
+  // The runtime re-submits them immediately before RTX scene preparation, so
+  // callers only need to send lifecycle and transform changes.
+  typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_CreatePersistentInstance)(
+    const remixapi_InstanceInfo* info,
+    remixapi_PersistentInstanceHandle* out_handle);
+  REMIXAPI remixapi_ErrorCode REMIXAPI_CALL remixapi_CreatePersistentInstance(
+    const remixapi_InstanceInfo* info,
+    remixapi_PersistentInstanceHandle* out_handle);
+
+  typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_UpdatePersistentInstance)(
+    remixapi_PersistentInstanceHandle handle,
+    const remixapi_InstanceInfo* info);
+  REMIXAPI remixapi_ErrorCode REMIXAPI_CALL remixapi_UpdatePersistentInstance(
+    remixapi_PersistentInstanceHandle handle,
+    const remixapi_InstanceInfo* info);
+
+  typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_DestroyPersistentInstance)(
+    remixapi_PersistentInstanceHandle handle);
+  REMIXAPI remixapi_ErrorCode REMIXAPI_CALL remixapi_DestroyPersistentInstance(
+    remixapi_PersistentInstanceHandle handle);
 
   // Queue a definition update for an existing analytical light. Applied safely each frame.
   typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_UpdateLightDefinition)(

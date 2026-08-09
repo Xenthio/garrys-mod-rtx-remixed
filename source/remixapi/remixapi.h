@@ -17,6 +17,11 @@
 #include <unordered_set>
 
 namespace RemixAPI {
+    // Queries the loaded runtime's fork-specific portal limits. Returns false
+    // for stock/older runtimes and leaves the outputs at the stock pair limit.
+    bool GetRayPortalCapabilities(uint32_t& maxActivePortalSurfaces,
+                                  uint32_t& maxDedicatedPortalVolumes);
+
     // Forward declarations
     class MaterialManager;
     class MeshManager;
@@ -154,6 +159,8 @@ namespace RemixAPI {
         uint64_t CreateMaterial(const std::string& name, const remix::MaterialInfo& info);
         uint64_t CreateOpaqueMaterial(const std::string& name, const remix::MaterialInfo& info, const remix::MaterialInfoOpaqueEXT& opaqueInfo);
         uint64_t CreateTranslucentMaterial(const std::string& name, const remix::MaterialInfo& info, const remix::MaterialInfoTranslucentEXT& translucentInfo);
+        uint64_t CreatePortalMaterial(const std::string& name, const remix::MaterialInfo& info,
+                                      const remix::MaterialInfoPortalEXT& portalInfo);
         
         bool UpdateMaterial(uint64_t materialId, const remix::MaterialInfo& info);
         bool DestroyMaterial(uint64_t materialId);
@@ -233,6 +240,10 @@ namespace RemixAPI {
         bool DrawInstance(const remix::InstanceInfo& info);
         bool DrawInstanceWithBlend(const remix::InstanceInfo& info, const remix::InstanceInfoBlendEXT& blendInfo);
         bool DrawInstanceWithBones(const remix::InstanceInfo& info, const remix::InstanceInfoBoneTransformsEXT& boneInfo);
+        bool SupportsPersistentInstances();
+        bool CreatePersistentInstance(const remix::InstanceInfo& info, remixapi_PersistentInstanceHandle& outHandle);
+        bool UpdatePersistentInstance(remixapi_PersistentInstanceHandle handle, const remix::InstanceInfo& info);
+        bool DestroyPersistentInstance(remixapi_PersistentInstanceHandle handle);
         
         // Lua bindings
         void InitializeLuaBindings();

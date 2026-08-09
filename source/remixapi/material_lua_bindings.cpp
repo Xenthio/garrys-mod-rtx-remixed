@@ -339,6 +339,24 @@ static remix::MaterialInfoOpaqueEXT LuaToMaterialInfoOpaqueEXT(ILuaBase* LUA, in
     return info;
 }
 
+static remix::MaterialInfoPortalEXT LuaToMaterialInfoPortalEXT(ILuaBase* LUA, int index) {
+    remix::MaterialInfoPortalEXT info;
+
+    LUA->GetField(index, "rayPortalIndex");
+    if (LUA->IsType(-1, Type::Number)) {
+        info.rayPortalIndex = static_cast<uint8_t>(LUA->GetNumber(-1));
+    }
+    LUA->Pop();
+
+    LUA->GetField(index, "rotationSpeed");
+    if (LUA->IsType(-1, Type::Number)) {
+        info.rotationSpeed = static_cast<float>(LUA->GetNumber(-1));
+    }
+    LUA->Pop();
+
+    return info;
+}
+
 // Lua function: RemixMaterial.CreateMaterial(name, materialInfo)
 LUA_FUNCTION(RemixMaterial_CreateMaterial) {
     if (!LUA->IsType(1, Type::String)) {
@@ -386,6 +404,68 @@ LUA_FUNCTION(RemixMaterial_CreateOpaqueMaterial) {
     uint64_t materialId = materialManager.CreateOpaqueMaterial(name, info, opaqueInfo);
     
     LUA->PushNumber(static_cast<double>(materialId));
+    return 1;
+}
+
+// Lua function: RemixMaterial.CreatePortalMaterial(name, materialInfo, portalInfo)
+// Uses the stock Remix API portal material extension plus the active runtime's
+// queried portal-surface limit.
+LUA_FUNCTION(RemixMaterial_CreatePortalMaterial) {
+    if (!LUA->IsType(1, Type::String) || !LUA->IsType(2, Type::Table) || !LUA->IsType(3, Type::Table)) {
+        LUA->ThrowError("CreatePortalMaterial expects name, materialInfo table, and portalInfo table");
+        return 0;
+    }
+
+    std::string name = LUA->GetString(1);
+    remix::MaterialInfo info = LuaToMaterialInfo(LUA, 2);
+    remix::MaterialInfoPortalEXT portalInfo = LuaToMaterialInfoPortalEXT(LUA, 3);
+
+    if (info.hash == 0) {
+        LUA->ThrowError("CreatePortalMaterial requires a non-zero material hash");
+        return 0;
+    }
+
+    uint32_t maxActivePortalSurfaces = 2;
+    uint32_t maxDedicatedPortalVolumes = 2;
+    GetRayPortalCapabilities(maxActivePortalSurfaces, maxDedicatedPortalVolumes);
+    if (portalInfo.rayPortalIndex >= maxActivePortalSurfaces) {
+        LUA->ThrowError("CreatePortalMaterial rayPortalIndex exceeds the active runtime limit");
+        return 0;
+    }
+
+    const uint64_t materialId = RemixAPI::Instance().GetMaterialManager().CreatePortalMaterial(
+        name, info, portalInfo);
+    LUA->PushNumber(static_cast<double>(materialId));
+    return 1;
+}
+
+LUA_FUNCTION(RemixMaterial_GetPortalCapabilities) {
+    const bool supportsPersistentInstances =
+        RemixAPI::Instance().GetInstanceManager().SupportsPersistentInstances();
+    uint32_t maxActivePortalSurfaces = 2;
+    uint32_t maxDedicatedPortalVolumes = 2;
+    const bool supportsRuntimeCapabilityQuery =
+        GetRayPortalCapabilities(maxActivePortalSurfaces, maxDedicatedPortalVolumes);
+
+    LUA->CreateTable();
+    LUA->PushBool(g_remix != nullptr);
+    LUA->SetField(-2, "available");
+    LUA->PushNumber(REMIXAPI_VERSION_MAJOR);
+    LUA->SetField(-2, "apiVersionMajor");
+    LUA->PushNumber(REMIXAPI_VERSION_MINOR);
+    LUA->SetField(-2, "apiVersionMinor");
+    LUA->PushNumber(maxActivePortalSurfaces);
+    LUA->SetField(-2, "maxActivePortalSurfaces");
+    LUA->PushNumber(maxDedicatedPortalVolumes);
+    LUA->SetField(-2, "maxDedicatedPortalVolumes");
+    LUA->PushBool(supportsRuntimeCapabilityQuery);
+    LUA->SetField(-2, "supportsRuntimeCapabilityQuery");
+    LUA->PushBool(false);
+    LUA->SetField(-2, "supportsMirrors");
+    LUA->PushBool(false);
+    LUA->SetField(-2, "supportsUniformScale");
+    LUA->PushBool(supportsPersistentInstances);
+    LUA->SetField(-2, "supportsPersistentInstances");
     return 1;
 }
 
@@ -1254,6 +1334,12 @@ void MaterialManager::InitializeLuaBindings() {
     
     m_lua->PushCFunction(RemixMaterial_CreateOpaqueMaterial);
     m_lua->SetField(-2, "CreateOpaqueMaterial");
+
+    m_lua->PushCFunction(RemixMaterial_CreatePortalMaterial);
+    m_lua->SetField(-2, "CreatePortalMaterial");
+
+    m_lua->PushCFunction(RemixMaterial_GetPortalCapabilities);
+    m_lua->SetField(-2, "GetPortalCapabilities");
     
     m_lua->PushCFunction(RemixMaterial_DestroyMaterial);
     m_lua->SetField(-2, "DestroyMaterial");
