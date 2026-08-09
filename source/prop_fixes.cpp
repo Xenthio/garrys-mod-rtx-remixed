@@ -228,10 +228,18 @@ static int GetBoneCountForRenderable(IClientRenderable* pClientRenderable, IVMod
         }
         #endif
         
-        // Call GetModel() via direct vtable access at index 9
-        // Index 8 is RenderHandle() (wrong!), Index 9 is GetModel() (correct!)
+        // Call GetModel() via direct vtable access at index 9.
+        // Index 8 is RenderHandle() (wrong!), Index 9 is GetModel() (correct!).
+        // Some transient/non-standard renderables expose a readable vtable with
+        // a null or otherwise invalid GetModel slot, so validate the exact
+        // function we are about to call instead of relying on SEH.
         typedef const model_t* (__thiscall* GetModelFn)(void*);
-        GetModelFn GetModel = reinterpret_cast<GetModelFn>(vtbl[9]);
+        void* getModelTarget = vtbl[9];
+        if (!IsLikelyExecutablePtr(getModelTarget)) {
+            return -1;
+        }
+
+        GetModelFn GetModel = reinterpret_cast<GetModelFn>(getModelTarget);
         mdl = GetModel(pClientRenderable);
         if (!mdl) {
             // No model is common; don't treat as failure spam.
