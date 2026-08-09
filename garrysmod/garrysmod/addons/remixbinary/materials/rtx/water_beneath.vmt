@@ -1,0 +1,13 @@
+"LightmappedGeneric"
+{ 
+	"$basetexture" "halflife/black"
+ 
+	"$translucent" "1"
+	"$additive" "1"
+	"$nocull" "1" 
+ 	"$abovewater" "0"	
+	"$underwateroverlay" "effects/water_warp01"
+	"$alpha" "0.1"
+ 
+}
+
