@@ -7,13 +7,38 @@ over "RootNode"
 {
     over "Looks"
     {
-        over "mat_A994D807E140859B"
+        over "mat_6D3B6804247E689B"
         {
             over "Shader"
             {
                 uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                bool inputs:preload_textures = 1
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\null-bumpmap_normal.dds@ (
+                    colorSpace = "raw"
+                )
                 float inputs:reflection_roughness_constant = 1
                 float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_A1E8B08914979321"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                float inputs:ior_constant = 1.33
+                bool inputs:thin_walled = 0
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86)
+                float inputs:transmittance_measurement_distance = 800
+                bool inputs:preload_textures = 1
+                float inputs:reflection_roughness_constant = 0.5
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\gm_construct_water_13_normal_normal.dds@ (
+                    colorSpace = "raw"
+                )
             }
         }
 
@@ -22,23 +47,13 @@ over "RootNode"
             over "Shader"
             {
                 uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                bool inputs:preload_textures = 1
                 int inputs:encoding = 0
-                asset inputs:normalmap_texture = @./textures\EF8D0EB8590AFC49_normal.dds@ (
+                asset inputs:normalmap_texture = @./textures\plaster_plasterwall022c_normal_normal.dds@ (
                     colorSpace = "raw"
                 )
-                asset inputs:reflectionroughness_texture = @./textures\288A26E6AD78297_roughness.dds@ (
-                    colorSpace = "raw"
-                )
-                float inputs:metallic_constant = 0
-            }
-        }
-
-        over "mat_766C17B077150735"
-        {
-            over "Shader"
-            {
-                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
-                asset inputs:reflectionroughness_texture = @./textures\148FF5F04F63EADB_roughness.dds@ (
+                asset inputs:reflectionroughness_texture = @./textures\plaster_plasterwall022c_normal_roughness.dds@ (
                     colorSpace = "raw"
                 )
                 float inputs:metallic_constant = 0
@@ -50,8 +65,10 @@ over "RootNode"
             over "Shader"
             {
                 uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                bool inputs:preload_textures = 1
                 int inputs:encoding = 0
-                asset inputs:normalmap_texture = @./textures\1560806ABFDED6BC_normal.dds@ (
+                asset inputs:normalmap_texture = @./textures\brick_brickwall003a_normal_normal.dds@ (
                     colorSpace = "raw"
                 )
                 float inputs:reflection_roughness_constant = 1
@@ -59,104 +76,13 @@ over "RootNode"
             }
         }
 
-        over "mat_6D3B6804247E689B"
+        over "mat_766C17B077150735"
         {
             over "Shader"
             {
                 uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
-                int inputs:encoding = 0
-                asset inputs:normalmap_texture = @./textures\E771B6C1D011E97B_normal.dds@ (
-                    colorSpace = "raw"
-                )
-                float inputs:reflection_roughness_constant = 1
-                float inputs:metallic_constant = 0
-            }
-        }
-
-        over "mat_DDDDC9091A32DC84"
-        {
-            over "Shader"
-            {
-                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
-                float inputs:reflection_roughness_constant = 0.132149
-                float inputs:metallic_constant = 0
-            }
-        }
-
-        over "mat_2568CF29EDFDC4FD"
-        {
-            over "Shader"
-            {
-                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
-                asset inputs:reflectionroughness_texture = @./textures\9B59021A13AD2E58_roughness.dds@ (
-                    colorSpace = "raw"
-                )
-                float inputs:metallic_constant = 0
-            }
-        }
-
-        over "mat_C968B2EF866E81F9"
-        {
-            over "Shader"
-            {
-                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
-                int inputs:encoding = 0
-                asset inputs:normalmap_texture = @./textures\ACAD02CCB1FF736C_normal.dds@ (
-                    colorSpace = "raw"
-                )
-                asset inputs:reflectionroughness_texture = @./textures\A4DE21F98214FA8C_roughness.dds@ (
-                    colorSpace = "raw"
-                )
-                float inputs:metallic_constant = 0
-            }
-        }
-
-        over "mat_C193F50340A16850"
-        {
-            over "Shader"
-            {
-                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
-                asset inputs:reflectionroughness_texture = @./textures\998D2016354E086E_roughness.dds@ (
-                    colorSpace = "raw"
-                )
-                float inputs:metallic_constant = 0
-            }
-        }
-
-        over "mat_44D26D4F7FA3A7B0"
-        {
-            over "Shader"
-            {
-                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
-                int inputs:encoding = 0
-                asset inputs:normalmap_texture = @./textures\E771B6C1D011E97B_normal.dds@ (
-                    colorSpace = "raw"
-                )
-                asset inputs:reflectionroughness_texture = @./textures\F9B93E80ADDF5BD6_roughness.dds@ (
-                    colorSpace = "raw"
-                )
-                float inputs:metallic_constant = 0
-            }
-        }
-
-        over "mat_C9A30EEA386A19C1"
-        {
-            over "Shader"
-            {
-                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
-                asset inputs:reflectionroughness_texture = @./textures\81E722FCB3F0D937_roughness.dds@ (
-                    colorSpace = "raw"
-                )
-                float inputs:metallic_constant = 0
-            }
-        }
-
-        over "mat_3293FA5046A66689"
-        {
-            over "Shader"
-            {
-                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
-                asset inputs:reflectionroughness_texture = @./textures\CA738AA6850F8065_roughness.dds@ (
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                asset inputs:reflectionroughness_texture = @./textures\building_template_building_template007b_roughness.dds@ (
                     colorSpace = "raw"
                 )
                 float inputs:metallic_constant = 0
@@ -168,11 +94,13 @@ over "RootNode"
             over "Shader"
             {
                 uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                bool inputs:preload_textures = 1
                 int inputs:encoding = 0
-                asset inputs:normalmap_texture = @./textures\CC1F3894C40FBB51_normal.dds@ (
+                asset inputs:normalmap_texture = @./textures\plaster_plasterwall017c_normal_normal.dds@ (
                     colorSpace = "raw"
                 )
-                asset inputs:reflectionroughness_texture = @./textures\9B156A309345B5CF_roughness.dds@ (
+                asset inputs:reflectionroughness_texture = @./textures\plaster_plasterwall017c_normal_roughness.dds@ (
                     colorSpace = "raw"
                 )
                 float inputs:metallic_constant = 0
@@ -184,24 +112,103 @@ over "RootNode"
             over "Shader"
             {
                 uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                bool inputs:preload_textures = 1
                 int inputs:encoding = 0
-                asset inputs:normalmap_texture = @./textures\58DB48C0E586C465_normal.dds@ (
+                asset inputs:normalmap_texture = @./textures\maxofs2d_models_companion_doll_normal_normal.dds@ (
                     colorSpace = "raw"
                 )
-                asset inputs:reflectionroughness_texture = @./textures\EDC7C7C4C2464CA3_roughness.dds@ (
+                asset inputs:reflectionroughness_texture = @./textures\maxofs2d_models_companion_doll_normal_phongmask_roughness_v2_r615.dds@ (
                     colorSpace = "raw"
                 )
                 float inputs:metallic_constant = 0
             }
         }
 
-        over "mat_EB6766890A976112"
+        over "mat_C193F50340A16850"
         {
             over "Shader"
             {
                 uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
-                float inputs:reflection_roughness_constant = 0.5
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                asset inputs:reflectionroughness_texture = @./textures\models_props_c17_furniturewooddrawers001a_roughness.dds@ (
+                    colorSpace = "raw"
+                )
                 float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_44D26D4F7FA3A7B0"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                bool inputs:preload_textures = 1
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\null-bumpmap_normal.dds@ (
+                    colorSpace = "raw"
+                )
+                asset inputs:reflectionroughness_texture = @./textures\maxofs2d_models_gm_painting_phongmask_roughness_v2_r586.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_DDDDC9091A32DC84"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                float inputs:reflection_roughness_constant = 0.132149
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_C9A30EEA386A19C1"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                asset inputs:reflectionroughness_texture = @./textures\building_template_building_template010b_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_3293FA5046A66689"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                asset inputs:reflectionroughness_texture = @./textures\models_props_c17_furniturecupboard001a_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_A296F7553B7CEF5A"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                float inputs:ior_constant = 1.33
+                bool inputs:thin_walled = 0
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86)
+                float inputs:transmittance_measurement_distance = 800
+                bool inputs:preload_textures = 1
+                float inputs:reflection_roughness_constant = 0.5
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\gm_construct_water_13_normal_normal.dds@ (
+                    colorSpace = "raw"
+                )
             }
         }
 
@@ -210,7 +217,8 @@ over "RootNode"
             over "Shader"
             {
                 uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
-                asset inputs:reflectionroughness_texture = @./textures\D9E083631A76B315_roughness.dds@ (
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                asset inputs:reflectionroughness_texture = @./textures\models_props_c17_furnituretable003a_roughness.dds@ (
                     colorSpace = "raw"
                 )
                 float inputs:metallic_constant = 0
@@ -222,7 +230,8 @@ over "RootNode"
             over "Shader"
             {
                 uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
-                asset inputs:reflectionroughness_texture = @./textures\EB6B603C314EC2A2_roughness.dds@ (
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                asset inputs:reflectionroughness_texture = @./textures\models_props_c17_furniturecouch002a_roughness.dds@ (
                     colorSpace = "raw"
                 )
                 float inputs:metallic_constant = 0
@@ -234,29 +243,313 @@ over "RootNode"
             over "Shader"
             {
                 uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                bool inputs:preload_textures = 1
                 int inputs:encoding = 0
-                asset inputs:normalmap_texture = @./textures\7FA71CC993C71488_normal.dds@ (
+                asset inputs:normalmap_texture = @./textures\models_weapons_v_physcannon_v_superphyscannon_normal_normal.dds@ (
                     colorSpace = "raw"
                 )
-                asset inputs:reflectionroughness_texture = @./textures\D109D3DDDB16C0B8_roughness.dds@ (
+                asset inputs:reflectionroughness_texture = @./textures\models_weapons_v_physcannon_v_superphyscannon_normal_phongmask_roughness_v2_r707.dds@ (
                     colorSpace = "raw"
                 )
                 float inputs:metallic_constant = 0
             }
         }
 
-        over "mat_4E4CB68DC65EA05C"
+        over "mat_E7E330D3C6C1F476"
         {
             over "Shader"
             {
                 uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                bool inputs:preload_textures = 1
                 int inputs:encoding = 0
-                asset inputs:normalmap_texture = @./textures\79EB6B8064000A59_normal.dds@ (
+                asset inputs:normalmap_texture = @./textures\models_weapons_c_arms_citizen_c_arms_citizen_sleeves_normal_normal.dds@ (
                     colorSpace = "raw"
                 )
-                asset inputs:reflectionroughness_texture = @./textures\DCBDF45267F84D27_roughness.dds@ (
+                asset inputs:reflectionroughness_texture = @./textures\models_weapons_c_arms_citizen_c_arms_citizen_sleeves_normal_phongexp_roughness_v2.dds@ (
                     colorSpace = "raw"
                 )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_AAF1F923A2FAAF86"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                float inputs:ior_constant = 1.33
+                bool inputs:thin_walled = 0
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86)
+                float inputs:transmittance_measurement_distance = 800
+                bool inputs:preload_textures = 1
+                float inputs:reflection_roughness_constant = 0.5
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\gm_construct_water_13_normal_normal.dds@ (
+                    colorSpace = "raw"
+                )
+            }
+        }
+
+        over "mat_CBA1221CB0CAA133"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                asset inputs:reflectionroughness_texture = @./textures\models_props_buildings_long_building001a_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_F2C0834FB3205F7C"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                bool inputs:preload_textures = 1
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\models_weapons_c_arms_citizen_c_arms_citizen_hands_normal_normal.dds@ (
+                    colorSpace = "raw"
+                )
+                asset inputs:reflectionroughness_texture = @./textures\models_weapons_c_arms_citizen_c_arms_citizen_hands_normal_phongmask_roughness_v2_r669.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_8BA3B295F14D62A2"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                bool inputs:preload_textures = 1
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\models_kleiner_walter_face_normal_normal.dds@ (
+                    colorSpace = "raw"
+                )
+                asset inputs:reflectionroughness_texture = @./textures\models_kleiner_walter_face_phongmask_roughness_v2_r639.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_23698377CA6C3D74"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                asset inputs:reflectionroughness_texture = @./textures\models_props_buildings_short_building001a_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_D90580222E9D7E8A"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                bool inputs:preload_textures = 1
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\models_kleiner_kleiner_sheet_normal_normal.dds@ (
+                    colorSpace = "raw"
+                )
+                asset inputs:reflectionroughness_texture = @./textures\models_kleiner_kleiner_sheet_normal_phongmask_roughness_v2_r731.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_8EC7696C16B3A9EE"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                float inputs:reflection_roughness_constant = 0.05
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_7109FFAFE5A3D2A"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                asset inputs:reflectionroughness_texture = @./textures\building_template_building_template006b_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_29D746577FBE65A2"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                asset inputs:reflectionroughness_texture = @./textures\models_kleiner_glassessidemask_walter_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_A25E8EA1E373411B"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                asset inputs:reflectionroughness_texture = @./textures\models_kleiner_glassesfrontmask_walter_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_A4020350DDE52305"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                asset inputs:reflectionroughness_texture = @./textures\building_template_building_template007j_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_53FACD801D081B1B"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                asset inputs:reflectionroughness_texture = @./textures\models_props_buildings_project_building03_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_922EC604C1EF6BA0"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                asset inputs:reflectionroughness_texture = @./textures\models_props_buildings_buildingsheet_03a_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_2D9C0BA6A7D78E1D"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                asset inputs:reflectionroughness_texture = @./textures\models_props_buildings_project_building01_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_3D4644512003446E"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                asset inputs:reflectionroughness_texture = @./textures\building_template_building_template010c_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_587DE6A72B5FF099"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                asset inputs:reflectionroughness_texture = @./textures\models_props_interiors_sinkkitchen01a_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_AB5076BDE7C74ADC"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                bool inputs:preload_textures = 1
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\concrete_concretefloor028a_normal_normal.dds@ (
+                    colorSpace = "raw"
+                )
+                asset inputs:reflectionroughness_texture = @./textures\concrete_concretefloor028a_normal_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_D8421A455FE4049F"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                float inputs:ior_constant = 1.33
+                bool inputs:thin_walled = 0
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86)
+                float inputs:transmittance_measurement_distance = 800
+                bool inputs:preload_textures = 1
+                float inputs:reflection_roughness_constant = 0.5
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\gm_construct_water_13_normal_normal.dds@ (
+                    colorSpace = "raw"
+                )
+            }
+        }
+
+        over "mat_81D0AF96AF8F0F90"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                bool inputs:preload_textures = 1
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\gm_construct_construct_concrete_ground_normal_normal.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:reflection_roughness_constant = 1
                 float inputs:metallic_constant = 0
             }
         }
@@ -266,22 +559,10 @@ over "RootNode"
             over "Shader"
             {
                 uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                bool inputs:preload_textures = 1
                 int inputs:encoding = 0
-                asset inputs:normalmap_texture = @./textures\A0B8A36985E1EE84_normal.dds@ (
-                    colorSpace = "raw"
-                )
-                float inputs:reflection_roughness_constant = 1
-                float inputs:metallic_constant = 0
-            }
-        }
-
-        over "mat_81D0AF96AF8F0F90"
-        {
-            over "Shader"
-            {
-                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
-                int inputs:encoding = 0
-                asset inputs:normalmap_texture = @./textures\AF54B0C1B496832D_normal.dds@ (
+                asset inputs:normalmap_texture = @./textures\metal_metalpipe003a_normal_normal.dds@ (
                     colorSpace = "raw"
                 )
                 float inputs:reflection_roughness_constant = 1
@@ -294,7 +575,8 @@ over "RootNode"
             over "Shader"
             {
                 uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
-                asset inputs:reflectionroughness_texture = @./textures\981F6E191BA96745_roughness.dds@ (
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                asset inputs:reflectionroughness_texture = @./textures\building_template_building_template007h_roughness.dds@ (
                     colorSpace = "raw"
                 )
                 float inputs:metallic_constant = 0
@@ -306,62 +588,30 @@ over "RootNode"
             over "Shader"
             {
                 uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
-                asset inputs:reflectionroughness_texture = @./textures\BB2BAC1BA5B4C540_roughness.dds@ (
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                asset inputs:reflectionroughness_texture = @./textures\building_template_building_template010g_roughness.dds@ (
                     colorSpace = "raw"
                 )
                 float inputs:metallic_constant = 0
             }
         }
 
-        over "mat_AB5076BDE7C74ADC"
+        over "mat_E28AB64ACE92F354"
         {
             over "Shader"
             {
-                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                float inputs:ior_constant = 1.33
+                bool inputs:thin_walled = 0
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86)
+                float inputs:transmittance_measurement_distance = 800
+                bool inputs:preload_textures = 1
+                float inputs:reflection_roughness_constant = 0.5
                 int inputs:encoding = 0
-                asset inputs:normalmap_texture = @./textures\892C3C9DF693094C_normal.dds@ (
+                asset inputs:normalmap_texture = @./textures\gm_construct_water_13_normal_normal.dds@ (
                     colorSpace = "raw"
                 )
-                asset inputs:reflectionroughness_texture = @./textures\5A3921C377574BEC_roughness.dds@ (
-                    colorSpace = "raw"
-                )
-                float inputs:metallic_constant = 0
-            }
-        }
-
-        over "mat_6BA36E53BA649581"
-        {
-            over "Shader"
-            {
-                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
-                asset inputs:reflectionroughness_texture = @./textures\DE4C55DA4B7BF456_roughness.dds@ (
-                    colorSpace = "raw"
-                )
-                float inputs:metallic_constant = 0
-            }
-        }
-
-        over "mat_53FACD801D081B1B"
-        {
-            over "Shader"
-            {
-                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
-                asset inputs:reflectionroughness_texture = @./textures\38C04482B0028584_roughness.dds@ (
-                    colorSpace = "raw"
-                )
-                float inputs:metallic_constant = 0
-            }
-        }
-
-        over "mat_A4020350DDE52305"
-        {
-            over "Shader"
-            {
-                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
-                asset inputs:reflectionroughness_texture = @./textures\F5AA4F8CCEE88273_roughness.dds@ (
-                    colorSpace = "raw"
-                )
-                float inputs:metallic_constant = 0
             }
         }
 
@@ -370,7 +620,21 @@ over "RootNode"
             over "Shader"
             {
                 uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
-                asset inputs:reflectionroughness_texture = @./textures\EAE006B3CC90D986_roughness.dds@ (
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                asset inputs:reflectionroughness_texture = @./textures\building_template_building_template007m_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_4B6B753822C37122"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                asset inputs:reflectionroughness_texture = @./textures\building_template_building_template007i_roughness.dds@ (
                     colorSpace = "raw"
                 )
                 float inputs:metallic_constant = 0
@@ -382,8 +646,10 @@ over "RootNode"
             over "Shader"
             {
                 uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                bool inputs:preload_textures = 1
                 int inputs:encoding = 0
-                asset inputs:normalmap_texture = @./textures\5316C136A489F5F0_normal.dds@ (
+                asset inputs:normalmap_texture = @./textures\building_template_roof_template001a_normal_normal.dds@ (
                     colorSpace = "raw"
                 )
                 float inputs:reflection_roughness_constant = 0.140792
@@ -391,39 +657,22 @@ over "RootNode"
             }
         }
 
-        over "mat_4B6B753822C37122"
+        over "mat_C371B7437EAD18DF"
         {
             over "Shader"
             {
-                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
-                asset inputs:reflectionroughness_texture = @./textures\942F64955C58CB22_roughness.dds@ (
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                float inputs:ior_constant = 1.33
+                bool inputs:thin_walled = 0
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86)
+                float inputs:transmittance_measurement_distance = 800
+                bool inputs:preload_textures = 1
+                float inputs:reflection_roughness_constant = 0.5
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\gm_construct_water_13_normal_normal.dds@ (
                     colorSpace = "raw"
                 )
-                float inputs:metallic_constant = 0
-            }
-        }
-
-        over "mat_2D9C0BA6A7D78E1D"
-        {
-            over "Shader"
-            {
-                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
-                asset inputs:reflectionroughness_texture = @./textures\6355D1DFD169B7E6_roughness.dds@ (
-                    colorSpace = "raw"
-                )
-                float inputs:metallic_constant = 0
-            }
-        }
-
-        over "mat_3D4644512003446E"
-        {
-            over "Shader"
-            {
-                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
-                asset inputs:reflectionroughness_texture = @./textures\2AE21291EFD8C5D4_roughness.dds@ (
-                    colorSpace = "raw"
-                )
-                float inputs:metallic_constant = 0
             }
         }
 
@@ -432,11 +681,26 @@ over "RootNode"
             over "Shader"
             {
                 uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                bool inputs:preload_textures = 1
                 int inputs:encoding = 0
-                asset inputs:normalmap_texture = @./textures\A1016D177EDE9F82_normal.dds@ (
+                asset inputs:normalmap_texture = @./textures\concrete_concretefloor025a_normal_normal.dds@ (
                     colorSpace = "raw"
                 )
                 float inputs:reflection_roughness_constant = 0.615
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_2568CF29EDFDC4FD"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                asset inputs:reflectionroughness_texture = @./textures\building_template_building_template007c_roughness.dds@ (
+                    colorSpace = "raw"
+                )
                 float inputs:metallic_constant = 0
             }
         }
@@ -446,7 +710,8 @@ over "RootNode"
             over "Shader"
             {
                 uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
-                asset inputs:reflectionroughness_texture = @./textures\35D840DB74E591C1_roughness.dds@ (
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                asset inputs:reflectionroughness_texture = @./textures\building_template_building_template007d_roughness.dds@ (
                     colorSpace = "raw"
                 )
                 float inputs:metallic_constant = 0
@@ -458,8 +723,45 @@ over "RootNode"
             over "Shader"
             {
                 uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                bool inputs:preload_textures = 1
                 int inputs:encoding = 0
-                asset inputs:normalmap_texture = @./textures\9BBCCD84C7D3DC6C_normal.dds@ (
+                asset inputs:normalmap_texture = @./textures\gm_construct_construct_concrete_floor_normal_normal.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:reflection_roughness_constant = 1
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_743F21766757C4A"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                float inputs:ior_constant = 1.33
+                bool inputs:thin_walled = 0
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86)
+                float inputs:transmittance_measurement_distance = 800
+                bool inputs:preload_textures = 1
+                float inputs:reflection_roughness_constant = 0.5
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\gm_construct_water_13_normal_normal.dds@ (
+                    colorSpace = "raw"
+                )
+            }
+        }
+
+        over "mat_F2D211DF1B9E8BB0"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                bool inputs:preload_textures = 1
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\plaster_plasterceiling005a_normal_normal.dds@ (
                     colorSpace = "raw"
                 )
                 float inputs:reflection_roughness_constant = 1
@@ -472,8 +774,10 @@ over "RootNode"
             over "Shader"
             {
                 uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                bool inputs:preload_textures = 1
                 int inputs:encoding = 0
-                asset inputs:normalmap_texture = @./textures\65BDAE88E204AB98_normal.dds@ (
+                asset inputs:normalmap_texture = @./textures\building_template_building_template003a_normal_normal.dds@ (
                     colorSpace = "raw"
                 )
                 float inputs:reflection_roughness_constant = 1
@@ -481,42 +785,32 @@ over "RootNode"
             }
         }
 
-        over "mat_F2D211DF1B9E8BB0"
+        over "mat_2EF40076E4EDF85E"
         {
             over "Shader"
             {
-                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                float inputs:ior_constant = 1.33
+                bool inputs:thin_walled = 0
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86)
+                float inputs:transmittance_measurement_distance = 800
+                bool inputs:preload_textures = 1
+                float inputs:reflection_roughness_constant = 0.5
                 int inputs:encoding = 0
-                asset inputs:normalmap_texture = @./textures\2BAC4A2AE65B9A5D_normal.dds@ (
+                asset inputs:normalmap_texture = @./textures\gm_construct_water_13_normal_normal.dds@ (
                     colorSpace = "raw"
                 )
-                float inputs:reflection_roughness_constant = 1
-                float inputs:metallic_constant = 0
             }
         }
 
-        over "mat_7109FFAFE5A3D2A"
+        over "mat_6BA36E53BA649581"
         {
             over "Shader"
             {
                 uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
-                asset inputs:reflectionroughness_texture = @./textures\23A246798C0E237E_roughness.dds@ (
-                    colorSpace = "raw"
-                )
-                float inputs:metallic_constant = 0
-            }
-        }
-
-        over "mat_BA87DF962E4A00B5"
-        {
-            over "Shader"
-            {
-                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
-                int inputs:encoding = 0
-                asset inputs:normalmap_texture = @./textures\8ECA810D88936663_normal.dds@ (
-                    colorSpace = "raw"
-                )
-                asset inputs:reflectionroughness_texture = @./textures\4394628DE48B4AAD_roughness.dds@ (
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                asset inputs:reflectionroughness_texture = @./textures\building_template_building_template013h_roughness.dds@ (
                     colorSpace = "raw"
                 )
                 float inputs:metallic_constant = 0
@@ -528,78 +822,415 @@ over "RootNode"
             over "Shader"
             {
                 uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                bool inputs:preload_textures = 1
                 int inputs:encoding = 0
-                asset inputs:normalmap_texture = @./textures\304A023B2926ADC5_normal.dds@ (
+                asset inputs:normalmap_texture = @./textures\concrete_concretefloor039a_normal_normal.dds@ (
                     colorSpace = "raw"
                 )
-                asset inputs:reflectionroughness_texture = @./textures\F9D42AAD4C720883_roughness.dds@ (
+                asset inputs:reflectionroughness_texture = @./textures\concrete_concretefloor039a_normal_roughness.dds@ (
                     colorSpace = "raw"
                 )
                 float inputs:metallic_constant = 0
             }
         }
 
-        over "mat_8B4F6112A2413674"
+        over "mat_8EAE7A670F2F0A92"
         {
             over "Shader"
             {
-                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                float inputs:ior_constant = 1.33
+                bool inputs:thin_walled = 0
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86)
+                float inputs:transmittance_measurement_distance = 800
+                bool inputs:preload_textures = 1
+                float inputs:reflection_roughness_constant = 0.5
                 int inputs:encoding = 0
-                asset inputs:normalmap_texture = @./textures\48EF15C3F3195F56_normal.dds@ (
+                asset inputs:normalmap_texture = @./textures\gm_construct_water_13_normal_normal.dds@ (
                     colorSpace = "raw"
                 )
-                asset inputs:reflectionroughness_texture = @./textures\24DBBC58E3F9E542_roughness.dds@ (
-                    colorSpace = "raw"
-                )
-                float inputs:metallic_constant = 0
             }
         }
 
-        over "mat_9116827CC1EA7EA"
+        over "mat_78B679C72E7006C1"
         {
             over "Shader"
             {
-                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
-                asset inputs:reflectionroughness_texture = @./textures\59FBA1618AA7174D_roughness.dds@ (
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                float inputs:ior_constant = 1.33
+                bool inputs:thin_walled = 0
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86)
+                float inputs:transmittance_measurement_distance = 800
+                bool inputs:preload_textures = 1
+                float inputs:reflection_roughness_constant = 0.5
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\gm_construct_water_13_normal_normal.dds@ (
                     colorSpace = "raw"
                 )
-                float inputs:metallic_constant = 0
             }
         }
 
-        over "mat_CBA1221CB0CAA133"
+        over "mat_5C5C549CCC9AA7B4"
         {
             over "Shader"
             {
-                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
-                asset inputs:reflectionroughness_texture = @./textures\7CBC9299EF396CCC_roughness.dds@ (
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                float inputs:ior_constant = 1.33
+                bool inputs:thin_walled = 0
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86)
+                float inputs:transmittance_measurement_distance = 800
+                bool inputs:preload_textures = 1
+                float inputs:reflection_roughness_constant = 0.5
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\gm_construct_water_13_normal_normal.dds@ (
                     colorSpace = "raw"
                 )
-                float inputs:metallic_constant = 0
             }
         }
 
-        over "mat_23698377CA6C3D74"
+        over "mat_27BF7B6627777A39"
         {
             over "Shader"
             {
-                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
-                asset inputs:reflectionroughness_texture = @./textures\41602B8A46A4CA02_roughness.dds@ (
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                float inputs:ior_constant = 1.33
+                bool inputs:thin_walled = 0
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86)
+                float inputs:transmittance_measurement_distance = 800
+                bool inputs:preload_textures = 1
+                float inputs:reflection_roughness_constant = 0.5
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\gm_construct_water_13_normal_normal.dds@ (
                     colorSpace = "raw"
                 )
-                float inputs:metallic_constant = 0
             }
         }
 
-        over "mat_587DE6A72B5FF099"
+        over "mat_246A524242FB67F4"
         {
             over "Shader"
             {
-                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
-                asset inputs:reflectionroughness_texture = @./textures\B351513B603C41B6_roughness.dds@ (
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                float inputs:ior_constant = 1.33
+                bool inputs:thin_walled = 0
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86)
+                float inputs:transmittance_measurement_distance = 800
+                bool inputs:preload_textures = 1
+                float inputs:reflection_roughness_constant = 0.5
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\gm_construct_water_13_normal_normal.dds@ (
                     colorSpace = "raw"
                 )
-                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_4E1793D6EDBAAA5D"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                float inputs:ior_constant = 1.33
+                bool inputs:thin_walled = 0
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86)
+                float inputs:transmittance_measurement_distance = 800
+                bool inputs:preload_textures = 1
+                float inputs:reflection_roughness_constant = 0.5
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\gm_construct_water_13_normal_normal.dds@ (
+                    colorSpace = "raw"
+                )
+            }
+        }
+
+        over "mat_89B9BCB2947CDFDD"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                float inputs:ior_constant = 1.33
+                bool inputs:thin_walled = 0
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86)
+                float inputs:transmittance_measurement_distance = 800
+                bool inputs:preload_textures = 1
+                float inputs:reflection_roughness_constant = 0.5
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\gm_construct_water_13_normal_normal.dds@ (
+                    colorSpace = "raw"
+                )
+            }
+        }
+
+        over "mat_238DA6B653CFC05E"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                float inputs:ior_constant = 1.33
+                bool inputs:thin_walled = 0
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86)
+                float inputs:transmittance_measurement_distance = 800
+                bool inputs:preload_textures = 1
+                float inputs:reflection_roughness_constant = 0.5
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\gm_construct_water_13_normal_normal.dds@ (
+                    colorSpace = "raw"
+                )
+            }
+        }
+
+        over "mat_BD45F30CF2C224AB"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                float inputs:ior_constant = 1.33
+                bool inputs:thin_walled = 0
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86)
+                float inputs:transmittance_measurement_distance = 800
+                bool inputs:preload_textures = 1
+                float inputs:reflection_roughness_constant = 0.5
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\gm_construct_water_13_normal_normal.dds@ (
+                    colorSpace = "raw"
+                )
+            }
+        }
+
+        over "mat_6CCA52E8C6B8754C"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                float inputs:ior_constant = 1.33
+                bool inputs:thin_walled = 0
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86)
+                float inputs:transmittance_measurement_distance = 800
+                bool inputs:preload_textures = 1
+                float inputs:reflection_roughness_constant = 0.5
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\gm_construct_water_13_normal_normal.dds@ (
+                    colorSpace = "raw"
+                )
+            }
+        }
+
+        over "mat_C540854EDC0AB8A9"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                float inputs:ior_constant = 1.33
+                bool inputs:thin_walled = 0
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86)
+                float inputs:transmittance_measurement_distance = 800
+                bool inputs:preload_textures = 1
+                float inputs:reflection_roughness_constant = 0.5
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\gm_construct_water_13_normal_normal.dds@ (
+                    colorSpace = "raw"
+                )
+            }
+        }
+
+        over "mat_17BC2EFA68B94C7B"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                float inputs:ior_constant = 1.33
+                bool inputs:thin_walled = 0
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86)
+                float inputs:transmittance_measurement_distance = 800
+                bool inputs:preload_textures = 1
+                float inputs:reflection_roughness_constant = 0.5
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\gm_construct_water_13_normal_normal.dds@ (
+                    colorSpace = "raw"
+                )
+            }
+        }
+
+        over "mat_83B852639448BDE2"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                float inputs:ior_constant = 1.33
+                bool inputs:thin_walled = 0
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86)
+                float inputs:transmittance_measurement_distance = 800
+                bool inputs:preload_textures = 1
+                float inputs:reflection_roughness_constant = 0.5
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\gm_construct_water_13_normal_normal.dds@ (
+                    colorSpace = "raw"
+                )
+            }
+        }
+
+        over "mat_E6453610F7A2D7A0"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                float inputs:ior_constant = 1.33
+                bool inputs:thin_walled = 0
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86)
+                float inputs:transmittance_measurement_distance = 800
+                bool inputs:preload_textures = 1
+                float inputs:reflection_roughness_constant = 0.5
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\gm_construct_water_13_normal_normal.dds@ (
+                    colorSpace = "raw"
+                )
+            }
+        }
+
+        over "mat_8E10A463FB835EA0"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                float inputs:ior_constant = 1.33
+                bool inputs:thin_walled = 0
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86)
+                float inputs:transmittance_measurement_distance = 800
+                bool inputs:preload_textures = 1
+                float inputs:reflection_roughness_constant = 0.5
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\gm_construct_water_13_normal_normal.dds@ (
+                    colorSpace = "raw"
+                )
+            }
+        }
+
+        over "mat_AF62D1D27312D7B6"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                float inputs:ior_constant = 1.33
+                bool inputs:thin_walled = 0
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86)
+                float inputs:transmittance_measurement_distance = 800
+                bool inputs:preload_textures = 1
+                float inputs:reflection_roughness_constant = 0.5
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\gm_construct_water_13_normal_normal.dds@ (
+                    colorSpace = "raw"
+                )
+            }
+        }
+
+        over "mat_4B7C74B8908C42E8"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                float inputs:ior_constant = 1.33
+                bool inputs:thin_walled = 0
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86)
+                float inputs:transmittance_measurement_distance = 800
+                bool inputs:preload_textures = 1
+                float inputs:reflection_roughness_constant = 0.5
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\gm_construct_water_13_normal_normal.dds@ (
+                    colorSpace = "raw"
+                )
+            }
+        }
+
+        over "mat_F344C6B019C4F74A"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                float inputs:ior_constant = 1.33
+                bool inputs:thin_walled = 0
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86)
+                float inputs:transmittance_measurement_distance = 800
+                bool inputs:preload_textures = 1
+                float inputs:reflection_roughness_constant = 0.5
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\gm_construct_water_13_normal_normal.dds@ (
+                    colorSpace = "raw"
+                )
+            }
+        }
+
+        over "mat_E31BBDDE7B742B3D"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                float inputs:ior_constant = 1.33
+                bool inputs:thin_walled = 0
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86)
+                float inputs:transmittance_measurement_distance = 800
+                bool inputs:preload_textures = 1
+                float inputs:reflection_roughness_constant = 0.5
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\gm_construct_water_13_normal_normal.dds@ (
+                    colorSpace = "raw"
+                )
+            }
+        }
+
+        over "mat_9D49C1B9C4E66CB5"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                float inputs:ior_constant = 1.33
+                bool inputs:thin_walled = 0
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86)
+                float inputs:transmittance_measurement_distance = 800
+                bool inputs:preload_textures = 1
+                float inputs:reflection_roughness_constant = 0.5
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\gm_construct_water_13_normal_normal.dds@ (
+                    colorSpace = "raw"
+                )
+            }
+        }
+
+        over "mat_3CEFC686D8240FED"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Translucent"
+                float inputs:ior_constant = 1.33
+                bool inputs:thin_walled = 0
+                color3f inputs:transmittance_color = (0.3, 0.65, 0.86)
+                float inputs:transmittance_measurement_distance = 800
+                bool inputs:preload_textures = 1
+                float inputs:reflection_roughness_constant = 0.5
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\gm_construct_water_13_normal_normal.dds@ (
+                    colorSpace = "raw"
+                )
             }
         }
 
@@ -608,11 +1239,356 @@ over "RootNode"
             over "Shader"
             {
                 uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                bool inputs:preload_textures = 1
                 int inputs:encoding = 0
-                asset inputs:normalmap_texture = @./textures\EA6D6293F14FDA22_normal.dds@ (
+                asset inputs:normalmap_texture = @./textures\concrete_concretefloor028c_normal_normal.dds@ (
                     colorSpace = "raw"
                 )
-                asset inputs:reflectionroughness_texture = @./textures\6F4A2B57D8A0D21E_roughness.dds@ (
+                asset inputs:reflectionroughness_texture = @./textures\concrete_concretefloor028c_normal_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_D2424D8A4DB31630"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                float inputs:reflection_roughness_constant = 0.05
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_B82E3786629E13FC"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                bool inputs:preload_textures = 1
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\models_weapons_v_crowbar_head_normal_normal.dds@ (
+                    colorSpace = "raw"
+                )
+                asset inputs:reflectionroughness_texture = @./textures\models_weapons_v_crowbar_head_normal_phongmask_roughness_v2_r586.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_40E1336635659BEE"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                bool inputs:preload_textures = 1
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\models_weapons_v_crowbar_crowbar_normal_normal.dds@ (
+                    colorSpace = "raw"
+                )
+                asset inputs:reflectionroughness_texture = @./textures\models_weapons_v_crowbar_crowbar_normal_phongmask_roughness_v2_r586.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_832C051789D21147"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                float inputs:reflection_roughness_constant = 0.05
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_5623FADCD30C90ED"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                bool inputs:preload_textures = 1
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\models_weapons_v_physcannon_v_physcannon_normal_normal.dds@ (
+                    colorSpace = "raw"
+                )
+                asset inputs:reflectionroughness_texture = @./textures\models_weapons_v_physcannon_v_physcannon_normal_phongmask_roughness_v2_r492.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_E0A68D7F706BAC3D"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                float inputs:reflection_roughness_constant = 0.58566
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_E341777B5370B6F5"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                bool inputs:preload_textures = 1
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\models_weapons_v_irifle_v_irifle_normal_normal.dds@ (
+                    colorSpace = "raw"
+                )
+                asset inputs:reflectionroughness_texture = @./textures\models_weapons_v_irifle_v_irifle_normal_phongmask_roughness_v2_r496.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_BFC689A4D66701FE"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                asset inputs:reflectionroughness_texture = @./textures\models_weapons_v_357_357_sheet_roughness.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_7F68DBEF3ECDAD5A"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                bool inputs:preload_textures = 1
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\models_weapons_v_pistol_v_pistol_sheet_normal_normal.dds@ (
+                    colorSpace = "raw"
+                )
+                asset inputs:reflectionroughness_texture = @./textures\models_weapons_v_pistol_v_pistol_sheet_normal_phongmask_roughness_v2_r586.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_E5B68A6B4D452980"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                bool inputs:preload_textures = 1
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\models_weapons_v_shotgun_vshotgun_normal_normal.dds@ (
+                    colorSpace = "raw"
+                )
+                asset inputs:reflectionroughness_texture = @./textures\models_weapons_v_shotgun_vshotgun_normal_phongmask_roughness_v2_r639.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_4FCE3105CBC0365"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                float inputs:reflection_roughness_constant = 0.0525578
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_191468153B84E0B"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                bool inputs:preload_textures = 1
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\models_weapons_v_smg1_smg1_normal_normal.dds@ (
+                    colorSpace = "raw"
+                )
+                asset inputs:reflectionroughness_texture = @./textures\models_weapons_v_smg1_smg1_normal_phongmask_roughness_v2_r454.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_DA9FA59A4F48609"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                float inputs:reflection_roughness_constant = 0.44285
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_E3E4E1DC8E1693FD"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                bool inputs:preload_textures = 1
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\models_weapons_v_crossbow_string_normal_normal.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:reflection_roughness_constant = 0.614788
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_7D03C257937F686B"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                bool inputs:preload_textures = 1
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\models_weapons_v_grenade_top_normal_normal.dds@ (
+                    colorSpace = "raw"
+                )
+                asset inputs:reflectionroughness_texture = @./textures\models_weapons_v_grenade_top_normal_phongmask_roughness_v2_r457.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_BA8219A8370ABA7D"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                float inputs:reflection_roughness_constant = 0.58566
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_EFB1810522A046EA"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                bool inputs:preload_textures = 1
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\models_weapons_v_grenade_rim_normal_normal.dds@ (
+                    colorSpace = "raw"
+                )
+                asset inputs:reflectionroughness_texture = @./textures\models_weapons_v_grenade_rim_normal_phongmask_roughness_v2_r348.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_2DC77107059138FA"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                bool inputs:preload_textures = 1
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\models_weapons_v_grenade_handle_normal_normal.dds@ (
+                    colorSpace = "raw"
+                )
+                asset inputs:reflectionroughness_texture = @./textures\models_weapons_v_grenade_handle_normal_phongmask_roughness_v2_r389.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_D4A273A97228989E"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                bool inputs:preload_textures = 1
+                int inputs:encoding = 0
+                asset inputs:normalmap_texture = @./textures\models_weapons_v_rocket_launcher_flat_normal_normal.dds@ (
+                    colorSpace = "raw"
+                )
+                asset inputs:reflectionroughness_texture = @./textures\models_weapons_v_rocket_launcher_flat_normal_phongmask_roughness_v2_r522.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_5204E284950C34F1"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                float inputs:reflection_roughness_constant = 0.383982
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_6D17D95D40C8C26B"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                asset inputs:reflectionroughness_texture = @./textures\models_weapons_v_toolgun_toolgun_exp_phongexp_roughness_v2.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_700892715F231EDC"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                asset inputs:reflectionroughness_texture = @./textures\models_weapons_v_toolgun_toolgun3_exp_phongexp_roughness_v2.dds@ (
+                    colorSpace = "raw"
+                )
+                float inputs:metallic_constant = 0
+            }
+        }
+
+        over "mat_BD65FF791FCB017B"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opaque.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opaque"
+                asset inputs:reflectionroughness_texture = @./textures\models_props_buildings_buildingsheet_03a_roughness.dds@ (
                     colorSpace = "raw"
                 )
                 float inputs:metallic_constant = 0
