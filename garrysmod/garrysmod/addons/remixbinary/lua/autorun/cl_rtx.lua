@@ -108,21 +108,37 @@ hook.Add("Think", "RemixPatchSync", function()
     end
 end)
 
+local HL2RTX_MOUNT_MARKER = ".rtxlauncher-hl2rtx-overlay.json"
+local hl2RTXMounted = file.Exists(HL2RTX_MOUNT_MARKER, "GAME")
+
 -- stupidly cursed way to persist hw skin convar
-local function PersistBinaryConVar(name, default)
+local function PersistBinaryConVar(name, default, forcedValue)
     local saved = cookie.GetString(name, default)
-    RunConsoleCommand(name, saved)
+    local desiredValue = forcedValue or saved
+
+    RunConsoleCommand(name, desiredValue)
     cvars.AddChangeCallback(name, function(_, _, newValue)
+        if forcedValue then
+            if newValue ~= forcedValue then
+                RunConsoleCommand(name, forcedValue)
+            end
+            return
+        end
+
         cookie.Set(name, newValue)
     end, "persist_" .. name)
-    return saved
+    return desiredValue
 end
 
-local savedForceHardwareSkinning = PersistBinaryConVar("r_forcehwskin", "0")
+local desiredForceHardwareSkinning = PersistBinaryConVar(
+    "r_forcehwskin",
+    "0",
+    hl2RTXMounted and "1" or nil
+)
 
 local function ReloadModelsAfterHardwareSkinningSetting(attempt)
     local convar = GetConVar("r_forcehwskin")
-    if convar and convar:GetString() == savedForceHardwareSkinning then
+    if convar and convar:GetString() == desiredForceHardwareSkinning then
         if RTX_ReloadModelsAfterHardwareSkinningSettings then
             RTX_ReloadModelsAfterHardwareSkinningSettings()
         end

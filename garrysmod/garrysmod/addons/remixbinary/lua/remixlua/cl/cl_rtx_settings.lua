@@ -5,6 +5,12 @@ local CONVARS = {
     SHOW_3DSKY_WARNING = CreateClientConVar("rtx_show_3dsky_warning", "1", true, false, "Show warning when enabling r_3dsky")
 }
 
+local HL2RTX_MOUNT_MARKER = ".rtxlauncher-hl2rtx-overlay.json"
+
+local function IsHL2RTXMounted()
+    return file.Exists(HL2RTX_MOUNT_MARKER, "GAME")
+end
+
 -- Force enable lightupdaters on 32-bit (API lights not available)
 local is32Bit = not (BRANCH == "x86-64" or BRANCH == "chromium")
 if is32Bit then
@@ -20,9 +26,14 @@ hook.Add( "PopulateToolMenu", "RTXOptionsClient_BaseOptions", function()
         panel:CheckBox( "Pseudoweapon Enabled", "rtx_pseudoweapon" )
         panel:ControlHelp( "Similar to above, but for the weapon you're holding." )
 
-        panel:CheckBox( "Hardware Skinning", "r_forcehwskin" )
+        local hardwareSkinningCheckbox = panel:CheckBox( "Hardware Skinning", "r_forcehwskin" )
         panel:ControlHelp( "Enables hardware skinning, allows for dynamic mesh replacements for Remix to work." )
-        panel:ControlHelp( "Highly experimental, may cause issues with some models or not work at all." )
+        if IsHL2RTXMounted() then
+            hardwareSkinningCheckbox:SetEnabled( false )
+            panel:ControlHelp( "Required and forced on while Half-Life 2 RTX is mounted." )
+        else
+            panel:ControlHelp( "Highly experimental, may cause issues with some models or not work at all." )
+        end
 
         panel:CheckBox( "Fix Skybox Leaking", "rtx_sbr_enable" )
         panel:ControlHelp( "Hides geometry behind the skybox to prevent it from leaking through, doesn't allow light_enviornment entities to pass through though." )
