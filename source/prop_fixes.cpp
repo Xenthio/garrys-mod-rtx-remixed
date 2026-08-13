@@ -12,12 +12,30 @@
 #include <c_baseanimating.h>
 #include "engine/ivmodelinfo.h"
 #include <tier0/dbg.h>
+#ifdef _WIN64
+#include "HardwareSkinningHooks.h"
+#endif
 #include <cstdio>
 #include <cstdarg>
 
 // Debug output function that works in Release builds
 // Uses OutputDebugStringA which shows in VS Output window when debugging
 static void DebugPrintVS(const char* format, ...) {
+    if (!GlobalConvars::r_hwskin_debug ||
+        !GlobalConvars::r_hwskin_debug->GetBool()) {
+        return;
+    }
+
+    char buffer[1024];
+    va_list args;
+    va_start(args, format);
+    vsnprintf(buffer, sizeof(buffer), format, args);
+    va_end(args);
+    buffer[sizeof(buffer) - 1] = '\0';
+    OutputDebugStringA(buffer);
+}
+
+static void ErrorPrintVS(const char* format, ...) {
     char buffer[1024];
     va_list args;
     va_start(args, format);
@@ -36,10 +54,10 @@ static void DebugPrintVS(const char* format, ...) {
 #define Msg(...) DebugPrintVS(__VA_ARGS__)
 #endif
 #ifndef Warning
-#define Warning(...) DebugPrintVS(__VA_ARGS__)
+#define Warning(...) ErrorPrintVS(__VA_ARGS__)
 #endif
 #ifndef Error
-#define Error(...) DebugPrintVS(__VA_ARGS__)
+#define Error(...) ErrorPrintVS(__VA_ARGS__)
 #endif
 
 using namespace GarrysMod::Lua;
@@ -425,18 +443,26 @@ Define_method_Hook(int*, R_StudioDrawDynamicMesh, void*, IMatRenderContext* pRen
 	}
 #endif
 
+#ifdef _WIN64
+	return HardwareSkinning_DrawDynamicMesh(
+		_this, pRenderContext, pmesh, pGroup, actualLighting, r_blend,
+		pMaterial, lod,
+		reinterpret_cast<HWSkinDrawDynamicMeshFn>(
+			R_StudioDrawDynamicMesh_trampoline()));
+#else
 	int* returncode = nullptr;
 	__try {
-		returncode = R_StudioDrawDynamicMesh_trampoline()(_this, pRenderContext, pmesh, pGroup, actualLighting, r_blend, pMaterial, lod);
+		returncode = R_StudioDrawDynamicMesh_trampoline()(
+			_this, pRenderContext, pmesh, pGroup, actualLighting, r_blend,
+			pMaterial, lod);
 	}
 	__except(EXCEPTION_EXECUTE_HANDLER) {
-		// Crash in trampoline - just return nullptr silently
 		return nullptr;
 	}
-	
 	return returncode;
+#endif
 }
- 
+
 void ModelRenderHooks::Initialize() {
 	try { 
 
@@ -540,7 +566,7 @@ void ModelRenderHooks::Initialize() {
 		Msg("[PropFixes] Setting up function hooks...\n");
 		auto studiorenderdll = GetModuleHandleA("studiorender.dll");
 		if (!studiorenderdll) { 
-			Msg("[PropFixes] ERROR: studiorender.dll module handle is NULL!\n"); 
+			Error("[PropFixes] ERROR: studiorender.dll module handle is NULL!\n");
 			return;
 		}
 		Msg("[PropFixes] studiorender.dll module at %p\n", studiorenderdll);
@@ -559,12 +585,6 @@ void ModelRenderHooks::Initialize() {
 		static const char R_StudioDrawDynamicMesh_sign[] = "55 8B EC 81 EC F8 01 00 00";
 		Msg("[PropFixes] Using 32-bit signature for R_StudioDrawDynamicMesh\n");
 #endif
-#ifdef _WIN64
-		static const char R_StudioDrawStaticMesh_sign[] = "40 55 53 56 57 41 54 41 55 41 56 41 57 48 8D AC 24";
-#else
-		static const char R_StudioDrawStaticMesh_sign[] = "55 8B EC 81 EC EC 01 00 00 83 7D";
-#endif
-
 		Msg("[PropFixes] Scanning for R_StudioSetupSkinAndLighting...\n");
 		auto R_StudioSetupSkinAndLighting = ScanSign(studiorenderdll, R_StudioSetupSkinAndLighting_sign, sizeof(R_StudioSetupSkinAndLighting_sign) - 1);
 		Msg("[PropFixes] R_StudioSetupSkinAndLighting found at: %p\n", R_StudioSetupSkinAndLighting);
@@ -574,14 +594,13 @@ void ModelRenderHooks::Initialize() {
 		Msg("[PropFixes] R_StudioDrawDynamicMesh found at: %p\n", R_StudioDrawDynamicMesh);
 
 		if (!R_StudioSetupSkinAndLighting) { 
-			Msg("[PropFixes] ERROR: R_StudioSetupSkinAndLighting signature not found!\n"); 
+			Error("[PropFixes] ERROR: R_StudioSetupSkinAndLighting signature not found!\n");
 			return; 
 		}
 		if (!R_StudioDrawDynamicMesh) { 
-			Msg("[PropFixes] ERROR: R_StudioDrawDynamicMesh signature not found!\n"); 
+			Error("[PropFixes] ERROR: R_StudioDrawDynamicMesh signature not found!\n");
 			return; 
 		}
-
 		Msg("[PropFixes] Installing hook for R_StudioSetupSkinAndLighting...\n");
 		Setup_Hook(R_StudioSetupSkinAndLighting, R_StudioSetupSkinAndLighting)
 		Msg("[PropFixes] Hook installed for R_StudioSetupSkinAndLighting\n");
@@ -589,6 +608,12 @@ void ModelRenderHooks::Initialize() {
 		Msg("[PropFixes] Installing hook for R_StudioDrawDynamicMesh...\n");
 		Setup_Hook(R_StudioDrawDynamicMesh, R_StudioDrawDynamicMesh)
 		Msg("[PropFixes] Hook installed for R_StudioDrawDynamicMesh\n");
+
+#ifdef _WIN64
+		HardwareSkinning_SetDynamicMeshOriginal(
+			reinterpret_cast<HWSkinDrawDynamicMeshFn>(
+				R_StudioDrawDynamicMesh_trampoline()));
+#endif
 
 		//MaterialSystem_Config_t cfg = materials->GetCurrentConfigForVideoCard();
 		//cfg.bSoftwareLighting = false;
@@ -667,7 +692,7 @@ void ModelRenderHooks::Initialize() {
 
 	}
 	catch (...) {
-		Msg("[Prop Fixes] Exception in ModelRenderHooks::Initialize\n");
+		Error("[Prop Fixes] Exception in ModelRenderHooks::Initialize\n");
 	}
 }
 
@@ -691,7 +716,11 @@ void ModelRenderHooks::Shutdown() {
         // Safely disable hooks
         if (R_StudioSetupSkinAndLighting_hook.IsEnabled())
             R_StudioSetupSkinAndLighting_hook.Disable();
-        
+
+#ifdef _WIN64
+        HardwareSkinning_SetDynamicMeshOriginal(nullptr);
+#endif
+
         if (R_StudioDrawDynamicMesh_hook.IsEnabled())
             R_StudioDrawDynamicMesh_hook.Disable();
         

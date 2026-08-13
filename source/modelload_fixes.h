@@ -11,6 +11,7 @@ public:
     }
 
     void Initialize();
+    void ReloadModelsAfterSettings();
     void Shutdown();
 private:
     // Hook objects

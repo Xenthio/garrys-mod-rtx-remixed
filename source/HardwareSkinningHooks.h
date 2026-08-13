@@ -10,6 +10,45 @@ namespace OptimizedModel {
     struct StripGroupHeader_t;
 }
 
+class IMaterial;
+
+// prop_fixes.cpp already owns the R_StudioDrawDynamicMesh detour. Route that
+// detour through the hardware-skinning module so facial flexes can share the
+// same hook instead of installing two MinHook patches on one function.
+using HWSkinDrawDynamicMeshFn = int* (__fastcall*)(
+    void* pStudioRender,
+    void* pRenderContext,
+    void* pMesh,
+    studiomeshgroup_t* pGroup,
+    int lighting,
+    float blend,
+    IMaterial* pMaterial,
+    int lod);
+
+int* HardwareSkinning_DrawDynamicMesh(
+    void* pStudioRender,
+    void* pRenderContext,
+    void* pMesh,
+    studiomeshgroup_t* pGroup,
+    int lighting,
+    float blend,
+    IMaterial* pMaterial,
+    int lod,
+    HWSkinDrawDynamicMeshFn original);
+
+// prop_fixes.cpp owns the one R_StudioDrawDynamicMesh hook. Publish its
+// trampoline so the already-installed static hardware draw hook can rebuild a
+// forced eye through the flexed dynamic path without double-hooking the static
+// routine.
+void HardwareSkinning_SetDynamicMeshOriginal(
+    HWSkinDrawDynamicMeshFn original);
+
+// True only while R_StudioDrawEyeball is submitting an eye that has been
+// explicitly routed to the hardware-skinning path. The existing hardware draw
+// detour uses this to replace the eye's outer static delta-flex draw with the
+// dynamic flex builder while retaining GPU bone weights.
+bool HardwareSkinning_IsForcedEyeDraw();
+
 class HardwareSkinningHooks {
 public:
     static HardwareSkinningHooks& Instance() {

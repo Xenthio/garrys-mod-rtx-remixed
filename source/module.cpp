@@ -271,6 +271,17 @@ LUA_FUNCTION(SetModelDrawHookEnabled_Lua) {
 }
 
 #ifdef _WIN64
+LUA_FUNCTION(ReloadModelsAfterHardwareSkinningSettings_Lua) {
+    try {
+        ModelLoadHooks::Instance().ReloadModelsAfterSettings();
+        return 0;
+    }
+    catch (...) {
+        Error("[gmRTX - Model Load Fixes] Exception while reloading models after hardware-skinning settings\n");
+        return 0;
+    }
+}
+
 LUA_FUNCTION(CleanupMapTextures_Lua) {
     try {
         LUA->PushBool(PerformTextureCleanup("client Lua ShutDown", true));
@@ -409,6 +420,10 @@ GMOD_MODULE_OPEN() {
         Msg("[gmRTX - Binary Module] Registering RTX_CleanupMapTextures Lua function...\n");
         LUA->PushCFunction(CleanupMapTextures_Lua);
         LUA->SetField(-2, "RTX_CleanupMapTextures");
+
+        Msg("[gmRTX - Binary Module] Registering RTX_ReloadModelsAfterHardwareSkinningSettings Lua function...\n");
+        LUA->PushCFunction(ReloadModelsAfterHardwareSkinningSettings_Lua);
+        LUA->SetField(-2, "RTX_ReloadModelsAfterHardwareSkinningSettings");
 #endif
 
         //Msg("[gmRTX - Binary Module] Registering SetModelDrawHookEnabled Lua function...\n");

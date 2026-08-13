@@ -17,6 +17,7 @@ ConVar* GlobalConvars::r_forcehwlight;
 ConVar* GlobalConvars::rtx_force_static_lighting;
 ConVar* GlobalConvars::r_forcehwskin;
 ConVar* GlobalConvars::r_hwskin_debug;
+ConVar* GlobalConvars::r_hwskin_debug_filter;
 ConVar* GlobalConvars::r_hwskin_setbones;
 ConVar* GlobalConvars::r_hwskin_transform_chain;
 ConVar* GlobalConvars::r_hwskin_transpose;
@@ -70,13 +71,16 @@ void GlobalConvars::InitialiseConVars() {
 	rtx_force_static_lighting = CreateOrFindConVar("rtx_force_static_lighting", "1", "Force all models to use static lighting for RTX");
 	r_forcehwskin = CreateOrFindConVar("r_forcehwskin", "0", "Force hardware skinning for all models (RTX Remix)");
 	r_hwskin_debug = CreateOrFindConVar("r_hwskin_debug", "0", "Enable debug logging for hardware skinning");
+	r_hwskin_debug_filter = CreateOrFindConVar(
+		"r_hwskin_debug_filter", "",
+		"Comma-separated model-name substrings for detailed hardware-skinning traces");
 	r_hwskin_setbones = CreateOrFindConVar("r_hwskin_setbones", "1", "Enable D3D9 bone matrix setting (set to 0 to disable for debugging)");
 	r_hwskin_transform_chain = CreateOrFindConVar("r_hwskin_transform_chain", "0", "Use full poseToBone transform chain (0 = direct passthrough, 1 = full chain)");
 	r_hwskin_transpose = CreateOrFindConVar("r_hwskin_transpose", "1", "Transpose matrices for D3D9 (0 = no transpose, 1 = transpose)");
 	r_hwskin_clear = CreateOrFindConVar("r_hwskin_clear", "1", "Clear matrices to identity before setting (0 = no, 1 = yes)");
 	r_hwskin_force_flag = CreateOrFindConVar("r_hwskin_force_flag", "0", "Force MESHGROUP_IS_HWSKINNED flag on multi-bone models at load time");
 	r_hwskin_ubyte4 = CreateOrFindConVar("r_hwskin_ubyte4", "1", "Apply UBYTE4 vertex declaration patch for bone indices during skinned model creation");
-	r_hwskin_vtx_hw = CreateOrFindConVar("r_hwskin_vtx_hw", "1", "Keep HW vertex data (.dx90.vtx) instead of SW redirect for skinned models");
+	r_hwskin_vtx_hw = CreateOrFindConVar("r_hwskin_vtx_hw", "0", "Use legacy HW vertex data (.dx90.vtx) instead of HL2 RTX-compatible SW VTX ordering for skinned models");
 
 	r_eyes_hwskin = m_pLuaConVars->CreateConVar("r_eyes_hwskin", "1", "Force eye meshes through HW skinning path for RTX Remix (0 = disabled, 1 = enabled)", FCVAR_ARCHIVE);
 	if (!r_eyes_hwskin) { r_eyes_hwskin = cvar->FindVar("r_eyes_hwskin"); }

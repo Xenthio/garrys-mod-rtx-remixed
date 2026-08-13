@@ -1,0 +1,11 @@
+{
+  "title": "Half-Life 2 RTX Compat",
+  "type": "servercontent",
+  "tags": [
+    "fun"
+  ],
+  "ignore": [
+    "rtxlauncher-mount-contract.json",
+    ".rtxlauncher-hl2rtx-overlay.json"
+  ]
+}

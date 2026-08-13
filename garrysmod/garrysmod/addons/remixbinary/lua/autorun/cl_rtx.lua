@@ -115,9 +115,44 @@ local function PersistBinaryConVar(name, default)
     cvars.AddChangeCallback(name, function(_, _, newValue)
         cookie.Set(name, newValue)
     end, "persist_" .. name)
+    return saved
 end
 
-PersistBinaryConVar("r_forcehwskin", "0")
+local savedForceHardwareSkinning = PersistBinaryConVar("r_forcehwskin", "0")
+
+local function ReloadModelsAfterHardwareSkinningSetting(attempt)
+    local convar = GetConVar("r_forcehwskin")
+    if convar and convar:GetString() == savedForceHardwareSkinning then
+        if RTX_ReloadModelsAfterHardwareSkinningSettings then
+            RTX_ReloadModelsAfterHardwareSkinningSettings()
+        end
+        return
+    end
+
+    if attempt < 60 then
+        timer.Simple(0, function()
+            ReloadModelsAfterHardwareSkinningSetting(attempt + 1)
+        end)
+    else
+        ErrorNoHalt("[gmRTX - Hardware Skinning] Timed out restoring r_forcehwskin before model reload\n")
+    end
+end
+
+timer.Simple(0, function()
+    ReloadModelsAfterHardwareSkinningSetting(1)
+end)
+
+-- The engine can still have model VTX jobs queued when the client module and
+-- this autorun file first load. Those jobs may repopulate MDLCache with DX90
+-- topology after the initial flush. Run one final hardware-data-only flush
+-- once map initialization and its preload batch have completed.
+hook.Add("InitPostEntity", "RTXHardwareSkinning_FinalModelReload", function()
+    timer.Simple(1, function()
+        if RTX_ReloadModelsAfterHardwareSkinningSettings then
+            RTX_ReloadModelsAfterHardwareSkinningSettings()
+        end
+    end)
+end)
 
 -- Load all sub-addons
 LoadSubAddons()
