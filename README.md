@@ -1,21 +1,16 @@
  > This project uses AI-generated code.
 
-<img src="https://github.com/user-attachments/assets/fad469d4-b7b2-428c-a093-5b497f02d820" alt="drawing" width="500"/>
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/fad469d4-b7b2-428c-a093-5b497f02d820" width="500" />
+</p>
 
 ## Features
-- ToPBR: Automatically converts Source Engine materials to PBR at runtime **(WIP)**
-    - Reads VTF texture files directly from Source Engine filesystem
-    - Writes PBR textures (normal, roughness, metallic) to `rtx-remix/mods/~gmod_topbr/textures/`
-    - Generates roughness textures from `$envmapmask` or `$phongexponent`
-    - Estimates metallic from `$phongboost` values
-    - Auto-processes materials on map load
-- Hardware Skinning **(WIP)**
-- Remix API Support (x64 only)
-    - Lights
-    - Lua bindings for addon creation
+- ToPBR: Automatically converts Source Engine materials to PBR at runtime
+- Hardware Skinning (For Half-Life 2 RTX Assets)
+- Remix API Support (including Lua bindings for addon creation)
       
 ## Installation
-- Switch to the `x86-64` branch of Garry's Mod on Steam (x32 works but not recommended)
+- Switch to the `x86-64` branch of Garry's Mod on Steam
 - Ensure you've ran the vanilla game at least once, especially if you switched branches.
 - Download [RTXLauncher](https://github.com/Xenthio/RTXLauncher/releases) (Use the newer nightly if available).
 - **Windows**
@@ -36,7 +31,7 @@ You can join servers without the addon but you ***will*** experience visual issu
 
 ## Support
 ### [Problematic Addons](https://github.com/Xenthio/garrys-mod-rtx-remixed/wiki/Problematic-Addons)
-### [Known issues](https://github.com/Xenthio/garrys-mod-rtx-remixed/wiki/Known-Issues)
+### [Common issues](https://github.com/Xenthio/garrys-mod-rtx-remixed/wiki/Common-Issues)
 
 ## Recommended Resources
 [HDRI Editor](https://github.com/sambow23/hdri_cube/blob/main/README.md)
