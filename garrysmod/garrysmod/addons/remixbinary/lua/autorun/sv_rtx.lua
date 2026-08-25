@@ -31,7 +31,7 @@ if (SERVER) then
 			end
 			
 			-- Send client files to clients
-			local clientFolders = {"remixlua/cl/", "remixlua/cl/remixapi/"}
+			local clientFolders = {"remixlua/cl/", "remixlua/cl/remixapi/", "remixlua/cl/remixapi/wrappers/", "remixlua/cl/customrender/"}
 			for _, folder in ipairs(clientFolders) do
 				local files, _ = file.Find(folder .. "*.lua", "LUA")
 				if files then
