@@ -1,5 +1,11 @@
 if not CLIENT then return end
 
+-- Prevents client side lua errors in multiplayer since not every client may have RTX installed
+if not game.SinglePlayer() and not util.IsBinaryModuleInstalled("RTXFixesBinary") then
+    print("[gmRTX-cl] RTX Fixes binary module not installed, skipping client side code load.")
+    return
+end
+
 if CLIENT then
     require((BRANCH == "x86-64" or BRANCH == "chromium" ) and "RTXFixesBinary" or "RTXFixesBinary")
 end
