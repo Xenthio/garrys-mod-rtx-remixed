@@ -53,6 +53,19 @@ CreateWorkspace({name = "RTXFixesBinary", abi_compatible = false, path = ""})
 			"source/material_pipeline/to_pbr/*.h",
 		} 
 
+		filter({"system:windows", "platforms:x86_64"})
+			includedirs("source/advmat_rtx_bridge/include")
+			files {
+				"source/advmat_rtx_bridge/src/bridge.cpp",
+				"source/advmat_rtx_bridge/src/filesystem_utils.cpp",
+				"source/advmat_rtx_bridge/src/internal.h",
+				"source/advmat_rtx_bridge/src/lua_bindings.cpp",
+				"source/advmat_rtx_bridge/src/texture_ingest.cpp",
+				"source/advmat_rtx_bridge/src/usda_writer.cpp",
+				"source/advmat_rtx_bridge/include/advmat_rtx_bridge/*.h",
+			}
+			links({"windowscodecs", "ole32"})
+			exceptionhandling("On")
 
 		filter("system:windows")
 			files({"source/win32/*.cpp", "source/win32/*.hpp"})
