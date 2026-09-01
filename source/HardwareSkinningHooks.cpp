@@ -1313,12 +1313,14 @@ static void DisableUBYTE4Patch() {
 
 // Software VTX files use the topology/order captured by Half-Life 2 RTX, but
 // their strip groups are marked for CPU skinning. Temporarily promote those
-// groups before Source builds the static mesh. SW VTX bone IDs are global
-// skeleton indices, which are compatible with our direct D3D9 matrix fallback.
+// groups before Source builds the static mesh. When no matching SW companion
+// exists, the loader supplies DX90 data here instead; its delta-only facial
+// groups also need a temporary compatibility flag before mesh creation.
 struct StripGroupFlagBackup {
     OptimizedModel::StripGroupHeader_t* pStripGroup;
     unsigned char flags;
     int slotZeroBoneID;
+    bool forcedDynamicFlex;
 };
 
 static const int MAX_VTX_STRIP_GROUPS = 32;
@@ -1739,6 +1741,8 @@ static void TraceHardwareSkinningDraw(
 static int PromoteVtxStripGroupsForHardwareSkinning(
     int* pVtxMesh,
     studiohdr_t* pStudioHdr,
+    mstudiomesh_t* pStudioMesh,
+    bool promoteHardwareSkinning,
     StripGroupFlagBackup* backups,
     int backupCapacity)
 {
@@ -1753,12 +1757,13 @@ static int PromoteVtxStripGroupsForHardwareSkinning(
         if (numStripGroups <= 0 || numStripGroups > backupCapacity ||
             pMeshHeader->stripGroupHeaderOffset <= 0) {
             HWSKIN_ERROR(
-                "[HWSkin] Invalid SW VTX mesh header (groups=%d, offset=%d)\n",
+                "[HWSkin] Invalid VTX mesh header (groups=%d, offset=%d)\n",
                 numStripGroups, pMeshHeader->stripGroupHeaderOffset);
             return 0;
         }
 
         int promotedCount = 0;
+        int forcedDynamicFlexCount = 0;
         // GMod extended StripGroupHeader_t by eight bytes for MDL v49+.
         // The fields used here retain their original offsets, but pointer
         // arithmetic through the SDK's 25-byte type would land on the wrong
@@ -1776,14 +1781,30 @@ static int PromoteVtxStripGroupsForHardwareSkinning(
             backups[i].pStripGroup = pStripGroup;
             backups[i].flags = pStripGroup->flags;
             backups[i].slotZeroBoneID = -1;
+            backups[i].forcedDynamicFlex = false;
+
+            // GMod's v49 StudioMDL can omit the legacy FLEXED bit when it
+            // emits only DX90 optimized data. Those groups retain the newer
+            // DELTA_FLEXED bit, which is normally consumed by a vertex shader,
+            // but Remix's fixed-function hardware-skinning path never applies
+            // that shader morph. A matching SW VTX already carries FLEXED, so
+            // the delta-only combination identifies the DX90 fallback that
+            // must be rebuilt by Source's dynamic facial-flex path instead.
+            const bool forceDynamicFlex =
+                pStudioMesh && pStudioMesh->numflexes > 0 &&
+                (pStripGroup->flags & STRIPGROUP_IS_DELTA_FLEXED) &&
+                !(pStripGroup->flags & STRIPGROUP_IS_FLEXED);
+            backups[i].forcedDynamicFlex = forceDynamicFlex;
 
             // The old flex-HW path rewrites every dynamic vertex to bone slot
-            // zero. SW VTX bone IDs are global skeleton IDs, so preserve the
-            // group's dominant original primary bone for that slot. This is
-            // exact for the normal rigid face groups and is the least-lossy
+            // zero. Preserve the group's dominant original primary bone/slot
+            // for that fallback; the binding record below separately tracks
+            // whether the VTX uses global SW IDs or hardware-local DX IDs.
+            // This is exact for normal rigid face groups and is the least-lossy
             // fallback for old mixed neck/face groups that Source's own flex
             // HW path cannot represent fully.
-            if ((pStripGroup->flags & STRIPGROUP_IS_FLEXED) &&
+            if (((pStripGroup->flags & STRIPGROUP_IS_FLEXED) ||
+                 forceDynamicFlex) &&
                 pStripGroup->numVerts > 0 &&
                 pStripGroup->numVerts < 100000 &&
                 pStripGroup->vertOffset > 0) {
@@ -1823,26 +1844,34 @@ static int PromoteVtxStripGroupsForHardwareSkinning(
                 if (HardwareSkinningDebugEnabled() &&
                     vtxFlexBindingLogCount++ < 64) {
                     HWSKIN_DBG(
-                        "[HWSkin] SW VTX flex source: group=%d/%d "
+                        "[HWSkin] VTX flex source: group=%d/%d "
                         "vertices=%d slot 0 -> bone %d (%d primary vertices)\n",
                         i + 1, numStripGroups, pStripGroup->numVerts,
                         dominantBoneID, dominantBoneCount);
                 }
             }
 
-            if (!(pStripGroup->flags & STRIPGROUP_IS_HWSKINNED)) {
+            if (forceDynamicFlex) {
+                pStripGroup->flags |= STRIPGROUP_IS_FLEXED;
+                forcedDynamicFlexCount++;
+            }
+
+            if (promoteHardwareSkinning &&
+                !(pStripGroup->flags & STRIPGROUP_IS_HWSKINNED)) {
                 pStripGroup->flags |= STRIPGROUP_IS_HWSKINNED;
                 promotedCount++;
             }
         }
 
         HWSKIN_DBG(
-            "[HWSkin] Pre-promoted %d/%d SW VTX strip groups for static GPU mesh creation\n",
-            promotedCount, numStripGroups);
+            "[HWSkin] Prepared %d/%d VTX strip groups for static GPU mesh "
+            "creation; forced %d delta-only facial groups through the dynamic "
+            "flex path\n",
+            promotedCount, numStripGroups, forcedDynamicFlexCount);
         return numStripGroups;
     }
     __except(EXCEPTION_EXECUTE_HANDLER) {
-        HWSKIN_ERROR("[HWSkin] Exception while promoting SW VTX strip groups\n");
+        HWSKIN_ERROR("[HWSkin] Exception while promoting VTX strip groups\n");
         return 0;
     }
 }
@@ -1856,7 +1885,40 @@ static void RestoreVtxStripGroupFlags(StripGroupFlagBackup* backups, int backupC
         }
     }
     __except(EXCEPTION_EXECUTE_HANDLER) {
-        HWSKIN_ERROR("[HWSkin] Exception while restoring SW VTX strip-group flags\n");
+        HWSKIN_ERROR("[HWSkin] Exception while restoring VTX strip-group flags\n");
+    }
+}
+
+static void PreserveForcedDynamicFlexGroupFlags(
+    __int64 pMeshData,
+    const StripGroupFlagBackup* backups,
+    int backupCount)
+{
+    __try {
+        if (!pMeshData || !backups || backupCount <= 0) {
+            return;
+        }
+
+        const int numGroups = *reinterpret_cast<int*>(pMeshData);
+        studiomeshgroup_t* pGroups = *reinterpret_cast<studiomeshgroup_t**>(
+            pMeshData + 8);
+        if (!pGroups || numGroups <= 0 || numGroups > 100) {
+            return;
+        }
+
+        const int groupsToPreserve =
+            (numGroups < backupCount) ? numGroups : backupCount;
+        for (int groupIndex = 0;
+             groupIndex < groupsToPreserve;
+             groupIndex++) {
+            if (backups[groupIndex].forcedDynamicFlex) {
+                pGroups[groupIndex].m_Flags |= MESHGROUP_IS_FLEXED;
+            }
+        }
+    }
+    __except(EXCEPTION_EXECUTE_HANDLER) {
+        HWSKIN_ERROR(
+            "[HWSkin] Exception while preserving dynamic flex-group flags\n");
     }
 }
 
@@ -2018,9 +2080,14 @@ Define_method_Hook(void*, R_StudioCreateSingleMesh, void*,
 
     StripGroupFlagBackup stripGroupBackups[MAX_VTX_STRIP_GROUPS] = {};
     int stripGroupBackupCount = 0;
-    if (numBones > 1 && useSoftwareVtx) {
+    mstudiomesh_t* studioMesh = reinterpret_cast<mstudiomesh_t*>(pMesh);
+    const bool needsDeltaFlexCompatibility =
+        numBones > 1 && studioMesh && studioMesh->numflexes > 0;
+    if (numBones > 1 &&
+        (useSoftwareVtx || needsDeltaFlexCompatibility)) {
         stripGroupBackupCount = PromoteVtxStripGroupsForHardwareSkinning(
             pVtxMesh, reinterpret_cast<studiohdr_t*>(pStudioHdr),
+            studioMesh, useSoftwareVtx,
             stripGroupBackups, MAX_VTX_STRIP_GROUPS);
     }
 
@@ -2059,6 +2126,15 @@ Define_method_Hook(void*, R_StudioCreateSingleMesh, void*,
     // Disable UBYTE4 patch after mesh creation
     if (needUBYTE4) {
         DisableUBYTE4Patch();
+    }
+
+    // Delta-only facial groups are a StudioMDL compatibility issue, not a
+    // force-hardware-skinning feature. Keep them on Source's dynamic flex path
+    // even when r_forcehwskin is disabled; in that mode the stock dynamic draw
+    // performs the deformation without any of our hardware-state overrides.
+    if (stripGroupBackupCount > 0) {
+        PreserveForcedDynamicFlexGroupFlags(
+            pMeshData, stripGroupBackups, stripGroupBackupCount);
     }
 
     if (forcehwskin && stripGroupBackupCount > 0) {
