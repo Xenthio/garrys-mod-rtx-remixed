@@ -2081,13 +2081,13 @@ Define_method_Hook(void*, R_StudioCreateSingleMesh, void*,
     StripGroupFlagBackup stripGroupBackups[MAX_VTX_STRIP_GROUPS] = {};
     int stripGroupBackupCount = 0;
     mstudiomesh_t* studioMesh = reinterpret_cast<mstudiomesh_t*>(pMesh);
+    const bool promoteSoftwareVtx = numBones > 1 && useSoftwareVtx;
     const bool needsDeltaFlexCompatibility =
-        numBones > 1 && studioMesh && studioMesh->numflexes > 0;
-    if (numBones > 1 &&
-        (useSoftwareVtx || needsDeltaFlexCompatibility)) {
+        studioMesh && studioMesh->numflexes > 0;
+    if (promoteSoftwareVtx || needsDeltaFlexCompatibility) {
         stripGroupBackupCount = PromoteVtxStripGroupsForHardwareSkinning(
             pVtxMesh, reinterpret_cast<studiohdr_t*>(pStudioHdr),
-            studioMesh, useSoftwareVtx,
+            studioMesh, promoteSoftwareVtx,
             stripGroupBackups, MAX_VTX_STRIP_GROUPS);
     }
 
