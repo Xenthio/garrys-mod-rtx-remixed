@@ -1803,8 +1803,9 @@ static int PromoteVtxStripGroupsForHardwareSkinning(
             // This is exact for normal rigid face groups and is the least-lossy
             // fallback for old mixed neck/face groups that Source's own flex
             // HW path cannot represent fully.
-            if (((pStripGroup->flags & STRIPGROUP_IS_FLEXED) ||
-                 forceDynamicFlex) &&
+            if ((((promoteHardwareSkinning && 
+				   (pStripGroup->flags & STRIPGROUP_IS_FLEXED)) || 
+				  forceDynamicFlex)) &&
                 pStripGroup->numVerts > 0 &&
                 pStripGroup->numVerts < 100000 &&
                 pStripGroup->vertOffset > 0) {
