@@ -1,0 +1,742 @@
+{
+  "version": 1,
+  "renderer_sha256": "79abd1d12b7c056aa2d018a7865d072dd73c9dec95fc38c5969af2029c2e99e5",
+  "renderer_bytes": 264673792,
+  "original_name": "d3d9_astra_renderer.dll",
+  "exports": [
+    {
+      "name": "Direct3DShaderValidatorCreate9",
+      "ordinal": 24,
+      "rva": 982672
+    },
+    {
+      "name": "PSGPError",
+      "ordinal": 25,
+      "rva": 958320
+    },
+    {
+      "name": "PSGPSampleTexture",
+      "ordinal": 26,
+      "rva": 958320
+    },
+    {
+      "name": "D3DPERF_BeginEvent",
+      "ordinal": 27,
+      "rva": 787312
+    },
+    {
+      "name": "D3DPERF_EndEvent",
+      "ordinal": 28,
+      "rva": 787312
+    },
+    {
+      "name": "D3DPERF_GetStatus",
+      "ordinal": 29,
+      "rva": 787312
+    },
+    {
+      "name": "D3DPERF_QueryRepeatFrame",
+      "ordinal": 30,
+      "rva": 787312
+    },
+    {
+      "name": "D3DPERF_SetMarker",
+      "ordinal": 31,
+      "rva": 958320
+    },
+    {
+      "name": "D3DPERF_SetOptions",
+      "ordinal": 32,
+      "rva": 958320
+    },
+    {
+      "name": "D3DPERF_SetRegion",
+      "ordinal": 33,
+      "rva": 958320
+    },
+    {
+      "name": "DebugSetLevel",
+      "ordinal": 34,
+      "rva": 787312
+    },
+    {
+      "name": "DebugSetMute",
+      "ordinal": 35,
+      "rva": 958320
+    },
+    {
+      "name": "Direct3D9EnableMaximizedWindowedModeShim",
+      "ordinal": 36,
+      "rva": 787312
+    },
+    {
+      "name": "Direct3DCreate9",
+      "ordinal": 37,
+      "rva": 982592
+    },
+    {
+      "name": "Direct3DCreate9Ex",
+      "ordinal": 38,
+      "rva": 982640
+    },
+    {
+      "name": "QueryFeatureVersion",
+      "ordinal": 39,
+      "rva": 982752
+    },
+    {
+      "name": "RtxSentryRunUploadHelper",
+      "ordinal": 40,
+      "rva": 983216
+    },
+    {
+      "name": "NVSDK_NGX_Parameter_GetD",
+      "ordinal": 41,
+      "rva": 6894256
+    },
+    {
+      "name": "NVSDK_NGX_Parameter_GetD3d11Resource",
+      "ordinal": 42,
+      "rva": 6894352
+    },
+    {
+      "name": "NVSDK_NGX_Parameter_GetD3d12Resource",
+      "ordinal": 43,
+      "rva": 6894448
+    },
+    {
+      "name": "NVSDK_NGX_Parameter_GetF",
+      "ordinal": 44,
+      "rva": 6894544
+    },
+    {
+      "name": "NVSDK_NGX_Parameter_GetI",
+      "ordinal": 45,
+      "rva": 6894640
+    },
+    {
+      "name": "NVSDK_NGX_Parameter_GetUI",
+      "ordinal": 46,
+      "rva": 6894736
+    },
+    {
+      "name": "NVSDK_NGX_Parameter_GetULL",
+      "ordinal": 47,
+      "rva": 6894832
+    },
+    {
+      "name": "NVSDK_NGX_Parameter_GetVoidPointer",
+      "ordinal": 48,
+      "rva": 6894928
+    },
+    {
+      "name": "NVSDK_NGX_Parameter_SetD",
+      "ordinal": 49,
+      "rva": 6895024
+    },
+    {
+      "name": "NVSDK_NGX_Parameter_SetD3d11Resource",
+      "ordinal": 50,
+      "rva": 6895104
+    },
+    {
+      "name": "NVSDK_NGX_Parameter_SetD3d12Resource",
+      "ordinal": 51,
+      "rva": 6895200
+    },
+    {
+      "name": "NVSDK_NGX_Parameter_SetF",
+      "ordinal": 52,
+      "rva": 6895296
+    },
+    {
+      "name": "NVSDK_NGX_Parameter_SetI",
+      "ordinal": 53,
+      "rva": 6895376
+    },
+    {
+      "name": "NVSDK_NGX_Parameter_SetUI",
+      "ordinal": 54,
+      "rva": 6895472
+    },
+    {
+      "name": "NVSDK_NGX_Parameter_SetULL",
+      "ordinal": 55,
+      "rva": 6895568
+    },
+    {
+      "name": "NVSDK_NGX_Parameter_SetVoidPointer",
+      "ordinal": 56,
+      "rva": 6895664
+    },
+    {
+      "name": "NVSDK_NGX_UpdateFeature",
+      "ordinal": 57,
+      "rva": 6916448
+    },
+    {
+      "name": "NVSDK_NGX_VULKAN_AllocateParameters",
+      "ordinal": 58,
+      "rva": 6898896
+    },
+    {
+      "name": "NVSDK_NGX_VULKAN_CreateFeature",
+      "ordinal": 59,
+      "rva": 6898992
+    },
+    {
+      "name": "NVSDK_NGX_VULKAN_CreateFeature1",
+      "ordinal": 60,
+      "rva": 6899120
+    },
+    {
+      "name": "NVSDK_NGX_VULKAN_DestroyParameters",
+      "ordinal": 61,
+      "rva": 6899264
+    },
+    {
+      "name": "NVSDK_NGX_VULKAN_EvaluateFeature",
+      "ordinal": 62,
+      "rva": 6899360
+    },
+    {
+      "name": "NVSDK_NGX_VULKAN_EvaluateFeature_C",
+      "ordinal": 63,
+      "rva": 6899472
+    },
+    {
+      "name": "NVSDK_NGX_VULKAN_GetCapabilityParameters",
+      "ordinal": 64,
+      "rva": 6899536
+    },
+    {
+      "name": "NVSDK_NGX_VULKAN_GetFeatureDeviceExtensionRequirements",
+      "ordinal": 65,
+      "rva": 6899632
+    },
+    {
+      "name": "NVSDK_NGX_VULKAN_GetFeatureInstanceExtensionRequirements",
+      "ordinal": 66,
+      "rva": 6899808
+    },
+    {
+      "name": "NVSDK_NGX_VULKAN_GetFeatureRequirements",
+      "ordinal": 67,
+      "rva": 6899952
+    },
+    {
+      "name": "NVSDK_NGX_VULKAN_GetParameters",
+      "ordinal": 68,
+      "rva": 6900080
+    },
+    {
+      "name": "NVSDK_NGX_VULKAN_GetScratchBufferSize",
+      "ordinal": 69,
+      "rva": 6900160
+    },
+    {
+      "name": "NVSDK_NGX_VULKAN_Init",
+      "ordinal": 70,
+      "rva": 6900256
+    },
+    {
+      "name": "NVSDK_NGX_VULKAN_ReleaseFeature",
+      "ordinal": 71,
+      "rva": 6900704
+    },
+    {
+      "name": "NVSDK_NGX_VULKAN_RequiredExtensions",
+      "ordinal": 72,
+      "rva": 6900784
+    },
+    {
+      "name": "NVSDK_NGX_VULKAN_Shutdown",
+      "ordinal": 73,
+      "rva": 6900912
+    },
+    {
+      "name": "NVSDK_NGX_VULKAN_Shutdown1",
+      "ordinal": 74,
+      "rva": 6900928
+    },
+    {
+      "name": "remixapi_AutoInstancePersistentLights",
+      "ordinal": 75,
+      "rva": 2142016
+    },
+    {
+      "name": "remixapi_CreatePersistentInstance",
+      "ordinal": 76,
+      "rva": 2144160
+    },
+    {
+      "name": "remixapi_DestroyPersistentInstance",
+      "ordinal": 77,
+      "rva": 2144592
+    },
+    {
+      "name": "remixapi_GetGameValue",
+      "ordinal": 78,
+      "rva": 2144912
+    },
+    {
+      "name": "remixapi_GetRayPortalCapabilities",
+      "ordinal": 79,
+      "rva": 2145600
+    },
+    {
+      "name": "remixapi_GetUIState",
+      "ordinal": 80,
+      "rva": 2145632
+    },
+    {
+      "name": "remixapi_InitializeLibrary",
+      "ordinal": 81,
+      "rva": 2145648
+    },
+    {
+      "name": "remixapi_RegisterCallbacks",
+      "ordinal": 82,
+      "rva": 2146416
+    },
+    {
+      "name": "remixapi_SetGameValue",
+      "ordinal": 83,
+      "rva": 2146432
+    },
+    {
+      "name": "remixapi_SetUIState",
+      "ordinal": 84,
+      "rva": 2146816
+    },
+    {
+      "name": "remixapi_UpdateLightDefinition",
+      "ordinal": 85,
+      "rva": 2146832
+    },
+    {
+      "name": "remixapi_UpdatePersistentInstance",
+      "ordinal": 86,
+      "rva": 2147744
+    },
+    {
+      "name": "remixapi_imgui_Begin",
+      "ordinal": 87,
+      "rva": 3890064
+    },
+    {
+      "name": "remixapi_imgui_BeginChild",
+      "ordinal": 88,
+      "rva": 3890144
+    },
+    {
+      "name": "remixapi_imgui_BeginCombo",
+      "ordinal": 89,
+      "rva": 3890192
+    },
+    {
+      "name": "remixapi_imgui_BeginGroup",
+      "ordinal": 90,
+      "rva": 3890224
+    },
+    {
+      "name": "remixapi_imgui_BeginTabBar",
+      "ordinal": 91,
+      "rva": 3890240
+    },
+    {
+      "name": "remixapi_imgui_BeginTabItem",
+      "ordinal": 92,
+      "rva": 3890272
+    },
+    {
+      "name": "remixapi_imgui_BeginTable",
+      "ordinal": 93,
+      "rva": 3890352
+    },
+    {
+      "name": "remixapi_imgui_BeginTooltip",
+      "ordinal": 94,
+      "rva": 3890416
+    },
+    {
+      "name": "remixapi_imgui_BulletText",
+      "ordinal": 95,
+      "rva": 3890432
+    },
+    {
+      "name": "remixapi_imgui_Button",
+      "ordinal": 96,
+      "rva": 3890464
+    },
+    {
+      "name": "remixapi_imgui_Checkbox",
+      "ordinal": 97,
+      "rva": 3890512
+    },
+    {
+      "name": "remixapi_imgui_CollapsingHeader",
+      "ordinal": 98,
+      "rva": 3890592
+    },
+    {
+      "name": "remixapi_imgui_ColorEdit3",
+      "ordinal": 99,
+      "rva": 3890624
+    },
+    {
+      "name": "remixapi_imgui_ColorEdit4",
+      "ordinal": 100,
+      "rva": 3890656
+    },
+    {
+      "name": "remixapi_imgui_ColorPicker3",
+      "ordinal": 101,
+      "rva": 3890688
+    },
+    {
+      "name": "remixapi_imgui_DragFloat",
+      "ordinal": 102,
+      "rva": 3890720
+    },
+    {
+      "name": "remixapi_imgui_DragInt",
+      "ordinal": 103,
+      "rva": 3890784
+    },
+    {
+      "name": "remixapi_imgui_Dummy",
+      "ordinal": 104,
+      "rva": 3890848
+    },
+    {
+      "name": "remixapi_imgui_End",
+      "ordinal": 105,
+      "rva": 2230752
+    },
+    {
+      "name": "remixapi_imgui_EndChild",
+      "ordinal": 106,
+      "rva": 2228768
+    },
+    {
+      "name": "remixapi_imgui_EndCombo",
+      "ordinal": 107,
+      "rva": 3890880
+    },
+    {
+      "name": "remixapi_imgui_EndGroup",
+      "ordinal": 108,
+      "rva": 3890896
+    },
+    {
+      "name": "remixapi_imgui_EndTabBar",
+      "ordinal": 109,
+      "rva": 3890912
+    },
+    {
+      "name": "remixapi_imgui_EndTabItem",
+      "ordinal": 110,
+      "rva": 3890928
+    },
+    {
+      "name": "remixapi_imgui_EndTable",
+      "ordinal": 111,
+      "rva": 3890944
+    },
+    {
+      "name": "remixapi_imgui_EndTooltip",
+      "ordinal": 112,
+      "rva": 3890960
+    },
+    {
+      "name": "remixapi_imgui_GetContentRegionAvail",
+      "ordinal": 113,
+      "rva": 3890976
+    },
+    {
+      "name": "remixapi_imgui_GetWindowPos",
+      "ordinal": 114,
+      "rva": 3891056
+    },
+    {
+      "name": "remixapi_imgui_GetWindowSize",
+      "ordinal": 115,
+      "rva": 3891136
+    },
+    {
+      "name": "remixapi_imgui_Indent",
+      "ordinal": 116,
+      "rva": 3891248
+    },
+    {
+      "name": "remixapi_imgui_InputFloat",
+      "ordinal": 117,
+      "rva": 3891264
+    },
+    {
+      "name": "remixapi_imgui_InputInt",
+      "ordinal": 118,
+      "rva": 3891328
+    },
+    {
+      "name": "remixapi_imgui_InputText",
+      "ordinal": 119,
+      "rva": 3891360
+    },
+    {
+      "name": "remixapi_imgui_IsItemClicked",
+      "ordinal": 120,
+      "rva": 3891424
+    },
+    {
+      "name": "remixapi_imgui_IsItemHovered",
+      "ordinal": 121,
+      "rva": 3891456
+    },
+    {
+      "name": "remixapi_imgui_LabelText",
+      "ordinal": 122,
+      "rva": 3891488
+    },
+    {
+      "name": "remixapi_imgui_NewLine",
+      "ordinal": 123,
+      "rva": 3891504
+    },
+    {
+      "name": "remixapi_imgui_PlotBeginPlot",
+      "ordinal": 124,
+      "rva": 3891520
+    },
+    {
+      "name": "remixapi_imgui_PlotEndPlot",
+      "ordinal": 125,
+      "rva": 3891568
+    },
+    {
+      "name": "remixapi_imgui_PlotPlotBars",
+      "ordinal": 126,
+      "rva": 3891584
+    },
+    {
+      "name": "remixapi_imgui_PlotPlotLine",
+      "ordinal": 127,
+      "rva": 3891632
+    },
+    {
+      "name": "remixapi_imgui_PopID",
+      "ordinal": 128,
+      "rva": 3891696
+    },
+    {
+      "name": "remixapi_imgui_PopStyleColor",
+      "ordinal": 129,
+      "rva": 3891712
+    },
+    {
+      "name": "remixapi_imgui_PopStyleVar",
+      "ordinal": 130,
+      "rva": 3891728
+    },
+    {
+      "name": "remixapi_imgui_ProgressBar",
+      "ordinal": 131,
+      "rva": 3891744
+    },
+    {
+      "name": "remixapi_imgui_PushID_Int",
+      "ordinal": 132,
+      "rva": 3891792
+    },
+    {
+      "name": "remixapi_imgui_PushID_Str",
+      "ordinal": 133,
+      "rva": 3891808
+    },
+    {
+      "name": "remixapi_imgui_PushStyleColor",
+      "ordinal": 134,
+      "rva": 3891824
+    },
+    {
+      "name": "remixapi_imgui_PushStyleVar_Float",
+      "ordinal": 135,
+      "rva": 3891888
+    },
+    {
+      "name": "remixapi_imgui_PushStyleVar_Vec2",
+      "ordinal": 136,
+      "rva": 3891904
+    },
+    {
+      "name": "remixapi_imgui_RadioButton",
+      "ordinal": 137,
+      "rva": 3891936
+    },
+    {
+      "name": "remixapi_imgui_RegisterDrawCallback",
+      "ordinal": 138,
+      "rva": 3891968
+    },
+    {
+      "name": "remixapi_imgui_SameLine",
+      "ordinal": 139,
+      "rva": 3892000
+    },
+    {
+      "name": "remixapi_imgui_Selectable",
+      "ordinal": 140,
+      "rva": 3892016
+    },
+    {
+      "name": "remixapi_imgui_Separator",
+      "ordinal": 141,
+      "rva": 3892064
+    },
+    {
+      "name": "remixapi_imgui_SetItemDefaultFocus",
+      "ordinal": 142,
+      "rva": 3892080
+    },
+    {
+      "name": "remixapi_imgui_SetNextWindowCollapsed",
+      "ordinal": 143,
+      "rva": 3892096
+    },
+    {
+      "name": "remixapi_imgui_SetNextWindowFocus",
+      "ordinal": 144,
+      "rva": 3892112
+    },
+    {
+      "name": "remixapi_imgui_SetNextWindowPos",
+      "ordinal": 145,
+      "rva": 3892128
+    },
+    {
+      "name": "remixapi_imgui_SetNextWindowSize",
+      "ordinal": 146,
+      "rva": 3892176
+    },
+    {
+      "name": "remixapi_imgui_SetTooltip",
+      "ordinal": 147,
+      "rva": 3892224
+    },
+    {
+      "name": "remixapi_imgui_SliderFloat",
+      "ordinal": 148,
+      "rva": 3892240
+    },
+    {
+      "name": "remixapi_imgui_SliderFloat2",
+      "ordinal": 149,
+      "rva": 3892304
+    },
+    {
+      "name": "remixapi_imgui_SliderFloat3",
+      "ordinal": 150,
+      "rva": 3892368
+    },
+    {
+      "name": "remixapi_imgui_SliderInt",
+      "ordinal": 151,
+      "rva": 3892432
+    },
+    {
+      "name": "remixapi_imgui_SmallButton",
+      "ordinal": 152,
+      "rva": 3892496
+    },
+    {
+      "name": "remixapi_imgui_Spacing",
+      "ordinal": 153,
+      "rva": 3892528
+    },
+    {
+      "name": "remixapi_imgui_TableHeadersRow",
+      "ordinal": 154,
+      "rva": 3892544
+    },
+    {
+      "name": "remixapi_imgui_TableNextColumn",
+      "ordinal": 155,
+      "rva": 3892560
+    },
+    {
+      "name": "remixapi_imgui_TableNextRow",
+      "ordinal": 156,
+      "rva": 3892592
+    },
+    {
+      "name": "remixapi_imgui_TableSetColumnIndex",
+      "ordinal": 157,
+      "rva": 3892608
+    },
+    {
+      "name": "remixapi_imgui_TableSetupColumn",
+      "ordinal": 158,
+      "rva": 3892640
+    },
+    {
+      "name": "remixapi_imgui_Text",
+      "ordinal": 159,
+      "rva": 3892656
+    },
+    {
+      "name": "remixapi_imgui_TextColored",
+      "ordinal": 160,
+      "rva": 3892672
+    },
+    {
+      "name": "remixapi_imgui_TextWrapped",
+      "ordinal": 161,
+      "rva": 3892752
+    },
+    {
+      "name": "remixapi_imgui_TreeNode",
+      "ordinal": 162,
+      "rva": 3892800
+    },
+    {
+      "name": "remixapi_imgui_TreePop",
+      "ordinal": 163,
+      "rva": 3892832
+    },
+    {
+      "name": "remixapi_imgui_Unindent",
+      "ordinal": 164,
+      "rva": 3892848
+    },
+    {
+      "name": "remixapi_imgui_UnregisterDrawCallback",
+      "ordinal": 165,
+      "rva": 3892864
+    },
+    {
+      "name": "writeAllMarkdownDocs",
+      "ordinal": 166,
+      "rva": 4816880
+    },
+    {
+      "name": "writeAllOGNSchemas",
+      "ordinal": 167,
+      "rva": 4816896
+    },
+    {
+      "name": "writeMarkdownDocumentation",
+      "ordinal": 168,
+      "rva": 3419808
+    },
+    {
+      "name": "writeRemixCategoriesSchemaUsda",
+      "ordinal": 169,
+      "rva": 5535296
+    }
+  ],
+  "own_exports": [
+    "AstraStartupStatusJson",
+    "AstraDisableStartupMap"
+  ]
+}

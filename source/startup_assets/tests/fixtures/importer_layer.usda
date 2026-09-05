@@ -1,0 +1,39 @@
+#usda 1.0
+(
+    customLayerData = {
+        string lightspeed_game_name = "Garry's Mod (x64)"
+        string lightspeed_layer_type = "replacement"
+    }
+    metersPerUnit = 0.01
+    upAxis = "Z"
+)
+over "RootNode"
+{
+    over "Looks"
+    {
+        over "mat_ABCDEF0123456789"
+        {
+            over "Shader"
+            {
+                uniform asset info:mdl:sourceAsset = @AperturePBR_Opacity.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "AperturePBR_Opacity"
+                bool inputs:preload_textures = 0
+                int inputs:encoding = 0
+                asset inputs:diffuse_texture = @./textures/c4ca353116ab8264fe594ffade611ea51b1772d88dfd3b7a7da1f2308d04dbdc.dds@ (
+                    colorSpace = "sRGB"
+                )
+                float inputs:opacity_constant = 1
+                float inputs:reflection_roughness_constant = 0.5
+                float inputs:metallic_constant = 0
+                float inputs:emissive_intensity = 0
+                bool inputs:enable_emission = 0
+                bool inputs:enable_thin_film = 0
+                uchar inputs:filter_mode = 1
+                uchar inputs:wrap_mode_u = 0
+                uchar inputs:wrap_mode_v = 0
+                bool inputs:use_legacy_alpha_state = 1
+                bool inputs:blend_enabled = 1
+            }
+        }
+    }
+}
