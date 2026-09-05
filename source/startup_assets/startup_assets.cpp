@@ -285,6 +285,46 @@ void ScanLoose(const fs::path& addon, Inventory& inventory) {
     }
 }
 
+std::vector<fs::path> ExpandAddonSources(const std::vector<fs::path>& selected, Json& report) {
+    std::set<fs::path> sources;
+    const auto add = [&sources](const fs::path& path) {
+        sources.insert(fs::absolute(path).lexically_normal());
+        Need(sources.size() <= kMaxSources, "Too many addon sources after immediate GMA discovery");
+    };
+    for (const auto& source : selected) add(source);
+    // Iterate only the original addon roots, never newly discovered archives.
+    // Source automatically mounts floating GMAs inside addon folders; it may
+    // migrate root-level addons/*.gma into its Workshop cache instead.
+    const std::vector<fs::path> roots(sources.begin(), sources.end());
+    for (const auto& root : roots) {
+        bool directory = false;
+        try {
+            PlainPath(root);
+            directory = fs::is_directory(fs::path(NativePath(root)));
+        } catch (const std::exception&) {
+            // The ordinary scan reports invalid explicit sources below. A
+            // linked root must never be followed while expanding children.
+            continue;
+        }
+        if (!directory) continue;
+        for (const auto& entry : fs::directory_iterator(fs::path(NativePath(root)))) {
+            if (entry.path().extension() != ".gma") continue;
+            const auto child = root / entry.path().filename();
+            bool regular = false;
+            try {
+                PlainPath(child);
+                regular = entry.is_regular_file();
+            } catch (const std::exception& error) {
+                report["warnings"].push_back({{"source", child.u8string()}, {"error", error.what()}});
+            }
+            // Keep the bound outside the per-entry warning handler: overflow
+            // must abort before any partial inventory is published.
+            if (regular) add(child);
+        }
+    }
+    return {sources.begin(), sources.end()};
+}
+
 const Member& Unique(const Inventory& inventory, const std::string& path) {
     const auto found = inventory.find(path);
     Need(found != inventory.end() && !found->second.empty(), "Missing package member: " + path);
@@ -518,20 +558,25 @@ Json Prepare(const fs::path& suppliedRoot, const std::optional<std::vector<fs::p
         PlainPath(addons);
         if (fs::is_directory(addons)) {
             for (const auto& entry : fs::directory_iterator(addons)) {
+                bool selected = false;
                 try {
                     PlainPath(entry.path());
-                    if (entry.is_directory() || entry.path().extension() == ".gma") sources.push_back(entry.path());
+                    selected = entry.is_directory() || entry.path().extension() == ".gma";
                 } catch (const std::exception& error) {
                     // Installed games commonly contain linked unrelated addons.
                     // Do not follow them or fail all independent Astra packages.
                     report["warnings"].push_back({{"source", entry.path().u8string()}, {"error", error.what()}});
                 }
+                if (selected) {
+                    sources.push_back(entry.path());
+                    Need(sources.size() <= kMaxSources, "Too many addon sources");
+                }
             }
         }
     }
-    Need(sources.size() <= kMaxSources, "Too many addon sources");
-    std::sort(sources.begin(), sources.end());
-    sources.erase(std::unique(sources.begin(), sources.end()), sources.end());
+    sources = ExpandAddonSources(sources, report);
+    // This synthetic source contributes loose game data only. Do not expand
+    // garrysmod itself, its cache, or arbitrary deeper addon subdirectories.
     sources.insert(sources.begin(), gameRoot / "garrysmod");
     for (const auto& source : sources) {
         try {

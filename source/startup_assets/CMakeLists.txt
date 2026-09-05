@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(astra_startup_assets VERSION 1.0.0 LANGUAGES CXX)
+project(astra_startup_assets VERSION 1.1.0 LANGUAGES CXX)
 if(NOT WIN32)
   message(FATAL_ERROR "Startup asset preparation requires Windows BCrypt and path checks")
 endif()

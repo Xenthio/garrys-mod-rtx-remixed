@@ -20,6 +20,16 @@ The status reports `source_selection` as `explicit_environment`, `noaddons`, or
 `default_discovery`. An invalid explicit selection reports failure and attempts
 to deactivate stale owned packages before continuing to the renderer.
 
+Install the generated GMA files together in `garrysmod/addons/astra_imported/`,
+keeping their original filenames. Source treats these as floating addon archives.
+Root-level `addons/*.gma` files can be mistaken for Workshop downloads and moved
+to the Workshop cache, including numeric multipart suffixes such as `_001`.
+The startup scanner reads immediate `.gma` children of each selected addon
+directory as well as its loose `data_static/astra` tree. It does not search
+grandchildren or Workshop caches, and it never follows linked paths. Explicit
+physical GMA sources retain their existing behavior. The expanded list is
+deduplicated and bounded to 4096 sources before any material publication.
+
 ## Building and checking
 
 Use CMake with MSVC x64, then build all targets and run CTest. The DLL output is

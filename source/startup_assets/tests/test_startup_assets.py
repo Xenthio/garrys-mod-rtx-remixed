@@ -127,6 +127,120 @@ class PreparationTests(unittest.TestCase):
         self.assertIn('Missing package member', result['errors'][0])
         self.assertIn(b'subLayers = []', (self.output()/'mod.usda').read_bytes())
 
+    def test_nested_multipart_cold_warm_and_missing_companion(self):
+        manifest, entries = package()
+        folder = self.addons/'astra_imported'
+        folder.mkdir()
+        asset = manifest['files'][0]['path']
+        gma(folder/'gm_fixture.gma', {name: raw for name, raw in entries.items() if name != asset})
+        companion = folder/'gm_fixture_content_001.gma'
+        gma(companion, {asset: entries[asset]})
+        cold = self.run_prepare()
+        self.assertTrue(cold['ready'], cold)
+        self.assertEqual(cold['maps']['gm_fixture']['cache_hits'], 0)
+        self.assertEqual((self.output()/manifest['files'][0]['target']).read_bytes(), entries[asset])
+        layer = self.output()/'mod.usda'
+        initial_mtime = layer.stat().st_mtime_ns
+        warm = self.run_prepare()['maps']['gm_fixture']
+        self.assertTrue(warm['ready'], warm)
+        self.assertEqual(warm['cache_hits'], 2)
+        self.assertEqual(warm['bytes_written'], 0)
+        self.assertEqual(layer.stat().st_mtime_ns, initial_mtime)
+        companion.unlink()
+        missing = self.run_prepare()['maps']['gm_fixture']
+        self.assertFalse(missing['ready'])
+        self.assertTrue(missing['deactivated'])
+        self.assertIn('Missing package member', missing['errors'][0])
+        self.assertIn(b'subLayers = []', layer.read_bytes())
+
+    def test_explicit_folder_includes_loose_data_and_deduplicates_explicit_gma(self):
+        folder = self.addons/'astra_imported'
+        folder.mkdir()
+        _, entries = package()
+        archive = folder/'gm_fixture.gma'
+        gma(archive, entries)
+        for target_root, name in ((folder, 'gm_loose'), (self.root/'garrysmod', 'gm_game')):
+            _, loose = package(name)
+            for relative, raw in loose.items():
+                target = target_root/relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(raw)
+        baseline = self.run_prepare('--source', folder)
+        self.assertTrue(baseline['ready'], baseline)
+        self.assertEqual(set(baseline['maps']), {'gm_fixture', 'gm_loose', 'gm_game'})
+        repeated = self.run_prepare('--source', folder, '--source', archive,
+                                    '--source', folder/'..'/'astra_imported')
+        self.assertTrue(repeated['ready'], repeated)
+        self.assertEqual(repeated['table_bytes_read'], baseline['table_bytes_read'])
+        self.assertEqual(set(repeated['maps']), set(baseline['maps']))
+        no_addons = self.run_prepare('--no-addons')
+        self.assertTrue(no_addons['maps']['gm_game']['ready'])
+        self.assertTrue(no_addons['maps']['gm_fixture']['removed'])
+        self.assertTrue(no_addons['maps']['gm_loose']['removed'])
+
+    def test_nested_discovery_does_not_recurse_or_scan_game_root_archives(self):
+        targets = [(self.addons/'astra_imported/deeper/test.gma', 'gm_deep'),
+                   (self.root/'garrysmod/cache/workshop/test.gma', 'gm_cache'),
+                   (self.root/'garrysmod/test.gma', 'gm_root')]
+        for path, name in targets:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            _, entries = package(name)
+            gma(path, entries)
+        result = self.run_prepare()
+        self.assertTrue(result['ready'], result)
+        self.assertEqual(result['maps'], {})
+        # An explicit physical GMA retains its original meaning regardless of
+        # where it lives; only automatic directory expansion is depth-bounded.
+        explicit = self.run_prepare('--source', targets[0][0])
+        self.assertTrue(explicit['maps']['gm_deep']['ready'])
+
+    def test_nested_reparse_candidate_is_not_followed_and_missing_part_fails(self):
+        folder = self.addons/'astra_imported'
+        folder.mkdir()
+        manifest, entries = package()
+        asset = manifest['files'][0]['path']
+        gma(folder/'gm_fixture.gma', {name: raw for name, raw in entries.items() if name != asset})
+        companion = folder/'gm_fixture_content_001.gma'
+        gma(companion, {asset: entries[asset]})
+        self.assertTrue(self.run_prepare()['maps']['gm_fixture']['ready'])
+        outside = self.root/'outside_addon'
+        outside.mkdir()
+        actual = outside/'real.gma'
+        companion.replace(actual)
+        try:
+            os.symlink(actual, companion)
+        except OSError:
+            # A directory junction also carries the Windows reparse attribute;
+            # checking it before file classification must produce the same refusal.
+            self.directory_link(outside, companion)
+        before = actual.read_bytes()
+        result = self.run_prepare()
+        self.assertEqual(actual.read_bytes(), before)
+        self.assertTrue(any('Reparse points' in w['error'] for w in result['warnings']))
+        self.assertFalse(result['maps']['gm_fixture']['ready'])
+        self.assertTrue(result['maps']['gm_fixture']['deactivated'])
+        # A linked explicit addon root is an error, not an invitation to scan.
+        linked_root = self.root/'linked_explicit'
+        self.directory_link(folder, linked_root)
+        explicit = self.run_prepare('--source', linked_root)
+        self.assertFalse(explicit['ready'])
+        self.assertTrue(any('Reparse points' in e['error'] for e in explicit['errors']))
+
+    def test_expanded_source_limit_aborts_before_publication(self):
+        folder = self.addons/'astra_imported'
+        folder.mkdir()
+        # The addon directory itself plus 4096 distinct children exceeds the
+        # shared 4096-source budget. Empty files prove scanning never starts.
+        for index in range(4096):
+            (folder/f'part_{index:04}.gma').touch()
+        result = subprocess.run([str(EXE), '--game-root', str(self.root)],
+                                capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn('Too many addon sources', result.stderr)
+        self.assertNotIn('Unsupported GMA', result.stderr)
+        self.assertFalse((self.root/'garrysmod/data/astra/startup/status.json').exists())
+        self.assertEqual(self.editor.read_bytes(), b'editor bytes remain unchanged')
+
     def test_changed_output_is_reverified_and_restored(self):
         manifest, entries = package()
         gma(self.addons/'map.gma', entries)
