@@ -62,12 +62,25 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('renderer', type=Path)
     parser.add_argument('--output', type=Path, default=Path(__file__).parent)
+    parser.add_argument('--check', action='store_true',
+                        help='Verify the renderer against the recorded contract without writing files')
     args = parser.parse_args()
     data = args.renderer.read_bytes()
     exports = read_exports(data)
     own = ['AstraStartupStatusJson', 'AstraDisableStartupMap']
     if set(own) & {e['name'] for e in exports}:
         raise ValueError('Input is already an Astra proxy')
+    if args.check:
+        contract = json.loads((args.output / 'proxy_renderer_exports.json').read_text(encoding='utf-8'))
+        if (contract.get('version') != 1 or contract.get('exports') != exports or
+                contract.get('renderer_bytes') != len(data) or
+                contract.get('renderer_sha256') != hashlib.sha256(data).hexdigest() or
+                contract.get('original_name') != 'd3d9_astra_renderer.dll' or
+                contract.get('own_exports') != own):
+            raise ValueError('Renderer differs from the audited proxy contract; do not install this proxy')
+        print(json.dumps({'verified': True, 'exports': len(exports),
+                          'renderer_sha256': contract['renderer_sha256']}))
+        return
     lines = ['LIBRARY d3d9', 'EXPORTS']
     for item in exports:
         name, ordinal = item['name'], item['ordinal']

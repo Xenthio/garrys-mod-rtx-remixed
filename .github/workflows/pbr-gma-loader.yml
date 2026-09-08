@@ -1,0 +1,40 @@
+name: PBR GMA loader contracts
+
+on:
+  push:
+    branches: [ main, gh-actions, sheepylord/PBR_gma_loader ]
+  pull_request:
+    branches: [ main, gh-actions ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  startup-x64:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Configure
+        run: cmake -S source/startup_assets -B build/startup -A x64
+      - name: Build
+        run: cmake --build build/startup --config Release --parallel
+      - name: Check loader, forwarding, Lua bridge and ownership contracts
+        run: ctest --test-dir build/startup -C Release --output-on-failure
+      - name: Stage optional startup components
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path build/package
+          Copy-Item build/startup/Release/d3d9.dll build/package/
+          Copy-Item build/startup/Release/astra_rtx_prepare_assets.exe build/package/
+          Copy-Item source/startup_assets/proxy_renderer_exports.json build/package/
+          Copy-Item source/startup_assets/generate_proxy_exports.py build/package/
+          Copy-Item docs/PBR_GMA_LOADER.md build/package/README.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pbr-gma-startup-x64
+          path: build/package/*
+          if-no-files-found: error

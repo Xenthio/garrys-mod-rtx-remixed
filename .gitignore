@@ -17,3 +17,7 @@ build_remote.sh
 /garrysmod/garrysmod/addons/mw_twr
 /garrysmod/garrysmod/addons/mwbase_original
 .worktrees/
+/build/
+/out/
+__pycache__/
+*.py[cod]

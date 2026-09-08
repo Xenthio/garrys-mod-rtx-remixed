@@ -8,6 +8,7 @@
 - ToPBR: Automatically converts Source Engine materials to PBR at runtime
 - Hardware Skinning (For Half-Life 2 RTX Assets)
 - Remix API Support (including Lua bindings for addon creation)
+- [Prepared PBR assets in GMA addons](docs/PBR_GMA_LOADER.md): prepare DDS replacements before renderer startup and reuse them on later launches (Windows x64).
       
 ## Installation
 - Switch to the `x86-64` branch of Garry's Mod on Steam

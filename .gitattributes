@@ -1,3 +1,5 @@
 * text=auto
 garrysmod/dxvk.conf text eol=crlf
 garrysmod/rtx.conf text eol=crlf
+# These fixtures have recorded byte-level SHA-256 provenance.
+source/startup_assets/tests/fixtures/*.usda text eol=lf

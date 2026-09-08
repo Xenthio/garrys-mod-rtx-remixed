@@ -1,738 +1,738 @@
 {
   "version": 1,
-  "renderer_sha256": "79abd1d12b7c056aa2d018a7865d072dd73c9dec95fc38c5969af2029c2e99e5",
-  "renderer_bytes": 264673792,
+  "renderer_sha256": "6874ba37d27f6c4f88c7ddbbd513f5fe028f14fbe6bbc402e9a309ba835d0356",
+  "renderer_bytes": 264675840,
   "original_name": "d3d9_astra_renderer.dll",
   "exports": [
     {
       "name": "Direct3DShaderValidatorCreate9",
       "ordinal": 24,
-      "rva": 982672
+      "rva": 982864
     },
     {
       "name": "PSGPError",
       "ordinal": 25,
-      "rva": 958320
+      "rva": 958512
     },
     {
       "name": "PSGPSampleTexture",
       "ordinal": 26,
-      "rva": 958320
+      "rva": 958512
     },
     {
       "name": "D3DPERF_BeginEvent",
       "ordinal": 27,
-      "rva": 787312
+      "rva": 787504
     },
     {
       "name": "D3DPERF_EndEvent",
       "ordinal": 28,
-      "rva": 787312
+      "rva": 787504
     },
     {
       "name": "D3DPERF_GetStatus",
       "ordinal": 29,
-      "rva": 787312
+      "rva": 787504
     },
     {
       "name": "D3DPERF_QueryRepeatFrame",
       "ordinal": 30,
-      "rva": 787312
+      "rva": 787504
     },
     {
       "name": "D3DPERF_SetMarker",
       "ordinal": 31,
-      "rva": 958320
+      "rva": 958512
     },
     {
       "name": "D3DPERF_SetOptions",
       "ordinal": 32,
-      "rva": 958320
+      "rva": 958512
     },
     {
       "name": "D3DPERF_SetRegion",
       "ordinal": 33,
-      "rva": 958320
+      "rva": 958512
     },
     {
       "name": "DebugSetLevel",
       "ordinal": 34,
-      "rva": 787312
+      "rva": 787504
     },
     {
       "name": "DebugSetMute",
       "ordinal": 35,
-      "rva": 958320
+      "rva": 958512
     },
     {
       "name": "Direct3D9EnableMaximizedWindowedModeShim",
       "ordinal": 36,
-      "rva": 787312
+      "rva": 787504
     },
     {
       "name": "Direct3DCreate9",
       "ordinal": 37,
-      "rva": 982592
+      "rva": 982784
     },
     {
       "name": "Direct3DCreate9Ex",
       "ordinal": 38,
-      "rva": 982640
+      "rva": 982832
     },
     {
       "name": "QueryFeatureVersion",
       "ordinal": 39,
-      "rva": 982752
+      "rva": 982944
     },
     {
       "name": "RtxSentryRunUploadHelper",
       "ordinal": 40,
-      "rva": 983216
+      "rva": 983408
     },
     {
       "name": "NVSDK_NGX_Parameter_GetD",
       "ordinal": 41,
-      "rva": 6894256
+      "rva": 6895856
     },
     {
       "name": "NVSDK_NGX_Parameter_GetD3d11Resource",
       "ordinal": 42,
-      "rva": 6894352
+      "rva": 6895952
     },
     {
       "name": "NVSDK_NGX_Parameter_GetD3d12Resource",
       "ordinal": 43,
-      "rva": 6894448
+      "rva": 6896048
     },
     {
       "name": "NVSDK_NGX_Parameter_GetF",
       "ordinal": 44,
-      "rva": 6894544
+      "rva": 6896144
     },
     {
       "name": "NVSDK_NGX_Parameter_GetI",
       "ordinal": 45,
-      "rva": 6894640
+      "rva": 6896240
     },
     {
       "name": "NVSDK_NGX_Parameter_GetUI",
       "ordinal": 46,
-      "rva": 6894736
+      "rva": 6896336
     },
     {
       "name": "NVSDK_NGX_Parameter_GetULL",
       "ordinal": 47,
-      "rva": 6894832
+      "rva": 6896432
     },
     {
       "name": "NVSDK_NGX_Parameter_GetVoidPointer",
       "ordinal": 48,
-      "rva": 6894928
+      "rva": 6896528
     },
     {
       "name": "NVSDK_NGX_Parameter_SetD",
       "ordinal": 49,
-      "rva": 6895024
+      "rva": 6896624
     },
     {
       "name": "NVSDK_NGX_Parameter_SetD3d11Resource",
       "ordinal": 50,
-      "rva": 6895104
+      "rva": 6896704
     },
     {
       "name": "NVSDK_NGX_Parameter_SetD3d12Resource",
       "ordinal": 51,
-      "rva": 6895200
+      "rva": 6896800
     },
     {
       "name": "NVSDK_NGX_Parameter_SetF",
       "ordinal": 52,
-      "rva": 6895296
+      "rva": 6896896
     },
     {
       "name": "NVSDK_NGX_Parameter_SetI",
       "ordinal": 53,
-      "rva": 6895376
+      "rva": 6896976
     },
     {
       "name": "NVSDK_NGX_Parameter_SetUI",
       "ordinal": 54,
-      "rva": 6895472
+      "rva": 6897072
     },
     {
       "name": "NVSDK_NGX_Parameter_SetULL",
       "ordinal": 55,
-      "rva": 6895568
+      "rva": 6897168
     },
     {
       "name": "NVSDK_NGX_Parameter_SetVoidPointer",
       "ordinal": 56,
-      "rva": 6895664
+      "rva": 6897264
     },
     {
       "name": "NVSDK_NGX_UpdateFeature",
       "ordinal": 57,
-      "rva": 6916448
+      "rva": 6918048
     },
     {
       "name": "NVSDK_NGX_VULKAN_AllocateParameters",
       "ordinal": 58,
-      "rva": 6898896
+      "rva": 6900496
     },
     {
       "name": "NVSDK_NGX_VULKAN_CreateFeature",
       "ordinal": 59,
-      "rva": 6898992
+      "rva": 6900592
     },
     {
       "name": "NVSDK_NGX_VULKAN_CreateFeature1",
       "ordinal": 60,
-      "rva": 6899120
+      "rva": 6900720
     },
     {
       "name": "NVSDK_NGX_VULKAN_DestroyParameters",
       "ordinal": 61,
-      "rva": 6899264
+      "rva": 6900864
     },
     {
       "name": "NVSDK_NGX_VULKAN_EvaluateFeature",
       "ordinal": 62,
-      "rva": 6899360
+      "rva": 6900960
     },
     {
       "name": "NVSDK_NGX_VULKAN_EvaluateFeature_C",
       "ordinal": 63,
-      "rva": 6899472
+      "rva": 6901072
     },
     {
       "name": "NVSDK_NGX_VULKAN_GetCapabilityParameters",
       "ordinal": 64,
-      "rva": 6899536
+      "rva": 6901136
     },
     {
       "name": "NVSDK_NGX_VULKAN_GetFeatureDeviceExtensionRequirements",
       "ordinal": 65,
-      "rva": 6899632
+      "rva": 6901232
     },
     {
       "name": "NVSDK_NGX_VULKAN_GetFeatureInstanceExtensionRequirements",
       "ordinal": 66,
-      "rva": 6899808
+      "rva": 6901408
     },
     {
       "name": "NVSDK_NGX_VULKAN_GetFeatureRequirements",
       "ordinal": 67,
-      "rva": 6899952
+      "rva": 6901552
     },
     {
       "name": "NVSDK_NGX_VULKAN_GetParameters",
       "ordinal": 68,
-      "rva": 6900080
+      "rva": 6901680
     },
     {
       "name": "NVSDK_NGX_VULKAN_GetScratchBufferSize",
       "ordinal": 69,
-      "rva": 6900160
+      "rva": 6901760
     },
     {
       "name": "NVSDK_NGX_VULKAN_Init",
       "ordinal": 70,
-      "rva": 6900256
+      "rva": 6901856
     },
     {
       "name": "NVSDK_NGX_VULKAN_ReleaseFeature",
       "ordinal": 71,
-      "rva": 6900704
+      "rva": 6902304
     },
     {
       "name": "NVSDK_NGX_VULKAN_RequiredExtensions",
       "ordinal": 72,
-      "rva": 6900784
+      "rva": 6902384
     },
     {
       "name": "NVSDK_NGX_VULKAN_Shutdown",
       "ordinal": 73,
-      "rva": 6900912
+      "rva": 6902512
     },
     {
       "name": "NVSDK_NGX_VULKAN_Shutdown1",
       "ordinal": 74,
-      "rva": 6900928
+      "rva": 6902528
     },
     {
       "name": "remixapi_AutoInstancePersistentLights",
       "ordinal": 75,
-      "rva": 2142016
+      "rva": 2142240
     },
     {
       "name": "remixapi_CreatePersistentInstance",
       "ordinal": 76,
-      "rva": 2144160
+      "rva": 2144560
     },
     {
       "name": "remixapi_DestroyPersistentInstance",
       "ordinal": 77,
-      "rva": 2144592
+      "rva": 2144992
     },
     {
       "name": "remixapi_GetGameValue",
       "ordinal": 78,
-      "rva": 2144912
+      "rva": 2145312
     },
     {
       "name": "remixapi_GetRayPortalCapabilities",
       "ordinal": 79,
-      "rva": 2145600
+      "rva": 2146000
     },
     {
       "name": "remixapi_GetUIState",
       "ordinal": 80,
-      "rva": 2145632
+      "rva": 2146032
     },
     {
       "name": "remixapi_InitializeLibrary",
       "ordinal": 81,
-      "rva": 2145648
+      "rva": 2146048
     },
     {
       "name": "remixapi_RegisterCallbacks",
       "ordinal": 82,
-      "rva": 2146416
+      "rva": 2146816
     },
     {
       "name": "remixapi_SetGameValue",
       "ordinal": 83,
-      "rva": 2146432
+      "rva": 2146832
     },
     {
       "name": "remixapi_SetUIState",
       "ordinal": 84,
-      "rva": 2146816
+      "rva": 2147216
     },
     {
       "name": "remixapi_UpdateLightDefinition",
       "ordinal": 85,
-      "rva": 2146832
+      "rva": 2147232
     },
     {
       "name": "remixapi_UpdatePersistentInstance",
       "ordinal": 86,
-      "rva": 2147744
+      "rva": 2148144
     },
     {
       "name": "remixapi_imgui_Begin",
       "ordinal": 87,
-      "rva": 3890064
+      "rva": 3890464
     },
     {
       "name": "remixapi_imgui_BeginChild",
       "ordinal": 88,
-      "rva": 3890144
+      "rva": 3890544
     },
     {
       "name": "remixapi_imgui_BeginCombo",
       "ordinal": 89,
-      "rva": 3890192
+      "rva": 3890592
     },
     {
       "name": "remixapi_imgui_BeginGroup",
       "ordinal": 90,
-      "rva": 3890224
+      "rva": 3890624
     },
     {
       "name": "remixapi_imgui_BeginTabBar",
       "ordinal": 91,
-      "rva": 3890240
+      "rva": 3890640
     },
     {
       "name": "remixapi_imgui_BeginTabItem",
       "ordinal": 92,
-      "rva": 3890272
+      "rva": 3890672
     },
     {
       "name": "remixapi_imgui_BeginTable",
       "ordinal": 93,
-      "rva": 3890352
+      "rva": 3890752
     },
     {
       "name": "remixapi_imgui_BeginTooltip",
       "ordinal": 94,
-      "rva": 3890416
+      "rva": 3890816
     },
     {
       "name": "remixapi_imgui_BulletText",
       "ordinal": 95,
-      "rva": 3890432
+      "rva": 3890832
     },
     {
       "name": "remixapi_imgui_Button",
       "ordinal": 96,
-      "rva": 3890464
+      "rva": 3890864
     },
     {
       "name": "remixapi_imgui_Checkbox",
       "ordinal": 97,
-      "rva": 3890512
+      "rva": 3890912
     },
     {
       "name": "remixapi_imgui_CollapsingHeader",
       "ordinal": 98,
-      "rva": 3890592
+      "rva": 3890992
     },
     {
       "name": "remixapi_imgui_ColorEdit3",
       "ordinal": 99,
-      "rva": 3890624
+      "rva": 3891024
     },
     {
       "name": "remixapi_imgui_ColorEdit4",
       "ordinal": 100,
-      "rva": 3890656
+      "rva": 3891056
     },
     {
       "name": "remixapi_imgui_ColorPicker3",
       "ordinal": 101,
-      "rva": 3890688
+      "rva": 3891088
     },
     {
       "name": "remixapi_imgui_DragFloat",
       "ordinal": 102,
-      "rva": 3890720
+      "rva": 3891120
     },
     {
       "name": "remixapi_imgui_DragInt",
       "ordinal": 103,
-      "rva": 3890784
+      "rva": 3891184
     },
     {
       "name": "remixapi_imgui_Dummy",
       "ordinal": 104,
-      "rva": 3890848
+      "rva": 3891248
     },
     {
       "name": "remixapi_imgui_End",
       "ordinal": 105,
-      "rva": 2230752
+      "rva": 2231152
     },
     {
       "name": "remixapi_imgui_EndChild",
       "ordinal": 106,
-      "rva": 2228768
+      "rva": 2229168
     },
     {
       "name": "remixapi_imgui_EndCombo",
       "ordinal": 107,
-      "rva": 3890880
+      "rva": 3891280
     },
     {
       "name": "remixapi_imgui_EndGroup",
       "ordinal": 108,
-      "rva": 3890896
+      "rva": 3891296
     },
     {
       "name": "remixapi_imgui_EndTabBar",
       "ordinal": 109,
-      "rva": 3890912
+      "rva": 3891312
     },
     {
       "name": "remixapi_imgui_EndTabItem",
       "ordinal": 110,
-      "rva": 3890928
+      "rva": 3891328
     },
     {
       "name": "remixapi_imgui_EndTable",
       "ordinal": 111,
-      "rva": 3890944
+      "rva": 3891344
     },
     {
       "name": "remixapi_imgui_EndTooltip",
       "ordinal": 112,
-      "rva": 3890960
+      "rva": 3891360
     },
     {
       "name": "remixapi_imgui_GetContentRegionAvail",
       "ordinal": 113,
-      "rva": 3890976
+      "rva": 3891376
     },
     {
       "name": "remixapi_imgui_GetWindowPos",
       "ordinal": 114,
-      "rva": 3891056
+      "rva": 3891456
     },
     {
       "name": "remixapi_imgui_GetWindowSize",
       "ordinal": 115,
-      "rva": 3891136
+      "rva": 3891536
     },
     {
       "name": "remixapi_imgui_Indent",
       "ordinal": 116,
-      "rva": 3891248
+      "rva": 3891648
     },
     {
       "name": "remixapi_imgui_InputFloat",
       "ordinal": 117,
-      "rva": 3891264
+      "rva": 3891664
     },
     {
       "name": "remixapi_imgui_InputInt",
       "ordinal": 118,
-      "rva": 3891328
+      "rva": 3891728
     },
     {
       "name": "remixapi_imgui_InputText",
       "ordinal": 119,
-      "rva": 3891360
+      "rva": 3891760
     },
     {
       "name": "remixapi_imgui_IsItemClicked",
       "ordinal": 120,
-      "rva": 3891424
+      "rva": 3891824
     },
     {
       "name": "remixapi_imgui_IsItemHovered",
       "ordinal": 121,
-      "rva": 3891456
+      "rva": 3891856
     },
     {
       "name": "remixapi_imgui_LabelText",
       "ordinal": 122,
-      "rva": 3891488
+      "rva": 3891888
     },
     {
       "name": "remixapi_imgui_NewLine",
       "ordinal": 123,
-      "rva": 3891504
+      "rva": 3891904
     },
     {
       "name": "remixapi_imgui_PlotBeginPlot",
       "ordinal": 124,
-      "rva": 3891520
+      "rva": 3891920
     },
     {
       "name": "remixapi_imgui_PlotEndPlot",
       "ordinal": 125,
-      "rva": 3891568
+      "rva": 3891968
     },
     {
       "name": "remixapi_imgui_PlotPlotBars",
       "ordinal": 126,
-      "rva": 3891584
+      "rva": 3891984
     },
     {
       "name": "remixapi_imgui_PlotPlotLine",
       "ordinal": 127,
-      "rva": 3891632
+      "rva": 3892032
     },
     {
       "name": "remixapi_imgui_PopID",
       "ordinal": 128,
-      "rva": 3891696
+      "rva": 3892096
     },
     {
       "name": "remixapi_imgui_PopStyleColor",
       "ordinal": 129,
-      "rva": 3891712
+      "rva": 3892112
     },
     {
       "name": "remixapi_imgui_PopStyleVar",
       "ordinal": 130,
-      "rva": 3891728
+      "rva": 3892128
     },
     {
       "name": "remixapi_imgui_ProgressBar",
       "ordinal": 131,
-      "rva": 3891744
+      "rva": 3892144
     },
     {
       "name": "remixapi_imgui_PushID_Int",
       "ordinal": 132,
-      "rva": 3891792
+      "rva": 3892192
     },
     {
       "name": "remixapi_imgui_PushID_Str",
       "ordinal": 133,
-      "rva": 3891808
+      "rva": 3892208
     },
     {
       "name": "remixapi_imgui_PushStyleColor",
       "ordinal": 134,
-      "rva": 3891824
+      "rva": 3892224
     },
     {
       "name": "remixapi_imgui_PushStyleVar_Float",
       "ordinal": 135,
-      "rva": 3891888
+      "rva": 3892288
     },
     {
       "name": "remixapi_imgui_PushStyleVar_Vec2",
       "ordinal": 136,
-      "rva": 3891904
+      "rva": 3892304
     },
     {
       "name": "remixapi_imgui_RadioButton",
       "ordinal": 137,
-      "rva": 3891936
+      "rva": 3892336
     },
     {
       "name": "remixapi_imgui_RegisterDrawCallback",
       "ordinal": 138,
-      "rva": 3891968
+      "rva": 3892368
     },
     {
       "name": "remixapi_imgui_SameLine",
       "ordinal": 139,
-      "rva": 3892000
+      "rva": 3892400
     },
     {
       "name": "remixapi_imgui_Selectable",
       "ordinal": 140,
-      "rva": 3892016
+      "rva": 3892416
     },
     {
       "name": "remixapi_imgui_Separator",
       "ordinal": 141,
-      "rva": 3892064
+      "rva": 3892464
     },
     {
       "name": "remixapi_imgui_SetItemDefaultFocus",
       "ordinal": 142,
-      "rva": 3892080
+      "rva": 3892480
     },
     {
       "name": "remixapi_imgui_SetNextWindowCollapsed",
       "ordinal": 143,
-      "rva": 3892096
+      "rva": 3892496
     },
     {
       "name": "remixapi_imgui_SetNextWindowFocus",
       "ordinal": 144,
-      "rva": 3892112
+      "rva": 3892512
     },
     {
       "name": "remixapi_imgui_SetNextWindowPos",
       "ordinal": 145,
-      "rva": 3892128
+      "rva": 3892528
     },
     {
       "name": "remixapi_imgui_SetNextWindowSize",
       "ordinal": 146,
-      "rva": 3892176
+      "rva": 3892576
     },
     {
       "name": "remixapi_imgui_SetTooltip",
       "ordinal": 147,
-      "rva": 3892224
+      "rva": 3892624
     },
     {
       "name": "remixapi_imgui_SliderFloat",
       "ordinal": 148,
-      "rva": 3892240
+      "rva": 3892640
     },
     {
       "name": "remixapi_imgui_SliderFloat2",
       "ordinal": 149,
-      "rva": 3892304
+      "rva": 3892704
     },
     {
       "name": "remixapi_imgui_SliderFloat3",
       "ordinal": 150,
-      "rva": 3892368
+      "rva": 3892768
     },
     {
       "name": "remixapi_imgui_SliderInt",
       "ordinal": 151,
-      "rva": 3892432
+      "rva": 3892832
     },
     {
       "name": "remixapi_imgui_SmallButton",
       "ordinal": 152,
-      "rva": 3892496
+      "rva": 3892896
     },
     {
       "name": "remixapi_imgui_Spacing",
       "ordinal": 153,
-      "rva": 3892528
+      "rva": 3892928
     },
     {
       "name": "remixapi_imgui_TableHeadersRow",
       "ordinal": 154,
-      "rva": 3892544
+      "rva": 3892944
     },
     {
       "name": "remixapi_imgui_TableNextColumn",
       "ordinal": 155,
-      "rva": 3892560
+      "rva": 3892960
     },
     {
       "name": "remixapi_imgui_TableNextRow",
       "ordinal": 156,
-      "rva": 3892592
+      "rva": 3892992
     },
     {
       "name": "remixapi_imgui_TableSetColumnIndex",
       "ordinal": 157,
-      "rva": 3892608
+      "rva": 3893008
     },
     {
       "name": "remixapi_imgui_TableSetupColumn",
       "ordinal": 158,
-      "rva": 3892640
+      "rva": 3893040
     },
     {
       "name": "remixapi_imgui_Text",
       "ordinal": 159,
-      "rva": 3892656
+      "rva": 3893056
     },
     {
       "name": "remixapi_imgui_TextColored",
       "ordinal": 160,
-      "rva": 3892672
+      "rva": 3893072
     },
     {
       "name": "remixapi_imgui_TextWrapped",
       "ordinal": 161,
-      "rva": 3892752
+      "rva": 3893152
     },
     {
       "name": "remixapi_imgui_TreeNode",
       "ordinal": 162,
-      "rva": 3892800
+      "rva": 3893200
     },
     {
       "name": "remixapi_imgui_TreePop",
       "ordinal": 163,
-      "rva": 3892832
+      "rva": 3893232
     },
     {
       "name": "remixapi_imgui_Unindent",
       "ordinal": 164,
-      "rva": 3892848
+      "rva": 3893248
     },
     {
       "name": "remixapi_imgui_UnregisterDrawCallback",
       "ordinal": 165,
-      "rva": 3892864
+      "rva": 3893264
     },
     {
       "name": "writeAllMarkdownDocs",
       "ordinal": 166,
-      "rva": 4816880
+      "rva": 4818272
     },
     {
       "name": "writeAllOGNSchemas",
       "ordinal": 167,
-      "rva": 4816896
+      "rva": 4818288
     },
     {
       "name": "writeMarkdownDocumentation",
       "ordinal": 168,
-      "rva": 3419808
+      "rva": 3420208
     },
     {
       "name": "writeRemixCategoriesSchemaUsda",
       "ordinal": 169,
-      "rva": 5535296
+      "rva": 5536688
     }
   ],
   "own_exports": [

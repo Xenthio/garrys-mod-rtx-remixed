@@ -3,6 +3,9 @@ project(astra_startup_assets VERSION 1.1.0 LANGUAGES CXX)
 if(NOT WIN32)
   message(FATAL_ERROR "Startup asset preparation requires Windows BCrypt and path checks")
 endif()
+if(NOT MSVC OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+  message(FATAL_ERROR "The D3D9 startup proxy requires MSVC x64 (configure with -A x64)")
+endif()
 # MSVC 19.44 rejects mixed local/forwarded exports while generating an import
 # library from object files. Build the export object separately with LIB, then
 # link that object unchanged; this also preserves every original ordinal.
@@ -34,7 +37,7 @@ foreach(target astra_startup_assets astra_rtx_prepare_assets)
   endif()
 endforeach()
 enable_testing()
-find_package(Python3 COMPONENTS Interpreter)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
   add_test(NAME startup_asset_contracts COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_startup_assets.py" "$<TARGET_FILE:astra_rtx_prepare_assets>")
@@ -50,4 +53,20 @@ if(Python3_Interpreter_FOUND)
   add_test(NAME startup_proxy_contracts COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_proxy.py" "$<TARGET_FILE:astra_rtx_startup_proxy>"
     "$<TARGET_FILE:astra_startup_fake_renderer>" "${CMAKE_CURRENT_SOURCE_DIR}/proxy_renderer_exports.json")
+  add_test(NAME startup_renderer_contracts COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_renderer_contract.py"
+    "$<TARGET_FILE:astra_startup_fake_renderer>" "$<TARGET_FILE:astra_rtx_startup_proxy>")
 endif()
+
+add_executable(material_hash_lookup_test ../../tests/material_hash_lookup_test.cpp)
+target_compile_features(material_hash_lookup_test PRIVATE cxx_std_17)
+target_compile_options(material_hash_lookup_test PRIVATE /W4 /WX /permissive- /EHsc)
+add_test(NAME material_hash_lookup_contracts COMMAND material_hash_lookup_test)
+
+# Compile the production Lua facade against minimal test doubles. The full
+# module is also built against Garry's Mod headers by the regular Build job.
+add_executable(startup_lua_bindings_test ../../tests/startup_lua_bindings/test.cpp)
+target_include_directories(startup_lua_bindings_test PRIVATE ../../tests/startup_lua_bindings/stubs)
+target_compile_features(startup_lua_bindings_test PRIVATE cxx_std_17)
+target_compile_options(startup_lua_bindings_test PRIVATE /W4 /WX /permissive- /EHsc)
+add_test(NAME startup_lua_bindings_contracts COMMAND startup_lua_bindings_test)
