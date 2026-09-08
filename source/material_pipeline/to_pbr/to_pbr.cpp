@@ -5212,8 +5212,13 @@ LUA_FUNCTION(ToPBR_SetEnabled) {
     }
     
     bool enabled = LUA->GetBool(1);
-    MaterialPipeline::ToPBR::TextureProcessor::Instance().SetEnabled(enabled);
-    Msg("[MaterialPipeline::ToPBR] ToPBR conversion %s\n", enabled ? "ENABLED" : "DISABLED");
+    auto& processor = MaterialPipeline::ToPBR::TextureProcessor::Instance();
+    const bool changed = processor.IsEnabled() != enabled;
+    processor.SetEnabled(enabled);
+    // Addons may temporarily enable conversion for one explicit operation.
+    if (changed && processor.IsDebugOutputEnabled()) {
+        Msg("[MaterialPipeline::ToPBR] ToPBR conversion %s\n", enabled ? "ENABLED" : "DISABLED");
+    }
     return 0;
 }
 

@@ -354,6 +354,7 @@ public:
     
     // Debug output control
     void SetDebugOutput(bool enabled) { m_debugOutput = enabled; }
+    bool IsDebugOutputEnabled() const { return m_debugOutput; }
     
     // Enable/disable experimental metallic generation from base texture brightness
     // WARNING: This is experimental and may not look correct for all materials
