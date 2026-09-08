@@ -22,6 +22,8 @@
 #include <remix/remix.h>
 #include <remix/remix_c.h>
 #include "remixapi/remixapi.h"
+#include "advmat_rtx_bridge/bridge.h"
+#include "advmat_rtx_bridge/lua_bindings.h"
 #include "d3d9_texture_tracker.h"
 #include "patch_manager.h"
 #include "culling_patches.h"
@@ -34,6 +36,11 @@
 #include <globalconvars.h>
 #include "model_draw_hook.h"
 #include "material_pipeline/material_pipeline.h"
+#ifdef _WIN64
+#include <filesystem>
+#include <optional>
+#include <string>
+#endif
 
 #ifdef GMOD_MAIN
 extern IMaterialSystem* materials = NULL;
@@ -60,6 +67,17 @@ namespace {
     ConCommand* g_vramStatsCommand = nullptr;
     ICvar* g_commandCvar = nullptr;
     bool g_moduleClosing = false;
+
+    std::optional<std::filesystem::path> DiscoverExecutablePath() {
+        constexpr DWORD maxPathLength = 32768;
+        std::wstring buffer(maxPathLength, L'\0');
+        const DWORD length = GetModuleFileNameW(nullptr, buffer.data(), maxPathLength);
+        if (length == 0 || length >= maxPathLength) {
+            return std::nullopt;
+        }
+        buffer.resize(length);
+        return std::filesystem::path(buffer);
+    }
 
     void PrintVramStats() {
         remixapi_VramStats stats = {};
@@ -439,6 +457,17 @@ GMOD_MODULE_OPEN() {
 
         LUA->Pop();
 
+#ifdef _WIN64
+        const auto executable = DiscoverExecutablePath();
+        const auto gameRoot = executable
+            ? advmat::rtx_bridge::FindGameRootFromExecutable(*executable)
+            : std::nullopt;
+        if (!advmat::rtx_bridge::RegisterLua(
+                LUA, gameRoot.value_or(std::filesystem::path{}))) {
+            Warning("[AdvMat RTX Bridge] Failed to register Lua provider\n");
+        }
+#endif
+
         Msg("[gmRTX - Binary Module] Module initialization completed successfully!\n");
         return 0;
     }
@@ -454,6 +483,7 @@ GMOD_MODULE_CLOSE() {
 
 #ifdef _WIN64
         g_moduleClosing = true;
+        advmat::rtx_bridge::UnregisterLua(LUA);
         UnregisterTextureCleanupCommands();
 
         // Restore all runtime patches before shutdown

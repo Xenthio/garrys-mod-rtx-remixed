@@ -35,6 +35,14 @@ jobs:
     
     - name: Build
       run: msbuild RTXFixesBinary.sln /p:Configuration=Release /p:Platform=${{ matrix.platform }} /m
+
+    - name: Test Advanced Material Editor RTX writer
+      if: matrix.platform == 'x64'
+      run: |
+        cmake -S source/advmat_rtx_bridge -B out/advmat-rtx-bridge -G "Visual Studio 17 2022" -A x64
+        cmake --build out/advmat-rtx-bridge --config Release
+        ctest --test-dir out/advmat-rtx-bridge -C Release --output-on-failure
+      shell: pwsh
     
     - name: Prepare artifacts
       run: |
