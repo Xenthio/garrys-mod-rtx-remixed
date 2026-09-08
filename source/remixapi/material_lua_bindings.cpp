@@ -23,6 +23,16 @@ extern remix::Interface* g_remix;
 
 namespace RemixAPI {
 
+static bool MaterialDebugEnabled() {
+    return GlobalConvars::r_remix_material_debug && GlobalConvars::r_remix_material_debug->GetBool();
+}
+
+static void PushMaterialHashRevision(ILuaBase* lua, uint64_t revision) {
+    char text[24];
+    sprintf_s(text, "%016llX", revision);
+    lua->PushString(text);
+}
+
 // Helper function to extract MaterialInfo from Lua table
 static remix::MaterialInfo LuaToMaterialInfo(ILuaBase* LUA, int index) {
     remix::MaterialInfo info;
@@ -512,6 +522,11 @@ LUA_FUNCTION(RemixMaterial_TrackMaterial) {
     
     if (GlobalConvars::r_remix_material_debug && GlobalConvars::r_remix_material_debug->GetBool())
         Msg("[RemixMaterial] TrackMaterial: Attempting to track '%s'\n", materialName);
+
+    if (D3D9TextureTracker::Instance().GetTextureVariantCount(materialName) != 0) {
+        LUA->PushBool(true);
+        return 1;
+    }
     
     // Try to find and "touch" the material to trigger loading
     if (materials) {
@@ -523,10 +538,11 @@ LUA_FUNCTION(RemixMaterial_TrackMaterial) {
             if (bFound && pVar) {
                 ITexture* pTex = pVar->GetTextureValue();
                 if (pTex) {
-                    // Force download to GPU
-                    pTex->Download();
-                    if (GlobalConvars::r_remix_material_debug && GlobalConvars::r_remix_material_debug->GetBool())
-                        Msg("[RemixMaterial] TrackMaterial: Triggered texture download for '%s'\n", pTex->GetName());
+                    // Finding the material requests normal Source loading.
+                    // Download() reconstructs texture bits, including procedural
+                    // regenerators; polling for a hash must never force that work.
+                    if (MaterialDebugEnabled())
+                        Msg("[RemixMaterial] TrackMaterial: Waiting for a real draw of '%s'\n", pTex->GetName());
                 } else {
                     Warning("[RemixMaterial] TrackMaterial: Texture is null for '%s'\n", materialName);
                 }
@@ -542,8 +558,8 @@ LUA_FUNCTION(RemixMaterial_TrackMaterial) {
     // call runs on the main thread while SetTexture runs later on the render
     // thread; forcing hundreds of 1x1 draws during BSP categorization allowed a
     // material name from one thread to be paired with another draw's texture.
-    // Download() is enough to make the resource resident. The persistent Lua
-    // pending queue will categorize it when a real draw provides a verified hash.
+    // The persistent Lua pending queue will categorize it when a real draw
+    // provides a verified hash. Tracking does not regenerate texture contents.
     
     LUA->PushBool(true);
     return 1;
@@ -561,7 +577,7 @@ LUA_FUNCTION(RemixMaterial_GetTextureHash) {
     
     // Check Remix API is initialized
     if (!g_remix) {
-        Warning("[RemixMaterial] GetTextureHash: Remix API not initialized\n");
+        if (MaterialDebugEnabled()) Msg("[RemixMaterial] GetTextureHash: Remix API not initialized\n");
         LUA->PushNumber(0);
         return 1;
     }
@@ -599,11 +615,12 @@ LUA_FUNCTION(RemixMaterial_GetTextureHash) {
             if (firstValidHash == 0) {
                 firstValidHash = hash;
             }
+            if (firstValidHash != 0) break;
         }
     }
     
     if (firstValidHash == 0) {
-        Warning("[RemixMaterial] GetTextureHash: No valid hashes found for '%s'\n", materialName);
+        if (MaterialDebugEnabled()) Msg("[RemixMaterial] GetTextureHash: Hash not ready for '%s'\n", materialName);
         LUA->PushNumber(0);
         return 1;
     }
@@ -675,7 +692,7 @@ LUA_FUNCTION(RemixMaterial_GetAllTextureHashes) {
 // Lua function: RemixMaterial.FindMaterialByHash(textureHash)
 // Reverse lookup: Returns all material names that match the given texture hash
 // Input: textureHash (number or hex string like "0xABCD1234")
-// Returns: table of material names
+// Returns: table of material names, matching ownership revision (nil if unavailable).
 LUA_FUNCTION(RemixMaterial_FindMaterialByHash) {
     uint64_t queryHash = 0;
     
@@ -698,49 +715,22 @@ LUA_FUNCTION(RemixMaterial_FindMaterialByHash) {
     if (queryHash == 0) {
         Warning("[RemixMaterial] FindMaterialByHash: Invalid hash (0)\n");
         LUA->CreateTable();
-        return 1;
+        LUA->PushNil();
+        return 2;
     }
     
     // Check Remix API is initialized
     if (!g_remix) {
-        Warning("[RemixMaterial] FindMaterialByHash: Remix API not initialized\n");
+        if (MaterialDebugEnabled()) Msg("[RemixMaterial] FindMaterialByHash: Remix API not initialized\n");
         LUA->CreateTable();
-        return 1;
+        LUA->PushNil();
+        return 2;
     }
     
-    Msg("[RemixMaterial] FindMaterialByHash: Searching for hash 0x%llX...\n", queryHash);
-    
-    // Get all cached materials
-    std::vector<std::string> allMaterials = D3D9TextureTracker::Instance().GetCachedMaterials();
     std::vector<std::string> matchingMaterials;
-    
-    // Check each material's texture hash
-    for (const auto& materialName : allMaterials) {
-        auto variants =
-            D3D9TextureTracker::Instance().GetTextureVariantsForMaterial(materialName.c_str());
-        
-        if (variants.empty()) {
-            continue;
-        }
-        
-        // Check all texture variants for this material
-        for (IDirect3DTexture9* d3dTexture : variants) {
-            if (!d3dTexture) {
-                continue;
-            }
-            
-            // The snapshot keeps every pointer alive during this lookup.
-            auto result = g_remix->dxvk_GetTextureHash(d3dTexture);
-            if (result) {
-                uint64_t hash = result.value();
-                if (hash == queryHash) {
-                    matchingMaterials.push_back(materialName);
-                    Msg("[RemixMaterial]   Found match: '%s' (hash 0x%llX)\n", materialName.c_str(), hash);
-                    break; // Found a match, no need to check other variants
-                }
-            }
-        }
-    }
+    uint64_t revision = 0;
+    const bool available = D3D9TextureTracker::Instance().FindMaterialsByHash(
+        queryHash, matchingMaterials, revision);
     
     // Return results as Lua table
     LUA->CreateTable();
@@ -750,13 +740,48 @@ LUA_FUNCTION(RemixMaterial_FindMaterialByHash) {
         LUA->SetTable(-3);
     }
     
-    if (matchingMaterials.empty()) {
-        Msg("[RemixMaterial] FindMaterialByHash: No materials found with hash 0x%llX\n", queryHash);
-        Msg("[RemixMaterial]   Tip: Make sure the texture has been rendered and is in the cache\n");
-    } else {
-        Msg("[RemixMaterial] FindMaterialByHash: Found %zu matching material(s)\n", matchingMaterials.size());
+    if (MaterialDebugEnabled()) {
+        Msg("[RemixMaterial] FindMaterialByHash: 0x%llX, %zu owners, available=%d\n",
+            queryHash, matchingMaterials.size(), available ? 1 : 0);
     }
-    
+    if (available) PushMaterialHashRevision(LUA, revision);
+    else LUA->PushNil();
+    return 2;
+}
+
+LUA_FUNCTION(RemixMaterial_GetMaterialHashRevision) {
+    uint64_t revision = 0;
+    if (D3D9TextureTracker::Instance().GetMaterialHashRevision(revision))
+        PushMaterialHashRevision(LUA, revision);
+    else LUA->PushNil();
+    return 1;
+}
+
+// Read-only counters: does not refresh or call Remix, so diagnostics do not add
+// texture work to the operation they measure. Counts are process-lifetime totals.
+LUA_FUNCTION(RemixMaterial_GetMaterialHashStats) {
+    const auto stats = D3D9TextureTracker::Instance().GetMaterialHashStats();
+    LUA->CreateTable();
+    auto* lua = LUA;
+    auto number = [lua](const char* key, double value) {
+        lua->PushNumber(value);
+        lua->SetField(-2, key);
+    };
+    number("lookup_calls", static_cast<double>(stats.lookups));
+    number("revision_polls", static_cast<double>(stats.revisionPolls));
+    number("refreshes", static_cast<double>(stats.refreshes));
+    number("hash_calls", static_cast<double>(stats.hashCalls));
+    number("cache_hits", static_cast<double>(stats.cacheHits));
+    number("discarded_refreshes", static_cast<double>(stats.discardedRefreshes));
+    number("failed_refreshes", static_cast<double>(stats.failedRefreshes));
+    number("materials", static_cast<double>(stats.materials));
+    number("variants", static_cast<double>(stats.variants));
+    number("hashes", static_cast<double>(stats.hashes));
+    LUA->PushBool(stats.available);
+    LUA->SetField(-2, "available");
+    if (stats.available) PushMaterialHashRevision(LUA, stats.revision);
+    else LUA->PushNil();
+    LUA->SetField(-2, "revision");
     return 1;
 }
 
@@ -1355,6 +1380,12 @@ void MaterialManager::InitializeLuaBindings() {
     
     m_lua->PushCFunction(RemixMaterial_FindMaterialByHash);
     m_lua->SetField(-2, "FindMaterialByHash");
+
+    m_lua->PushCFunction(RemixMaterial_GetMaterialHashRevision);
+    m_lua->SetField(-2, "GetMaterialHashRevision");
+
+    m_lua->PushCFunction(RemixMaterial_GetMaterialHashStats);
+    m_lua->SetField(-2, "GetMaterialHashStats");
     
     m_lua->PushCFunction(RemixMaterial_TrackMaterial);
     m_lua->SetField(-2, "TrackMaterial");

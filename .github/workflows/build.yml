@@ -2,7 +2,7 @@ name: Build
 
 on:
   push:
-    branches: [ main, gh-actions ]
+    branches: [ main, gh-actions, sheepylord/PBR_gma_loader ]
   pull_request:
     branches: [ main, gh-actions ]
   workflow_dispatch:

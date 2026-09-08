@@ -27,6 +27,7 @@
 #include "d3d9_texture_tracker.h"
 #include "patch_manager.h"
 #include "culling_patches.h"
+#include "startup_lua_bindings.h"
 #endif // _WIN64
 
 #include "prop_fixes.h" 
@@ -365,6 +366,10 @@ GMOD_MODULE_OPEN() {
             LUA->ThrowError("[gmRTX - Binary Module] Failed to initialize RemixAPI");
             return 0;
         }
+
+        // Prepared GMA materials need only the already loaded startup proxy's
+        // status and scoped fallback API; no separate material-writer module.
+        AstraStartup::RegisterLua(LUA);
 
         // Register native Remix API frame callbacks to submit lights (resolve dynamically)
         {

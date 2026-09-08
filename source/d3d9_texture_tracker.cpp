@@ -301,6 +301,10 @@ void D3D9TextureTracker::Shutdown() {
             }
         }
         m_textureCache.clear();
+        m_materialHashLookup.Clear();
+        ++m_textureCacheVersion;
+        m_hashLookupAvailable = false;
+        m_nextHashRefresh = {};
         m_textureSourceIdentities.clear();
         
         // Clear pending categorizations
@@ -607,6 +611,15 @@ size_t D3D9TextureTracker::InvalidateMaterialCache(const char* materialName) {
         }
 
         totalCount += it->second.size();
+        m_materialHashLookup.RemoveMaterial(key);
+        ++m_textureCacheVersion;
+
+        // These pending entries borrow the cache's reference. Remove them before
+        // releasing it, so a runtime texture edit cannot leave a dangling retry.
+        m_pendingHashResolution.erase(std::remove_if(
+            m_pendingHashResolution.begin(), m_pendingHashResolution.end(),
+            [&key](const PendingHashResolution& pending) { return pending.materialName == key; }),
+            m_pendingHashResolution.end());
 
         // Release texture references
         for (auto* tex : it->second) {
@@ -654,6 +667,10 @@ void D3D9TextureTracker::ClearCache() {
         }
     }
     m_textureCache.clear();
+    m_materialHashLookup.Clear();
+    ++m_textureCacheVersion;
+    m_hashLookupAvailable = false;
+    m_nextHashRefresh = {};
     m_textureSourceIdentities.clear();
     m_detailTextureCache.clear();
     m_hashToMaterials.clear();
@@ -682,6 +699,123 @@ void D3D9TextureTracker::ClearCache() {
     m_pendingHashResolution.clear();
     
     Msg("[D3D9TextureTracker] Cache cleared\n");
+}
+
+bool D3D9TextureTracker::RefreshMaterialHashLookup() {
+    TextureSnapshot textures;
+    std::vector<std::pair<std::string, size_t>> associations;
+    uint64_t version = 0;
+    {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        if (!g_remix || !m_bInitialized || m_hashRefreshInProgress) return false;
+        const auto now = std::chrono::steady_clock::now();
+        if (now < m_nextHashRefresh) {
+            ++m_materialHashStats.cacheHits;
+            return m_hashLookupAvailable;
+        }
+
+        // Shared textures need one hash query, regardless of their owner count.
+        std::unordered_map<IDirect3DTexture9*, size_t> indices;
+        for (const auto& material : m_textureCache) {
+            for (auto* texture : material.second) {
+                if (!texture) continue;
+                auto inserted = indices.emplace(texture, textures.size());
+                if (inserted.second) {
+                    textures.m_textures.push_back(texture);
+                    texture->AddRef();
+                }
+                associations.emplace_back(material.first, inserted.first->second);
+            }
+        }
+        version = m_textureCacheVersion;
+        m_hashRefreshInProgress = true;
+        m_nextHashRefresh = now + std::chrono::seconds(1);
+        ++m_materialHashStats.refreshes;
+    }
+
+    // Never call Remix with the tracker mutex held. The retained COM references
+    // keep resources alive across render-thread additions and cache invalidation.
+    std::vector<uint64_t> hashes;
+    uint64_t calls = 0;
+    bool success = true;
+    try {
+        hashes.reserve(textures.size());
+        for (auto* texture : textures) {
+            ++calls;
+            auto result = g_remix->dxvk_GetTextureHash(texture);
+            if (!result) success = false;
+            hashes.push_back(result ? result.value() : 0);
+        }
+    } catch (...) {
+        success = false;
+    }
+
+    {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        m_hashRefreshInProgress = false;
+        m_materialHashStats.hashCalls += calls;
+        if (version != m_textureCacheVersion) {
+            ++m_materialHashStats.discardedRefreshes;
+            m_hashLookupAvailable = false;
+            return false;
+        }
+        if (success) {
+            // A previously resolved texture becoming unavailable is uncertainty,
+            // not proof that its old owner disappeared. Fail closed until a full
+            // refresh succeeds; explicit invalidation removes owners immediately.
+            for (const auto& association : associations) {
+                const auto texture = reinterpret_cast<uintptr_t>(textures[association.second]);
+                if (!hashes[association.second] &&
+                    m_materialHashLookup.HashFor(association.first, texture)) {
+                    success = false;
+                    break;
+                }
+            }
+        }
+        if (!success) {
+            ++m_materialHashStats.failedRefreshes;
+            m_hashLookupAvailable = false;
+            return false;
+        }
+        for (const auto& association : associations) {
+            m_materialHashLookup.Observe(association.first,
+                reinterpret_cast<uintptr_t>(textures[association.second]), hashes[association.second]);
+        }
+        m_hashLookupAvailable = true;
+    }
+    return true;
+}
+
+bool D3D9TextureTracker::GetMaterialHashRevision(uint64_t& revision) {
+    const bool available = RefreshMaterialHashLookup();
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    ++m_materialHashStats.revisionPolls;
+    if (!available || !m_hashLookupAvailable || m_hashRefreshInProgress) return false;
+    revision = m_materialHashLookup.Revision();
+    return true;
+}
+
+bool D3D9TextureTracker::FindMaterialsByHash(
+    uint64_t hash, std::vector<std::string>& names, uint64_t& revision) {
+    const bool available = RefreshMaterialHashLookup();
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    ++m_materialHashStats.lookups;
+    names.clear();
+    if (!available || !m_hashLookupAvailable || m_hashRefreshInProgress) return false;
+    names = m_materialHashLookup.Find(hash);
+    revision = m_materialHashLookup.Revision();
+    return true;
+}
+
+D3D9TextureTracker::MaterialHashStats D3D9TextureTracker::GetMaterialHashStats() const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    auto stats = m_materialHashStats;
+    stats.revision = m_materialHashLookup.Revision();
+    stats.materials = m_materialHashLookup.MaterialCount();
+    stats.variants = m_materialHashLookup.VariantCount();
+    stats.hashes = m_materialHashLookup.HashCount();
+    stats.available = g_remix && m_bInitialized && m_hashLookupAvailable && !m_hashRefreshInProgress;
+    return stats;
 }
 
 // Hooked SetTexture function
@@ -755,7 +889,7 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
 #endif
 
         // DEBUG: Log all texture stages for displacement materials
-        if (pTexture && !drawState.materialName.empty()) {
+        if (tracker.m_enableDebugOutput && pTexture && !drawState.materialName.empty()) {
             std::string lowerName = drawState.materialName;
             std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), 
                 [](unsigned char c){ return std::tolower(c); });
@@ -895,6 +1029,9 @@ HRESULT STDMETHODCALLTYPE D3D9TextureTracker::Hook_SetTexture(
                         // AddRef to keep the texture alive while we reference it
                         p2DTexture->AddRef();
                         textures.push_back(p2DTexture);
+                        ++tracker.m_textureCacheVersion;
+                        tracker.m_materialHashLookup.Observe(
+                            trackingName, reinterpret_cast<uintptr_t>(p2DTexture), hash);
                         // Re-enable logging for debugging texture capture issues
                         if (tracker.m_enableDebugOutput) {
                             Msg("[D3D9TextureTracker] NEW texture variant #%zu: 0x%p for '%s'%s (hash: 0x%llX)\n", 
@@ -1272,7 +1409,7 @@ void D3D9TextureTracker::Hook_Bind(IMatRenderContext* pContext, IMaterial* pMate
     tracker.SetCurrentMaterial(pMaterial);
     
     // DEBUG: Log displacement materials to see if they're being bound
-    if (pMaterial) {
+    if (tracker.m_enableDebugOutput && pMaterial) {
         const char* name = pMaterial->GetName();
         if (name) {
             std::string lowerName = name;
@@ -1631,6 +1768,9 @@ int D3D9TextureTracker::RetryPendingHashResolution() {
         uint64_t hash = result.value();
 
         // Insert into the hash→materials reverse map.
+        m_materialHashLookup.Observe(
+            pending.materialName, reinterpret_cast<uintptr_t>(pending.texture), hash);
+        ++m_textureCacheVersion;
         m_hashToMaterials[hash].insert(pending.materialName);
         MaterialPipeline::AutoCategorisation::ReconcileHashCategories(hash);
 

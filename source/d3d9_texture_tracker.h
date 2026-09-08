@@ -9,6 +9,8 @@
 #include <vector>
 #include <mutex>
 #include <cstddef>
+#include <chrono>
+#include "material_hash_lookup.h"
 
 // Forward declarations
 class IMaterial;
@@ -94,6 +96,20 @@ public:
 
     // Get all cached materials
     std::vector<std::string> GetCachedMaterials() const;
+
+    // Indexed all-stage ownership, refreshed at most once per second. Remix API
+    // calls use stable texture snapshots outside m_mutex. False means callers
+    // must not cache the result/revision as a verified ownership decision.
+    bool GetMaterialHashRevision(uint64_t& revision);
+    bool FindMaterialsByHash(uint64_t hash, std::vector<std::string>& names, uint64_t& revision);
+    struct MaterialHashStats {
+        uint64_t lookups = 0, revisionPolls = 0, refreshes = 0, hashCalls = 0;
+        uint64_t cacheHits = 0, discardedRefreshes = 0, failedRefreshes = 0;
+        uint64_t revision = 0;
+        size_t materials = 0, variants = 0, hashes = 0;
+        bool available = false;
+    };
+    MaterialHashStats GetMaterialHashStats() const;
 
     // Hash-to-Category mapping system
     void SetHashCategoryFlags(uint64_t textureHash, uint32_t categoryFlags);
@@ -247,6 +263,8 @@ private:
         IDirect3DTexture9* texture,
         const std::string& materialName);
 
+    bool RefreshMaterialHashLookup();
+
     // Original function pointer
     typedef HRESULT (STDMETHODCALLTYPE *SetTexture_t)(
         IDirect3DDevice9* pDevice,
@@ -270,6 +288,13 @@ private:
 
     // Cache: material name -> set of D3D9 textures (materials can have multiple texture variants)
     std::unordered_map<std::string, std::vector<IDirect3DTexture9*>> m_textureCache;
+
+    MaterialHashLookup m_materialHashLookup;
+    uint64_t m_textureCacheVersion = 0;
+    bool m_hashRefreshInProgress = false;
+    bool m_hashLookupAvailable = false;
+    std::chrono::steady_clock::time_point m_nextHashRefresh{};
+    MaterialHashStats m_materialHashStats;
 
     // The Source texture identity expected for each accepted D3D pointer.
     // One Source texture may be shared by many VMTs, but the same live D3D
