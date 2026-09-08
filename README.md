@@ -9,6 +9,8 @@
 - Hardware Skinning (For Half-Life 2 RTX Assets)
 - Remix API Support (including Lua bindings for addon creation)
 - [Prepared PBR assets in GMA addons](docs/PBR_GMA_LOADER.md): prepare DDS replacements before renderer startup and reuse them on later launches (Windows x64).
+- Win64 legacy texture-hash replacement provider for Advanced Material Editor
+  ([protocol and safety notes](source/advmat_rtx_bridge/README.md))
       
 ## Installation
 - Switch to the `x86-64` branch of Garry's Mod on Steam
