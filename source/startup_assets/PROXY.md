@@ -16,11 +16,20 @@ after checking its on-disk generation receipt. Both functions use `__cdecl`;
 the intercepted D3D9 entry points preserve `WINAPI`.
 
 `ASTRA_RTX_STARTUP_SOURCES` is an optional JSON array of absolute addon directory
-or GMA paths, replacing ordinary addon discovery. Without it, `-noaddons` disables
-addon sources; loose game `data_static` is still considered. Status records
+or GMA paths, replacing ordinary local and Workshop addon discovery. Without it,
+`-noaddons` disables both, while `-noworkshop` disables only Workshop subscriptions;
+loose game `data_static` is still considered. Status records
 `source_selection` as `explicit_environment`, `noaddons` or `default_discovery`.
 An invalid explicit selection reports failure and attempts scoped deactivation
 before continuing to the renderer.
+
+Workshop discovery runs before the first D3D9 creation call. It resolves the
+current user's cached subscriptions through Steam's library and installation
+metadata, then reads immediate GMA files from the selected item directories.
+Disabled, unsubscribed and incomplete items are excluded; arbitrary cached items
+are never used as a fallback when subscription metadata is unavailable. Portable
+Steam root/account overrides are documented in the setup guide. No Steam API is
+initialized and no downloads are started by this proxy.
 
 The recorded export contract contains 146 original names and ordinals, plus two
 startup exports. `generate_proxy_exports.py RENDERER --check` verifies that exact

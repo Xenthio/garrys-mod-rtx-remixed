@@ -74,7 +74,14 @@ copy the old wrapper over it. Verify the sibling still has the checked SHA-256
 after copying. The offline `astra_rtx_prepare_assets.exe` may remain outside the
 game; it is not needed at runtime.
 
-Put companion GMA files together in an immediate addon folder, for example:
+Subscribe to the base map and its PBR companion on Steam Workshop, let Steam
+finish both downloads, and fully restart the game. The loader reads the current
+Steam user's enabled subscriptions and resolves their installed GMAs across
+Steam libraries, including when RTX runs from a copied game installation.
+Subscribers do not need to copy Workshop files into `garrysmod/addons`.
+
+Manual companion GMA files may instead live together in an immediate addon
+folder, for example:
 
 ```text
 garrysmod/addons/pbr_maps/gm_example.gma
@@ -82,16 +89,34 @@ garrysmod/addons/pbr_maps/gm_example_rtx.gma
 ```
 
 The scanner discovers loose addons, direct `addons/*.gma` files and immediate
-`.gma` files inside each addon folder. Prefer the folder layout above because
-Source can move root-level archives into its Workshop cache. Workshop caches,
-linked paths and deeper directories are not discovered by this implementation.
-An arbitrary Workshop subscription is therefore not sufficient unless its
-prepared assets also reside in a discovered physical location.
+`.gma` files inside each addon folder. Prefer the folder layout above for manual
+installs because Source can move root-level archives into its cache. Workshop
+discovery inspects only installed directories selected from Steam's subscription
+metadata. Unsubscribed cached items, other users' subscriptions, Steam-disabled
+items, items in `garrysmod/cfg/addonnomount.txt`, and incomplete updates are
+excluded. Linked paths and arbitrary deeper directories are not traversed.
 
 For explicit installations or testing, set `ASTRA_RTX_STARTUP_SOURCES` in the
 game process's environment to a JSON array of absolute addon directory or GMA
-paths. It replaces addon discovery. Otherwise `-noaddons` disables addon
-sources. The game's own loose `garrysmod/data_static` is always considered.
+paths. It replaces both local addon and Workshop discovery. Otherwise
+`-noaddons` disables both sources, while `-noworkshop` disables only Workshop
+discovery. The game's own loose `garrysmod/data_static` is always considered.
+
+Steam's installation and active account are discovered from its Windows registry
+entries. `libraryfolders.vdf`, the current user's
+`userdata/<account>/ugc/4000_subscriptions.vdf`, and each library's
+`appworkshop_4000.acf` identify installed subscriptions. If required metadata is
+missing or invalid, discovery reports that condition instead of loading all
+cached Workshop files. These local formats are validated against the supported
+Steam layout and covered by fixtures; a future Steam format change may require
+a loader update.
+
+For portable installations or isolated tests, `ASTRA_RTX_STEAM_ROOT` and
+`ASTRA_RTX_STEAM_USER` override the Steam root and numeric account ID. An explicit
+Steam root never falls back to another installation from the registry. The
+offline tool accepts the equivalent `--steam-root PATH --steam-user ACCOUNT_ID`
+options. Normal subscribers need no overrides. Subscription or enable/disable
+changes take effect on the next full game launch, when preparation runs again.
 
 ## Package and runtime contract
 
@@ -143,7 +168,9 @@ invalidation and diagnostics.
 
 ## Validation and diagnostics
 
-CTest exercises archive discovery, cache reuse, corruption, missing assets,
+CTest exercises local and Workshop archive discovery, current-user and disabled
+addon filtering, multiple Steam libraries, incomplete updates, cache reuse,
+corruption, missing assets,
 unsafe paths, hash conflicts, legacy migration, real proxy forwarding and Lua
 startup contracts. The ownership oracle checks 180,000 results against an
 independent full scan. These are native/contract tests; they do not create a GPU
@@ -151,7 +178,8 @@ device or claim a new in-game timing measurement.
 
 The proxy keeps a startup snapshot; the scanner also writes
 `garrysmod/data/astra/startup/status.json`. Inspect per-map `ready`, `generation`,
-`errors`, `seconds`, `cache_hits` and `bytes_written`. An unchanged second launch
+`errors`, `seconds`, `cache_hits` and `bytes_written`. The `workshop` section
+reports discovery and skipped-item reasons. An unchanged second launch
 should reuse DDS files and avoid rewriting `mod.usda`. The cache uses verified
 receipts and file size/mtime, rather than rehashing every archive payload on each
 launch. A local modification that preserves both size and timestamp is outside
@@ -164,7 +192,8 @@ build/startup/Release/astra_rtx_prepare_assets.exe --game-root "<game>"
 ```
 
 This command prepares files and writes status; it is not a read-only inspection.
-It can also take repeated `--source` paths or `--no-addons`. Before removing the
+It can also take repeated `--source` paths, `--no-addons`, or `--no-workshop`.
+Before removing the
 wrapper, remove its physical GMA sources and run a successful `--no-addons`
 preparation to deactivate stale startup roots (also remove any relevant loose
 game `data_static` package). Then restore the backed-up original renderer.

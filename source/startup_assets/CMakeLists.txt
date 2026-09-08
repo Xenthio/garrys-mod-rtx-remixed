@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(astra_startup_assets VERSION 1.1.0 LANGUAGES CXX)
+project(astra_startup_assets VERSION 1.2.0 LANGUAGES CXX)
 if(NOT WIN32)
   message(FATAL_ERROR "Startup asset preparation requires Windows BCrypt and path checks")
 endif()
@@ -24,10 +24,10 @@ target_compile_features(astra_rtx_startup_proxy PRIVATE cxx_std_17)
 if(MSVC)
   target_compile_options(astra_rtx_startup_proxy PRIVATE /W4 /WX /permissive- /EHsc)
 endif()
-add_library(astra_startup_assets STATIC startup_assets.cpp)
+add_library(astra_startup_assets STATIC startup_assets.cpp workshop_discovery.cpp)
 target_compile_features(astra_startup_assets PUBLIC cxx_std_17)
 target_include_directories(astra_startup_assets PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(astra_startup_assets PRIVATE bcrypt)
+target_link_libraries(astra_startup_assets PRIVATE bcrypt advapi32)
 add_executable(astra_rtx_prepare_assets prepare_main.cpp)
 target_link_libraries(astra_rtx_prepare_assets PRIVATE astra_startup_assets)
 target_compile_features(astra_rtx_prepare_assets PRIVATE cxx_std_17)
@@ -41,6 +41,8 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
   add_test(NAME startup_asset_contracts COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_startup_assets.py" "$<TARGET_FILE:astra_rtx_prepare_assets>")
+  add_test(NAME workshop_discovery_contracts COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_workshop_discovery.py" "$<TARGET_FILE:astra_rtx_prepare_assets>")
   set(fake_exports "${CMAKE_CURRENT_BINARY_DIR}/fake_renderer.def")
   add_custom_command(OUTPUT "${fake_exports}"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/generate_fake_exports.py"

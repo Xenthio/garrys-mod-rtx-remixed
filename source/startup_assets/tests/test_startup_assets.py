@@ -59,6 +59,8 @@ class PreparationTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(prefix='astra_startup_native_')
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
+        self.environment = dict(os.environ, ASTRA_RTX_STEAM_ROOT=str(self.root / 'steam_unavailable'),
+                                ASTRA_RTX_STEAM_USER='123')
         self.addons = self.root / 'garrysmod/addons'
         self.addons.mkdir(parents=True)
         self.mods = self.root / 'rtx-remix/mods'
@@ -69,7 +71,7 @@ class PreparationTests(unittest.TestCase):
 
     def run_prepare(self, *args):
         completed = subprocess.run([str(EXE), '--game-root', str(self.root), *map(str, args)],
-                                   capture_output=True, text=True, timeout=20)
+                                   capture_output=True, text=True, timeout=20, env=self.environment)
         self.assertIn(completed.returncode, (0, 1), completed.stdout + completed.stderr)
         report = json.loads(completed.stdout)
         self.assertEqual(self.editor.read_bytes(), b'editor bytes remain unchanged')
@@ -234,7 +236,7 @@ class PreparationTests(unittest.TestCase):
         for index in range(4096):
             (folder/f'part_{index:04}.gma').touch()
         result = subprocess.run([str(EXE), '--game-root', str(self.root)],
-                                capture_output=True, text=True, timeout=20)
+                                capture_output=True, text=True, timeout=20, env=self.environment)
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertIn('Too many addon sources', result.stderr)
         self.assertNotIn('Unsupported GMA', result.stderr)
@@ -430,7 +432,7 @@ class PreparationTests(unittest.TestCase):
         output = long_root/'rtx-remix/mods/!astra_startup_gm_fixture'/manifest['files'][0]['target']
         self.assertGreater(len(str(output)), 260)
         result = subprocess.run([str(EXE), '--game-root', str(long_root), '--source', str(archive)],
-                                capture_output=True, text=True, timeout=20)
+                                capture_output=True, text=True, timeout=20, env=self.environment)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue(json.loads(result.stdout)['ready'])
         self.assertEqual(digest(output.read_bytes()), manifest['files'][0]['sha256'])
@@ -442,7 +444,7 @@ class PreparationTests(unittest.TestCase):
         archive = self.addons/'地图资料_é.gma'
         gma(archive, entries)
         result = subprocess.run([str(EXE), '--game-root', str(unicode_root), '--source', str(archive)],
-                                capture_output=True, text=True, encoding='utf8', timeout=20)
+                                capture_output=True, text=True, encoding='utf8', timeout=20, env=self.environment)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         report = json.loads(result.stdout)
         self.assertTrue(report['ready'], report)

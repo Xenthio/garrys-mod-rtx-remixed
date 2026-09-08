@@ -20,7 +20,8 @@ nlohmann::json g_status = {{"version", 1}, {"phase", "pending"}, {"maps", nlohma
 std::filesystem::path g_gameRoot;
 HMODULE g_renderer = nullptr;
 
-std::optional<std::vector<std::filesystem::path>> SelectSources(std::string& selection) {
+std::optional<std::vector<std::filesystem::path>> SelectSources(
+    std::string& selection, astra::startup_assets::WorkshopOptions& workshop) {
     constexpr const wchar_t* variable = L"ASTRA_RTX_STARTUP_SOURCES";
     const DWORD needed = GetEnvironmentVariableW(variable, nullptr, 0);
     if (needed) {
@@ -53,6 +54,7 @@ std::optional<std::vector<std::filesystem::path>> SelectSources(std::string& sel
     bool noAddons = false;
     for (int index = 1; index < count; ++index) {
         if (_wcsicmp(arguments[index], L"-noaddons") == 0) noAddons = true;
+        if (_wcsicmp(arguments[index], L"-noworkshop") == 0) workshop.enabled = false;
     }
     LocalFree(arguments);
     if (noAddons) {
@@ -88,8 +90,9 @@ void Initialize() noexcept {
                 nlohmann::json result;
                 try {
                     std::string selection;
-                    const auto sources = SelectSources(selection);
-                    result = astra::startup_assets::Prepare(g_gameRoot, sources);
+                    astra::startup_assets::WorkshopOptions workshop;
+                    const auto sources = SelectSources(selection, workshop);
+                    result = astra::startup_assets::Prepare(g_gameRoot, sources, workshop);
                     result["phase"] = "prepared";
                     result["source_selection"] = selection;
                 } catch (const std::exception& error) {

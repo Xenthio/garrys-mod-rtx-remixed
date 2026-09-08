@@ -541,9 +541,39 @@ struct Package {
     std::set<std::string> hashes;
     std::vector<std::string> errors;
 };
+
+std::optional<std::wstring> EnvironmentOption(const wchar_t* name) {
+    const auto needed = GetEnvironmentVariableW(name, nullptr, 0);
+    if (!needed) return std::nullopt;
+    Need(needed <= 32768, "Workshop environment option exceeds length bound");
+    std::wstring value(needed, L'\0');
+    const auto length = GetEnvironmentVariableW(name, value.data(), needed);
+    Need(length && length < needed, "Workshop environment option changed during read");
+    value.resize(length);
+    return value;
+}
+
+WorkshopOptions ResolveWorkshopOptions(WorkshopOptions options) {
+    if (!options.steamRoot) {
+        if (const auto value = EnvironmentOption(L"ASTRA_RTX_STEAM_ROOT"))
+            options.steamRoot = fs::path(*value);
+    }
+    if (!options.accountId) {
+        if (const auto value = EnvironmentOption(L"ASTRA_RTX_STEAM_USER")) {
+            Need(!value->empty() && value->size() <= 10 &&
+                value->find_first_not_of(L"0123456789") == std::wstring::npos,
+                "Steam account override must be a decimal account ID");
+            std::string account;
+            for (const auto digit : *value) account += static_cast<char>(digit);
+            options.accountId = std::move(account);
+        }
+    }
+    return options;
+}
 } // namespace
 
-Json Prepare(const fs::path& suppliedRoot, const std::optional<std::vector<fs::path>>& addonSources) {
+Json Prepare(const fs::path& suppliedRoot, const std::optional<std::vector<fs::path>>& addonSources,
+             const WorkshopOptions& workshopOptions) {
     const auto began = std::chrono::steady_clock::now();
     const auto gameRoot = fs::absolute(suppliedRoot).lexically_normal();
     PlainPath(gameRoot);
@@ -553,6 +583,8 @@ Json Prepare(const fs::path& suppliedRoot, const std::optional<std::vector<fs::p
                 {"accounting", "Reads include GMA tables, selected metadata and asset verification. Writes count texture/layer payloads, excluding receipts/status. OS read-ahead and renderer streaming are excluded. No archive payload scan or full-archive CRC is performed."}};
     Inventory inventory;
     auto sources = addonSources.value_or(std::vector<fs::path>{});
+    report["workshop"] = {{"enabled", false}, {"phase", "disabled"}, {"selected", 0},
+                          {"reason", "Explicit addon sources replace Workshop discovery"}};
     if (!addonSources) {
         const auto addons = gameRoot / "garrysmod/addons";
         PlainPath(addons);
@@ -572,6 +604,22 @@ Json Prepare(const fs::path& suppliedRoot, const std::optional<std::vector<fs::p
                     Need(sources.size() <= kMaxSources, "Too many addon sources");
                 }
             }
+        }
+        if (workshopOptions.enabled) {
+            const auto metadata = [&report](const fs::path& path) -> std::optional<std::string> {
+                PlainPath(path);
+                if (!Exists(path)) return std::nullopt;
+                const auto stamp = FileStamp(path);
+                const Member member{path, 0, stamp.at("bytes").get<std::uint64_t>(), std::nullopt, stamp};
+                return ReadSmall(member, kManifestBytes, report);
+            };
+            auto workshop = DiscoverWorkshopSources(gameRoot, ResolveWorkshopOptions(workshopOptions),
+                                                    metadata, report["workshop"]);
+            sources.insert(sources.end(), workshop.begin(), workshop.end());
+            Need(sources.size() <= kMaxSources, "Too many combined addon and Workshop sources");
+        } else {
+            report["workshop"] = {{"enabled", false}, {"phase", "disabled"}, {"selected", 0},
+                                  {"reason", "Workshop discovery disabled for this launch"}};
         }
     }
     sources = ExpandAddonSources(sources, report);
