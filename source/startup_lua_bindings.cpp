@@ -98,19 +98,41 @@ void RegisterIfAbsent(ILuaBase* lua, const char* name) {
     lua->Pop();
 }
 
+// The global table must be on top of the stack. Use Garry's Mod's resolver so
+// availability follows the current realm, platform and architecture.
+bool IsFullProviderInstalled(ILuaBase* lua) {
+    lua->GetField(-1, "util");
+    if (!lua->IsType(-1, Type::Table)) {
+        lua->Pop();
+        return false;
+    }
+    lua->GetField(-1, "IsBinaryModuleInstalled");
+    if (!lua->IsType(-1, Type::Function)) {
+        lua->Pop(2);
+        return false;
+    }
+    lua->PushString("astra_rtx_bridge");
+    const bool installed = lua->PCall(1, 1, 0) == 0 &&
+        lua->IsType(-1, Type::Bool) && lua->GetBool(-1);
+    lua->Pop(2); // Availability result (or error) and util table.
+    return installed;
+}
+
 void TryExistingFullProvider(ILuaBase* lua) {
     lua->PushSpecial(GarrysMod::Lua::SPECIAL_GLOB);
     lua->GetField(-1, "AstraRTXBridge");
     const bool absent = lua->IsType(-1, Type::Nil);
     lua->Pop();
-    if (absent) {
+    if (absent && IsFullProviderInstalled(lua)) {
         // Older map runtimes require the full helper lazily only while this
         // global is nil. Give an already installed helper its normal require
         // opportunity before publishing the startup-only compatibility table.
+        // Do not probe availability with require: the engine reports a missing
+        // Lua include even when its failure is caught by PCall.
         lua->GetField(-1, "require");
         if (lua->IsType(-1, Type::Function)) {
             lua->PushString("astra_rtx_bridge");
-            if (lua->PCall(1, 0, 0) != 0) lua->Pop(); // Missing helper is normal.
+            if (lua->PCall(1, 0, 0) != 0) lua->Pop(); // Installed helper failed to initialize.
         } else {
             lua->Pop();
         }

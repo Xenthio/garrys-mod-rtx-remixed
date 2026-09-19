@@ -15,6 +15,8 @@ bool nullStatus = false;
 unsigned int lookups = 0, disables = 0;
 unsigned int requires = 0;
 bool helperInstalled = false;
+bool helperFails = false, probeFails = false, probeNonBoolean = false;
+unsigned int probes = 0;
 std::string status = "{\"version\":1,\"maps\":{}}", receivedMap, receivedGeneration;
 
 const char* __cdecl FakeStatus() { return nullStatus ? nullptr : status.c_str(); }
@@ -28,7 +30,7 @@ Value String(const std::string& text) { Value value; value.type = Type::String; 
 int FakeRequire(ILuaBase* lua) {
     ++requires;
     Check(std::strcmp(lua->GetString(1), "astra_rtx_bridge") == 0, "require only the existing optional full provider");
-    if (!helperInstalled) throw std::runtime_error("binary helper absent or failed to initialize");
+    if (!helperInstalled || helperFails) throw std::runtime_error("binary helper absent or failed to initialize");
     lua->CreateTable();
     const auto provider = lua->stack.back();
     (*provider.table)["writer_marker"] = String("installed full provider");
@@ -38,6 +40,21 @@ int FakeRequire(ILuaBase* lua) {
 void InstallRequire(ILuaBase& lua) {
     Value function; function.type = Type::Function; function.function = FakeRequire;
     (*lua.globals.table)["require"] = function;
+}
+int FakeIsBinaryModuleInstalled(ILuaBase* lua) {
+    ++probes;
+    Check(std::strcmp(lua->GetString(1), "astra_rtx_bridge") == 0, "probe only the optional full provider");
+    if (probeFails) throw std::runtime_error("probe failed");
+    if (probeNonBoolean) lua->PushString("not a boolean");
+    else lua->PushBool(helperInstalled);
+    return 1;
+}
+void InstallProbe(ILuaBase& lua) {
+    lua.CreateTable();
+    lua.PushCFunction(FakeIsBinaryModuleInstalled);
+    lua.SetField(-2, "IsBinaryModuleInstalled");
+    (*lua.globals.table)["util"] = lua.stack.back();
+    lua.Pop();
 }
 Value Call(ILuaBase& lua, const char* method, std::vector<Value> arguments = {}) {
     auto table = lua.globals.table->at("AstraRTXBridge").table;
@@ -148,17 +165,46 @@ int main() {
           "already registered provider never triggers redundant require");
     ILuaBase missing;
     InstallRequire(missing);
+    InstallProbe(missing);
     missing.PushString("caller stack");
     AstraStartup::RegisterLua(&missing);
-    Check(requires == 1 && missing.globals.table->at("AstraRTXBridge").table->size() == 4,
-          "absent or failed optional helper falls back to startup-only compatibility");
+    Check(requires == 0 && probes == 1 && missing.globals.table->at("AstraRTXBridge").table->size() == 4,
+          "absent optional helper is never required: avoid the engine's missing-include diagnostic");
     Check(missing.stack.size() == 1 && missing.stack.back().string == "caller stack",
-          "protected require error leaves no error object or stack damage");
+          "negative availability probe preserves the caller stack");
     AstraStartup::RegisterLua(&missing);
-    Check(requires == 1, "repeated registration does not retry a missing helper");
+    Check(requires == 0 && probes == 1, "repeated registration does not retry a missing helper");
+    for (int scenario = 0; scenario < 5; ++scenario) {
+        ILuaBase unavailable;
+        InstallRequire(unavailable);
+        if (scenario == 1) (*unavailable.globals.table)["util"] = String("not a table");
+        if (scenario >= 2) InstallProbe(unavailable);
+        if (scenario == 2) unavailable.globals.table->at("util").table->erase("IsBinaryModuleInstalled");
+        probeFails = scenario == 3;
+        probeNonBoolean = scenario == 4;
+        unavailable.PushBool(true);
+        AstraStartup::RegisterLua(&unavailable);
+        Check(requires == 0 && unavailable.globals.table->at("AstraRTXBridge").table->size() == 4,
+              "missing, invalid or failed availability API does not require an unverified helper");
+        Check(unavailable.stack.size() == 1 && unavailable.stack.back().boolean,
+              "unavailable probe paths preserve the caller stack");
+    }
+    probeFails = probeNonBoolean = false;
     helperInstalled = true;
+    helperFails = true;
+    ILuaBase broken;
+    InstallRequire(broken);
+    InstallProbe(broken);
+    broken.PushBool(true);
+    AstraStartup::RegisterLua(&broken);
+    Check(requires == 1 && broken.globals.table->at("AstraRTXBridge").table->size() == 4,
+          "installed helper that fails to initialize falls back to startup-only compatibility");
+    Check(broken.stack.size() == 1 && broken.stack.back().boolean,
+          "protected require failure leaves no error object or stack damage");
+    helperFails = false;
     ILuaBase lazy;
     InstallRequire(lazy);
+    InstallProbe(lazy);
     lazy.PushBool(true);
     AstraStartup::RegisterLua(&lazy);
     Check(requires == 2 && lazy.globals.table->at("AstraRTXBridge").table->at("writer_marker").string == "installed full provider",

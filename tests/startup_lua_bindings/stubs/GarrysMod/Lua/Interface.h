@@ -40,6 +40,7 @@ public:
     void SetField(int index, const char* name) { auto table = At(index).table; (*table)[name] = stack.back(); stack.pop_back(); }
     void Pop(int count = 1) { while (count-- > 0) stack.pop_back(); }
     bool IsType(int index, int type) { return At(index).type == type; }
+    bool GetBool(int index) { return At(index).boolean; }
     void CreateTable() { Value value; value.type = Type::Table; value.table = std::make_shared<std::map<std::string, Value>>(); stack.push_back(value); }
     void PushNumber(double number) { Value value; value.type = Type::Number; value.number = number; stack.push_back(value); }
     void PushBool(bool boolean) { Value value; value.type = Type::Bool; value.boolean = boolean; stack.push_back(value); }
@@ -48,15 +49,17 @@ public:
     void PushCFunction(CFunction function) { Value value; value.type = Type::Function; value.function = function; stack.push_back(value); }
     const char* GetString(int index, unsigned int* length = nullptr) { auto& value = At(index); if (length) *length = static_cast<unsigned int>(value.string.size()); return value.string.c_str(); }
     int PCall(int arguments, int results, int errorFunction) {
-        if (arguments != 1 || results != 0 || errorFunction != 0) throw std::runtime_error("unexpected protected-call contract");
+        if (arguments != 1 || (results != 0 && results != 1) || errorFunction != 0) throw std::runtime_error("unexpected protected-call contract");
         const auto function = At(-2).function;
         const auto argument = stack.back();
         stack.resize(stack.size() - 2);
         auto caller = stack;
         stack = {argument};
         try {
-            function(this);
+            const int returned = function(this);
+            const Value result = returned ? stack.back() : Value{};
             stack = caller;
+            if (results == 1) stack.push_back(result);
             return 0;
         } catch (const std::exception& error) {
             stack = caller;
