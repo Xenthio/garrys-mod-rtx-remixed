@@ -149,6 +149,11 @@ become content-addressed `textures/<sha256>.dds` files outside the GMA. Existing
 compressed mip data passes through unchanged. See the native test fixtures for
 executable package examples.
 
+Layers can reference Remix's built-in `AperturePBR_Opacity.mdl` and
+`AperturePBR_Translucent.mdl` by those exact names. Relative MDL paths and
+addon-supplied shader modules remain rejected. This permits opaque and
+translucent PBR map materials without bundling renderer shader files.
+
 The owned output is `rtx-remix/mods/!astra_startup_<map>/`. Paths, descriptors,
 duplicate members, declared hash ownership and layer dependencies are checked.
 The visible root is committed only after its dependencies verify. Invalid,

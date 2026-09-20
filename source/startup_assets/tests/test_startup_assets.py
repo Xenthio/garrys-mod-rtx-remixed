@@ -325,10 +325,26 @@ class PreparationTests(unittest.TestCase):
         result = self.run_prepare()['maps']['gm_fixture']
         self.assertTrue(result['ready'], result)
 
-    def test_mdl_name_must_match_builtin_exactly(self):
+    def test_translucent_builtin_is_accepted_without_packaged_mdl(self):
         manifest, entries = package()
         path = manifest['layer']['path']
-        entries[path] = b'#usda 1.0\ndef Material "bad" { asset x = @./AperturePBR_Opacity.mdl@ }\n'
+        entries[path] = b'#usda 1.0\ndef Material "glass" { asset info:mdl:sourceAsset = @AperturePBR_Translucent.mdl@ }\n'
+        manifest['layer'].update(bytes=len(entries[path]), sha256=digest(entries[path]))
+        entries[next(key for key in entries if key.endswith('startup.json'))] = json.dumps(manifest).encode()
+        gma(self.addons/'map.gma', entries)
+        result = self.run_prepare()['maps']['gm_fixture']
+        self.assertTrue(result['ready'], result)
+
+    def test_mdl_name_must_match_builtin_exactly(self):
+        for name in ('./AperturePBR_Opacity.mdl', './AperturePBR_Translucent.mdl',
+                     '../AperturePBR_Translucent.mdl', 'CustomShader.mdl'):
+            with self.subTest(name=name):
+                self.check_unrecognized_mdl_rejected(name)
+
+    def check_unrecognized_mdl_rejected(self, name):
+        manifest, entries = package()
+        path = manifest['layer']['path']
+        entries[path] = ('#usda 1.0\ndef Material "bad" { asset x = @' + name + '@ }\n').encode()
         # A relative MDL path is an addon-provided file, not the exact built-in.
         manifest['layer'].update(bytes=len(entries[path]), sha256=digest(entries[path]))
         entries[next(key for key in entries if key.endswith('startup.json'))] = json.dumps(manifest).encode()

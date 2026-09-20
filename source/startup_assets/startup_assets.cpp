@@ -376,10 +376,11 @@ void ValidateLayer(const std::string& layer, const std::set<std::string>& target
         const auto end = layer.find('@', at + 1);
         Need(end != std::string::npos, "Unterminated layer asset reference");
         auto target = layer.substr(at + 1, end - at - 1);
-        const bool builtinShader = target == "AperturePBR_Opacity.mdl";
+        const bool builtinShader = target == "AperturePBR_Opacity.mdl" ||
+                                   target == "AperturePBR_Translucent.mdl";
         if (target.rfind("./", 0) == 0) target.erase(0, 2);
-        // This is Remix's built-in shader module, resolved by the renderer.
-        // Packages may reference it but cannot supply/replace an MDL file.
+        // These are Remix's built-in shader modules, resolved by the renderer.
+        // Packages may reference them but cannot supply/replace an MDL file.
         Need(builtinShader || targets.count(target) == 1,
              "Layer references an undeclared asset");
         at = end + 1;
