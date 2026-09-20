@@ -72,6 +72,13 @@ installed by RTXLauncher during fresh-install testing). Its export names and
 ordinals match the previous audited renderer; RVAs and the file digest changed.
 Its 146 original exports are preserved; the proxy adds two startup exports.
 
+The default `dxvk.conf` disables RTX IO for this renderer. In the Cathedral
+Workshop test, enabling it stalled the render thread during texture uploads;
+disabling it allowed the scene to render. The prepared DDS files use the normal
+texture-streaming path. This is a compatibility default, not a fix inside RTX IO.
+Mods using RTX IO compressed packages need a renderer that supports those
+packages without the stall before re-enabling `rtx.io.enabled`.
+
 Install these components after the check succeeds:
 
 | Source | Destination relative to the game root |
@@ -211,3 +218,20 @@ preparation to deactivate stale startup roots (also remove any relevant loose
 game `data_static` package). Then restore the backed-up original renderer.
 Keep any deactivation failure visible and resolve it before restoring a renderer
 that would otherwise continue to load stale layers.
+
+## Coexisting map addons
+
+An addon must validate its current-map manifest before acquiring a native
+provider or clearing replacements. An absent manifest means that loader has no
+work on this map; it must not require legacy batch APIs just to become inactive.
+The startup-only bridge deliberately does not expose `BeginBatch` or a live
+writer. A malformed manifest or failed cleanup must remain an error, rather than
+being reported as a successful handoff.
+
+Shared Lua loaders that coordinate through `reset_complete` should report
+`no_map_manifest` and completion when they own nothing, without calling
+`ClearAllOwned`. Once they acquire resources, they must release only their own
+resources before yielding to another loader. This avoids an unrelated subscribed
+PBR map blocking the active map on a clean client. Existing Workshop loaders may
+need an addon update; packaging the native startup loader cannot repair arbitrary
+third-party Lua ownership logic.
