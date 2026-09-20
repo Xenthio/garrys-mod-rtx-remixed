@@ -57,6 +57,26 @@ jobs:
         Copy-Item $sourcePath "artifacts\garrysmod\lua\bin\$artifactName"
         Copy-Item "garrysmod\*" "artifacts\" -Recurse -Force
       shell: pwsh
+
+    - name: Build and test Workshop PBR startup loader
+      if: matrix.platform == 'x64'
+      run: |
+        cmake -S source/startup_assets -B out/startup -A x64
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        cmake --build out/startup --config Release --parallel
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        ctest --test-dir out/startup -C Release --output-on-failure
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        # Stage beside the renderer: the launcher verifies the contract before
+        # wrapping d3d9.dll. Never overwrite or distribute a real/fake renderer.
+        $startupPackage = 'artifacts/bin/win64/astra-startup'
+        New-Item -ItemType Directory -Force -Path $startupPackage
+        Copy-Item out/startup/Release/d3d9.dll $startupPackage/
+        Copy-Item out/startup/Release/astra_rtx_prepare_assets.exe $startupPackage/
+        Copy-Item source/startup_assets/proxy_renderer_exports.json $startupPackage/
+        Copy-Item source/startup_assets/generate_proxy_exports.py $startupPackage/
+        Copy-Item docs/PBR_GMA_LOADER.md $startupPackage/README.md
+      shell: pwsh
     
     - name: Upload artifacts
       uses: actions/upload-artifact@v4

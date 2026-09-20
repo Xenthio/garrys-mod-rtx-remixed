@@ -32,11 +32,20 @@ cmake --build build/startup --config Release --parallel
 ctest --test-dir build/startup -C Release --output-on-failure
 ```
 
-The regular **Build** workflow produces the client module in `windows-x64`.
-**PBR GMA loader contracts** produces `pbr-gma-startup-x64`. The startup artifact
-contains the wrapper, offline preparation tool and renderer contract; it does
-not contain or replace the real Remix renderer. The fake renderer is test-only
-and is never packaged.
+The regular **Build** workflow produces the client module and the startup loader
+in `windows-x64`, and includes both in the nightly release ZIP. Startup files are
+staged under `bin/win64/astra-startup/` so extracting the fixes package cannot
+overwrite the Remix renderer. RTXLauncher versions with startup-loader support
+verify the renderer contract after installing either package, preserve the real
+renderer as `d3d9_astra_renderer.dll`, and install the wrapper as `d3d9.dll`.
+Older launchers leave the staged files inactive; use the manual steps below or
+update the launcher. Enabling Workshop mounting alone does not install the loader.
+
+**PBR GMA loader contracts** also produces `pbr-gma-startup-x64` for manual
+installation. Both artifacts contain the wrapper, offline preparation tool and
+renderer contract. Neither contains the real Remix renderer or the fake test
+renderer. Keep the staged files when upgrading: the launcher rechecks the actual
+renderer and leaves an unsupported renderer unwrapped, with a progress warning.
 
 ## Installation
 
@@ -57,7 +66,10 @@ must not be installed with that renderer. Developers supporting another renderer
 must audit it, regenerate the contract, rebuild and test that combination.
 
 The recorded renderer SHA-256 is
-`6874ba37d27f6c4f88c7ddbbd513f5fe028f14fbe6bbc402e9a309ba835d0356`.
+`b2e687406b9b24e669d21cb0eebee26f55585c60666ceeb08863b32f14346c62`
+(265,998,848 bytes, `sambow23/dxvk-remix-gmod` nightly `12759b3`, the renderer
+installed by RTXLauncher during fresh-install testing). Its export names and
+ordinals match the previous audited renderer; RVAs and the file digest changed.
 Its 146 original exports are preserved; the proxy adds two startup exports.
 
 Install these components after the check succeeds:
