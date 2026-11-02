@@ -1,5 +1,8 @@
  > This project uses AI-generated code.
 
+> [!CAUTION]
+> # This project is now deprecated and is no longer being updated, please use [garrys-mod-rtx-remixed-2](https://github.com/sambow23/garrys-mod-rtx-remixed-2) instead.
+
 <p align="center">
   <img src="https://github.com/user-attachments/assets/fad469d4-b7b2-428c-a093-5b497f02d820" width="500" />
 </p>
@@ -11,21 +14,6 @@
 - [Prepared PBR assets in GMA addons](docs/PBR_GMA_LOADER.md): prepare DDS replacements before renderer startup and reuse them on later launches (Windows x64).
 - Win64 legacy texture-hash replacement provider for Advanced Material Editor
   ([protocol and safety notes](source/advmat_rtx_bridge/README.md))
-      
-## Installation
-- Switch to the `x86-64` branch of Garry's Mod on Steam
-- Ensure you've ran the vanilla game at least once, especially if you switched branches.
-- Download [RTXLauncher](https://github.com/Xenthio/RTXLauncher/releases) (Use the newer nightly if available).
-- **Windows**
-   - Run the launcher (**as an Administrator**)
-- **Linux**
-   - Ensure Steam Play is forced for Garry's Mod with either Proton Experimental or another recent Proton build.
-   - Run [GModPatchTool](https://github.com/solsticegamestudios/GModPatchTool)
-   - Make sure it's marked as executable `chmod +x ./RTXLauncher.Avalonia.Linux`, and run it.
-
-- Select the Release Channel (Stable or Nightly)
-- Select `Start Quick Install` on the main screen and follow the prompts when asked.
-- Once it's finished, press `Launch Game` at the bottom of the launcher.
 
 ## Multiplayer
 Multiplayer works best when the server/host has this addon and the cvar `sv_allowcslua 1` set.
