@@ -1,7 +1,7 @@
  > This project uses AI-generated code.
 
 > [!CAUTION]
-> # This project is now deprecated and is no longer being updated, please use [garrys-mod-rtx-remixed-2](https://github.com/sambow23/garrys-mod-rtx-remixed-2) instead.
+> # This project is now deprecated and is no longer being updated, please use [SourcePT](https://github.com/sambow23/SourcePT) instead.
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/fad469d4-b7b2-428c-a093-5b497f02d820" width="500" />
